@@ -39,6 +39,31 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(result.content[0]?.type, "text");
     assert.match(result.content[0].text, /Revit bridge connected/);
     assert.equal(result.structuredContent?.data?.connected, true);
+
+    for (const expected of ["revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request"]) {
+      assert.ok(tools.tools.find((tool) => tool.name === expected), `${expected} tool should be listed`);
+    }
+
+    const preview = (await client.callTool({
+      name: "revit.preview_change_set",
+      arguments: {
+        transactionName: "Update Mark",
+        operations: [
+          {
+            type: "set_parameter",
+            elementId: "501",
+            parameterName: "Mark",
+            value: "A-101",
+          },
+        ],
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { previewId?: string; ready?: boolean } };
+    };
+    assert.equal(preview.isError, undefined);
+    assert.equal(preview.structuredContent?.data?.ready, true);
+    assert.ok(preview.structuredContent?.data?.previewId);
   } finally {
     await client.close();
     await server.close();

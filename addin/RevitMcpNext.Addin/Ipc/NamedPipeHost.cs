@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Addin.Revit;
 using RevitMcpNext.Contracts;
 
@@ -70,6 +71,10 @@ namespace RevitMcpNext.Addin.Ipc
             {
                 // Normal shutdown.
             }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("Named pipe accept loop failed.", ex);
+            }
         }
 
         private async Task HandleClientAsync(NamedPipeServerStream stream, CancellationToken cancellationToken)
@@ -90,11 +95,16 @@ namespace RevitMcpNext.Addin.Ipc
                 }
                 else
                 {
-                    response = await _requestQueue.EnqueueAsync(request, cancellationToken).ConfigureAwait(false);
+                    using (var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                    {
+                        requestTimeout.CancelAfter(Math.Max(1, request.TimeoutMs));
+                        response = await _requestQueue.EnqueueAsync(request, requestTimeout.Token).ConfigureAwait(false);
+                    }
                 }
             }
             catch (Exception ex)
             {
+                DiagnosticsLogger.Error("Invalid bridge request.", ex);
                 response = Failure(
                     new BridgeRequestEnvelope { RequestId = Guid.NewGuid().ToString("N") },
                     "INVALID_BRIDGE_REQUEST",

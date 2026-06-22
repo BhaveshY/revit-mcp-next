@@ -19,21 +19,30 @@ namespace RevitMcpNext.Addin.Revit
 
         public Task<BridgeResponseEnvelope> EnqueueAsync(BridgeRequestEnvelope envelope, CancellationToken cancellationToken)
         {
-            var item = new WorkItem(envelope);
+            var item = new WorkItem(envelope, cancellationToken);
             _queue.Enqueue(item);
             _externalEvent?.Raise();
-
-            cancellationToken.Register(() =>
-            {
-                item.TrySetResult(Failure(envelope, "REQUEST_CANCELLED", "The request was cancelled before Revit processed it."));
-            });
 
             return item.Completion.Task;
         }
 
         public bool TryDequeue(out WorkItem item)
         {
-            return _queue.TryDequeue(out item);
+            while (_queue.TryDequeue(out item))
+            {
+                if (!item.IsCancelled) return true;
+                item.Dispose();
+            }
+
+            item = null;
+            return false;
+        }
+
+        public bool HasPending => !_queue.IsEmpty;
+
+        public void Raise()
+        {
+            _externalEvent?.Raise();
         }
 
         public void CancelAll(string code, string message)
@@ -59,22 +68,39 @@ namespace RevitMcpNext.Addin.Revit
             };
         }
 
-        internal sealed class WorkItem
+        internal sealed class WorkItem : IDisposable
         {
-            public WorkItem(BridgeRequestEnvelope envelope)
+            private readonly CancellationTokenRegistration _cancellationRegistration;
+            private int _completed;
+
+            public WorkItem(BridgeRequestEnvelope envelope, CancellationToken cancellationToken)
             {
                 Envelope = envelope;
+                _cancellationRegistration = cancellationToken.Register(() =>
+                {
+                    IsCancelled = true;
+                    TrySetResult(Failure(envelope, "REQUEST_CANCELLED", "The request was cancelled before Revit processed it."));
+                });
             }
 
             public BridgeRequestEnvelope Envelope { get; }
+            public bool IsCancelled { get; private set; }
             public TaskCompletionSource<BridgeResponseEnvelope> Completion { get; } =
-                new TaskCompletionSource<BridgeResponseEnvelope>();
+                new TaskCompletionSource<BridgeResponseEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             public void TrySetResult(BridgeResponseEnvelope response)
             {
-                Completion.TrySetResult(response);
+                if (Interlocked.Exchange(ref _completed, 1) == 0)
+                {
+                    Completion.TrySetResult(response);
+                    Dispose();
+                }
+            }
+
+            public void Dispose()
+            {
+                _cancellationRegistration.Dispose();
             }
         }
     }
 }
-

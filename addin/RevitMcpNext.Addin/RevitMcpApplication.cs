@@ -1,5 +1,6 @@
 using System;
 using Autodesk.Revit.UI;
+using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Addin.Ipc;
 using RevitMcpNext.Addin.Revit;
 
@@ -26,12 +27,13 @@ namespace RevitMcpNext.Addin
                     pipeName: PipeNameProvider.GetDefaultPipeName(),
                     requestQueue: _queue);
                 _pipeHost.Start();
+                DiagnosticsLogger.Info("Revit MCP Next add-in started on pipe " + PipeNameProvider.GetDefaultPipeName() + ".");
 
                 return Result.Succeeded;
             }
-            catch
+            catch (Exception ex)
             {
-                // Never show a modal dialog during automation startup. Revit will surface load failure.
+                DiagnosticsLogger.Error("Revit MCP Next add-in startup failed.", ex);
                 return Result.Failed;
             }
         }
@@ -43,13 +45,14 @@ namespace RevitMcpNext.Addin
                 _pipeHost?.Dispose();
                 _queue?.CancelAll("ADDIN_SHUTDOWN", "Revit is shutting down.");
                 _externalEvent?.Dispose();
+                DiagnosticsLogger.Info("Revit MCP Next add-in shut down.");
                 return Result.Succeeded;
             }
-            catch
+            catch (Exception ex)
             {
+                DiagnosticsLogger.Error("Revit MCP Next add-in shutdown failed.", ex);
                 return Result.Failed;
             }
         }
     }
 }
-

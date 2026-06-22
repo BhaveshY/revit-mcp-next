@@ -1,6 +1,12 @@
 import type {
   BridgeRequest,
   BridgeResponse,
+  CancelRequest,
+  CancelResult,
+  ChangeApplyRequest,
+  ChangeApplyResult,
+  ChangePreviewResult,
+  ChangeSetRequest,
   LevelSummary,
   QueryRequest,
   QueryResult,
@@ -25,10 +31,21 @@ export interface RevitBridgeClient {
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>>;
+  previewChange(
+    request: BridgeRequest<ChangeSetRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ChangePreviewResult>>;
+  applyChange(
+    request: BridgeRequest<ChangeApplyRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ChangeApplyResult>>;
+  cancel(
+    request: BridgeRequest<CancelRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CancelResult>>;
   dispose(): void;
 }
 
 export interface BridgeCallOptions {
   signal?: AbortSignal;
 }
-

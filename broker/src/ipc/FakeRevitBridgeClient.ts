@@ -1,6 +1,12 @@
 import type {
   BridgeRequest,
   BridgeResponse,
+  CancelRequest,
+  CancelResult,
+  ChangeApplyRequest,
+  ChangeApplyResult,
+  ChangePreviewResult,
+  ChangeSetRequest,
   LevelSummary,
   QueryRequest,
   QueryResult,
@@ -63,7 +69,15 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       },
       activeDocument,
       selection: { count: 0 },
-      capabilities: ["status", "list_documents", "get_levels", "query"],
+      capabilities: [
+        "revit.status",
+        "revit.list_documents",
+        "revit.get_levels",
+        "revit.query",
+        "revit.preview_change_set",
+        "revit.apply_change_set",
+        "revit.cancel_request",
+      ],
       warnings: [],
     });
   }
@@ -112,6 +126,64 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       units: {},
       scope: request.payload.filter.viewId ? `view:${request.payload.filter.viewId}` : "document",
       source: "fake-bridge",
+    });
+  }
+
+  async previewChange(
+    request: BridgeRequest<ChangeSetRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ChangePreviewResult>> {
+    maybeAbort(options);
+    return ok(request, {
+      previewId: `fake-preview-${request.payload.operations.length}`,
+      documentFingerprint: request.payload.documentFingerprint ?? activeDocument.fingerprint,
+      transactionName: request.payload.transactionName,
+      operationCount: request.payload.operations.length,
+      ready: true,
+      requiresConfirmation: true,
+      riskLevel: request.payload.operations.some((operation) => operation.type === "create_level") ? "medium" : "low",
+      changes: request.payload.operations.map((operation, index) => ({
+        operationIndex: index,
+        operationId: operation.id,
+        type: operation.type,
+        status: "ready",
+        target: operation.elementId ? { elementId: operation.elementId } : { document: activeDocument.title },
+        after: { value: operation.value ?? operation.name },
+      })),
+    });
+  }
+
+  async applyChange(
+    request: BridgeRequest<ChangeApplyRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ChangeApplyResult>> {
+    maybeAbort(options);
+    return ok(request, {
+      previewId: request.payload.previewId,
+      documentFingerprint: request.payload.documentFingerprint ?? activeDocument.fingerprint,
+      transactionName: request.payload.transactionName,
+      applied: request.payload.confirm,
+      changedCount: request.payload.operations.length,
+      changes: request.payload.operations.map((operation, index) => ({
+        operationIndex: index,
+        operationId: operation.id,
+        type: operation.type,
+        status: "applied",
+        target: operation.elementId ? { elementId: operation.elementId } : { document: activeDocument.title },
+        after: { value: operation.value ?? operation.name },
+      })),
+    });
+  }
+
+  async cancel(
+    request: BridgeRequest<CancelRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CancelResult>> {
+    maybeAbort(options);
+    return ok(request, {
+      cancelled: false,
+      requestId: request.payload.requestId,
+      message: "No queued fake request matched the cancellation request.",
     });
   }
 

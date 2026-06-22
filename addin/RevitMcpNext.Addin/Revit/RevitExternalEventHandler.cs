@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Contracts;
 
 namespace RevitMcpNext.Addin.Revit
@@ -34,6 +35,11 @@ namespace RevitMcpNext.Addin.Revit
                 processed++;
                 item.TrySetResult(Handle(app, item.Envelope));
             }
+
+            if (_queue.HasPending)
+            {
+                _queue.Raise();
+            }
         }
 
         public string GetName()
@@ -58,6 +64,12 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleGetLevels(app, request, sw);
                         case "query":
                             return HandleQuery(app, request, sw);
+                        case "preview_change_set":
+                            return HandlePreviewChange(app, request, sw);
+                        case "apply_change_set":
+                            return HandleApplyChange(app, request, sw);
+                        case "cancel_request":
+                            return HandleCancel(request, sw);
                         default:
                             return Failure(request, "UNSUPPORTED_OPERATION", "Unsupported Revit MCP operation: " + request.Operation, sw);
                     }
@@ -65,6 +77,7 @@ namespace RevitMcpNext.Addin.Revit
             }
             catch (Exception ex)
             {
+                DiagnosticsLogger.Error("Revit command failed. requestId=" + request.RequestId + " operation=" + request.Operation, ex);
                 return Failure(request, "REVIT_COMMAND_FAILED", ex.Message, sw);
             }
         }
@@ -157,6 +170,489 @@ namespace RevitMcpNext.Addin.Revit
                 });
         }
 
+        private static BridgeResponseEnvelope HandlePreviewChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.preview_change_set.", sw);
+            }
+
+            var warnings = new List<BridgeWarning>();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            List<Dictionary<string, object>> operations = GetOperations(payload);
+            if (operations.Count == 0)
+            {
+                return Failure(request, "EMPTY_CHANGE_SET", "A change set must contain at least one operation.", sw);
+            }
+            if (operations.Count > 50)
+            {
+                return Failure(request, "CHANGE_SET_TOO_LARGE", "A change set can contain at most 50 operations.", sw);
+            }
+
+            string transactionName = GetTransactionName(payload);
+            string previewId = ComputePreviewId(document, transactionName, operations);
+            var changes = new List<Dictionary<string, object>>();
+            bool ready = true;
+            string riskLevel = "low";
+
+            for (int index = 0; index < operations.Count; index++)
+            {
+                Dictionary<string, object> change = PreviewOperation(document, operations[index], index);
+                changes.Add(change);
+                string status = GetString(change, "status");
+                if (string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
+                if (string.Equals(GetString(operations[index], "type"), "create_level", StringComparison.OrdinalIgnoreCase)) riskLevel = "medium";
+            }
+
+            var data = new Dictionary<string, object>
+            {
+                ["previewId"] = previewId,
+                ["documentFingerprint"] = ComputeDocumentFingerprint(document),
+                ["transactionName"] = transactionName,
+                ["operationCount"] = operations.Count,
+                ["ready"] = ready,
+                ["requiresConfirmation"] = true,
+                ["riskLevel"] = riskLevel,
+                ["changes"] = changes.ToArray()
+            };
+
+            return Success(request, data, sw, warnings, new BridgeMetrics
+            {
+                ElapsedMs = sw.ElapsedMilliseconds,
+                ReturnedCount = changes.Count,
+                TotalCount = changes.Count
+            });
+        }
+
+        private BridgeResponseEnvelope HandleApplyChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.apply_change_set.", sw);
+            }
+
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            if (!GetBool(payload, "confirm", false))
+            {
+                return Failure(request, "CONFIRMATION_REQUIRED", "revit.apply_change_set requires confirm=true.", sw);
+            }
+
+            List<Dictionary<string, object>> operations = GetOperations(payload);
+            if (operations.Count == 0)
+            {
+                return Failure(request, "EMPTY_CHANGE_SET", "A change set must contain at least one operation.", sw);
+            }
+            if (operations.Count > 50)
+            {
+                return Failure(request, "CHANGE_SET_TOO_LARGE", "A change set can contain at most 50 operations.", sw);
+            }
+
+            string transactionName = GetTransactionName(payload);
+            string expectedPreviewId = ComputePreviewId(document, transactionName, operations);
+            string providedPreviewId = GetString(payload, "previewId");
+            if (!string.Equals(providedPreviewId, expectedPreviewId, StringComparison.Ordinal))
+            {
+                return Failure(request, "PREVIEW_ID_MISMATCH", "The supplied previewId does not match the current change set and document.", sw);
+            }
+
+            var previewChanges = new List<Dictionary<string, object>>();
+            bool ready = true;
+            for (int index = 0; index < operations.Count; index++)
+            {
+                Dictionary<string, object> change = PreviewOperation(document, operations[index], index);
+                previewChanges.Add(change);
+                if (string.Equals(GetString(change, "status"), "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
+            }
+            if (!ready)
+            {
+                return Success(request, new Dictionary<string, object>
+                {
+                    ["previewId"] = expectedPreviewId,
+                    ["documentFingerprint"] = ComputeDocumentFingerprint(document),
+                    ["transactionName"] = transactionName,
+                    ["applied"] = false,
+                    ["changedCount"] = 0,
+                    ["changes"] = previewChanges.ToArray()
+                }, sw, new List<BridgeWarning>
+                {
+                    new BridgeWarning { Code = "PREVIEW_BLOCKED", Message = "The change set contains blocked operations and was not applied." }
+                });
+            }
+
+            List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
+            {
+                var results = new List<Dictionary<string, object>>();
+                for (int index = 0; index < operations.Count; index++)
+                {
+                    results.Add(ApplyOperation(document, operations[index], index));
+                }
+                return results;
+            });
+
+            var data = new Dictionary<string, object>
+            {
+                ["previewId"] = expectedPreviewId,
+                ["documentFingerprint"] = ComputeDocumentFingerprint(document),
+                ["transactionName"] = transactionName,
+                ["applied"] = true,
+                ["changedCount"] = appliedChanges.Count,
+                ["changes"] = appliedChanges.ToArray()
+            };
+
+            return Success(request, data, sw, metrics: new BridgeMetrics
+            {
+                ElapsedMs = sw.ElapsedMilliseconds,
+                ReturnedCount = appliedChanges.Count,
+                TotalCount = appliedChanges.Count
+            });
+        }
+
+        private static BridgeResponseEnvelope HandleCancel(BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            var data = new Dictionary<string, object>
+            {
+                ["cancelled"] = false,
+                ["message"] = "No queued cancellable request matched. In-flight Revit API work cannot be interrupted safely."
+            };
+
+            string requestId = GetString(request.Payload, "requestId");
+            if (!string.IsNullOrWhiteSpace(requestId)) data["requestId"] = requestId;
+
+            return Success(request, data, sw);
+        }
+
+        private static Dictionary<string, object> PreviewOperation(Document document, Dictionary<string, object> operation, int index)
+        {
+            string type = GetString(operation, "type");
+            switch (type)
+            {
+                case "set_parameter":
+                    return PreviewSetParameter(document, operation, index);
+                case "create_level":
+                    return PreviewCreateLevel(document, operation, index);
+                default:
+                    return BlockedChange(operation, index, "Unsupported change operation type: " + (type ?? "(missing)"));
+            }
+        }
+
+        private static Dictionary<string, object> ApplyOperation(Document document, Dictionary<string, object> operation, int index)
+        {
+            string type = GetString(operation, "type");
+            switch (type)
+            {
+                case "set_parameter":
+                    return ApplySetParameter(document, operation, index);
+                case "create_level":
+                    return ApplyCreateLevel(document, operation, index);
+                default:
+                    throw new InvalidOperationException("Unsupported change operation type: " + (type ?? "(missing)"));
+            }
+        }
+
+        private static Dictionary<string, object> PreviewSetParameter(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            string parameterName = GetString(operation, "parameterName");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "set_parameter requires elementId.");
+            if (string.IsNullOrWhiteSpace(parameterName)) return BlockedChange(operation, index, "set_parameter requires parameterName.");
+            if (!operation.TryGetValue("value", out object value)) return BlockedChange(operation, index, "set_parameter requires value.");
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+
+            Parameter parameter = element.LookupParameter(parameterName);
+            if (parameter == null) return BlockedChange(operation, index, "Parameter '" + parameterName + "' was not found on element " + elementId + ".");
+            if (parameter.IsReadOnly) return BlockedChange(operation, index, "Parameter '" + parameterName + "' is read-only.");
+
+            return Change(operation, index, "ready", ElementTarget(element, parameterName),
+                before: ParameterSnapshot(parameter),
+                after: new Dictionary<string, object>
+                {
+                    ["value"] = value,
+                    ["storageType"] = parameter.StorageType.ToString()
+                });
+        }
+
+        private static Dictionary<string, object> ApplySetParameter(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewSetParameter(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "set_parameter preview failed.");
+            }
+
+            string elementId = GetString(operation, "elementId");
+            string parameterName = GetString(operation, "parameterName");
+            Element element = ResolveElement(document, elementId);
+            Parameter parameter = element.LookupParameter(parameterName);
+            object before = ParameterValue(parameter);
+            SetParameterValue(parameter, operation["value"]);
+            object after = ParameterValue(parameter);
+
+            return Change(operation, index, "applied", ElementTarget(element, parameterName),
+                before: new Dictionary<string, object>
+                {
+                    ["value"] = before,
+                    ["storageType"] = parameter.StorageType.ToString()
+                },
+                after: new Dictionary<string, object>
+                {
+                    ["value"] = after,
+                    ["storageType"] = parameter.StorageType.ToString()
+                });
+        }
+
+        private static Dictionary<string, object> PreviewCreateLevel(Document document, Dictionary<string, object> operation, int index)
+        {
+            string name = GetString(operation, "name");
+            Dictionary<string, object> elevation = GetDictionary(operation, "elevation");
+            if (string.IsNullOrWhiteSpace(name)) return BlockedChange(operation, index, "create_level requires name.");
+            if (elevation == null) return BlockedChange(operation, index, "create_level requires elevation.");
+            if (LevelNameExists(document, name)) return BlockedChange(operation, index, "A level named '" + name + "' already exists.");
+
+            double internalElevation;
+            try
+            {
+                internalElevation = ToInternalElevation(elevation);
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object> { ["document"] = document.Title },
+                before: null,
+                after: new Dictionary<string, object>
+                {
+                    ["name"] = name,
+                    ["elevation"] = UnitValue(UnitUtils.ConvertFromInternalUnits(internalElevation, UnitTypeId.Millimeters), "mm", "metric")
+                });
+        }
+
+        private static Dictionary<string, object> ApplyCreateLevel(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateLevel(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_level preview failed.");
+            }
+
+            string name = GetString(operation, "name");
+            double internalElevation = ToInternalElevation(GetDictionary(operation, "elevation"));
+            Level level = Level.Create(document, internalElevation);
+            level.Name = name;
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(level, null),
+                before: null,
+                after: new Dictionary<string, object>
+                {
+                    ["id"] = ToElementIdString(level.Id),
+                    ["uniqueId"] = level.UniqueId,
+                    ["name"] = level.Name,
+                    ["elevation"] = UnitValue(UnitUtils.ConvertFromInternalUnits(level.Elevation, UnitTypeId.Millimeters), "mm", "metric")
+                });
+        }
+
+        private static Dictionary<string, object> Change(
+            Dictionary<string, object> operation,
+            int index,
+            string status,
+            Dictionary<string, object> target,
+            Dictionary<string, object> before,
+            Dictionary<string, object> after,
+            string message = null)
+        {
+            var change = new Dictionary<string, object>
+            {
+                ["operationIndex"] = index,
+                ["type"] = GetString(operation, "type") ?? "unknown",
+                ["status"] = status
+            };
+
+            string operationId = GetString(operation, "id");
+            if (!string.IsNullOrWhiteSpace(operationId)) change["operationId"] = operationId;
+            if (target != null) change["target"] = target;
+            if (before != null) change["before"] = before;
+            if (after != null) change["after"] = after;
+            if (!string.IsNullOrWhiteSpace(message)) change["message"] = message;
+            return change;
+        }
+
+        private static Dictionary<string, object> BlockedChange(Dictionary<string, object> operation, int index, string message)
+        {
+            return Change(operation, index, "blocked", null, null, null, message);
+        }
+
+        private static Dictionary<string, object> ElementTarget(Element element, string parameterName)
+        {
+            var target = new Dictionary<string, object>
+            {
+                ["elementId"] = ToElementIdString(element.Id),
+                ["uniqueId"] = element.UniqueId,
+                ["class"] = element.GetType().Name,
+                ["name"] = SafeElementName(element)
+            };
+            if (element.Category != null) target["category"] = element.Category.Name;
+            if (!string.IsNullOrWhiteSpace(parameterName)) target["parameterName"] = parameterName;
+            return target;
+        }
+
+        private static Dictionary<string, object> ParameterSnapshot(Parameter parameter)
+        {
+            return new Dictionary<string, object>
+            {
+                ["value"] = ParameterValue(parameter),
+                ["storageType"] = parameter.StorageType.ToString(),
+                ["isReadOnly"] = parameter.IsReadOnly
+            };
+        }
+
+        private static void SetParameterValue(Parameter parameter, object value)
+        {
+            if (parameter.IsReadOnly) throw new InvalidOperationException("Parameter is read-only.");
+
+            switch (parameter.StorageType)
+            {
+                case StorageType.String:
+                    parameter.Set(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty);
+                    break;
+                case StorageType.Integer:
+                    if (value is bool booleanValue)
+                    {
+                        parameter.Set(booleanValue ? 1 : 0);
+                    }
+                    else
+                    {
+                        parameter.Set(Convert.ToInt32(value, CultureInfo.InvariantCulture));
+                    }
+                    break;
+                case StorageType.Double:
+                    parameter.Set(Convert.ToDouble(value, CultureInfo.InvariantCulture));
+                    break;
+                case StorageType.ElementId:
+                    parameter.Set(CreateElementId(Convert.ToString(value, CultureInfo.InvariantCulture)));
+                    break;
+                default:
+                    throw new InvalidOperationException("Unsupported parameter storage type: " + parameter.StorageType);
+            }
+        }
+
+        private static Element ResolveElement(Document document, string elementId)
+        {
+            try
+            {
+                return document.GetElement(CreateElementId(elementId));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool LevelNameExists(Document document, string name)
+        {
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .Any(level => string.Equals(level.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static double ToInternalElevation(Dictionary<string, object> elevation)
+        {
+            if (elevation == null) throw new ArgumentException("Elevation is required.");
+            double value = GetDouble(elevation, "value") ?? throw new ArgumentException("Elevation value is required.");
+            string unit = (GetString(elevation, "unit") ?? "mm").Trim().ToLowerInvariant();
+
+            switch (unit)
+            {
+                case "mm":
+                case "millimeters":
+                    return UnitUtils.ConvertToInternalUnits(value, UnitTypeId.Millimeters);
+                case "m":
+                case "meters":
+                    return UnitUtils.ConvertToInternalUnits(value, UnitTypeId.Meters);
+                case "ft":
+                case "feet":
+                case "revit-internal":
+                    return value;
+                default:
+                    throw new ArgumentException("Unsupported elevation unit: " + unit);
+            }
+        }
+
+        private static List<Dictionary<string, object>> GetOperations(Dictionary<string, object> payload)
+        {
+            var operations = new List<Dictionary<string, object>>();
+            if (payload == null || !payload.TryGetValue("operations", out object value) || value == null) return operations;
+
+            if (value is object[] array)
+            {
+                foreach (object item in array)
+                {
+                    if (item is Dictionary<string, object> operation) operations.Add(operation);
+                }
+            }
+            else if (value is ArrayList list)
+            {
+                foreach (object item in list)
+                {
+                    if (item is Dictionary<string, object> operation) operations.Add(operation);
+                }
+            }
+
+            return operations;
+        }
+
+        private static string GetTransactionName(Dictionary<string, object> payload)
+        {
+            string name = GetString(payload, "transactionName");
+            return string.IsNullOrWhiteSpace(name) ? "Revit MCP Next change" : name.Trim();
+        }
+
+        private static string ComputePreviewId(Document document, string transactionName, List<Dictionary<string, object>> operations)
+        {
+            string raw = ComputeDocumentFingerprint(document) + "|" + transactionName + "|" + Canonicalize(operations);
+            return HashString(raw).Substring(0, 24);
+        }
+
+        private static string Canonicalize(object value)
+        {
+            if (value == null) return "null";
+            if (value is Dictionary<string, object> dictionary)
+            {
+                return "{" + string.Join(",", dictionary.Keys.OrderBy(key => key, StringComparer.Ordinal)
+                    .Select(key => key + ":" + Canonicalize(dictionary[key]))) + "}";
+            }
+            if (value is IEnumerable<Dictionary<string, object>> dictionaryEnumerable)
+            {
+                return "[" + string.Join(",", dictionaryEnumerable.Select(Canonicalize)) + "]";
+            }
+            if (value is object[] array)
+            {
+                return "[" + string.Join(",", array.Select(Canonicalize)) + "]";
+            }
+            if (value is ArrayList list)
+            {
+                return "[" + string.Join(",", list.Cast<object>().Select(Canonicalize)) + "]";
+            }
+            if (value is bool boolean) return boolean ? "true" : "false";
+            if (IsNumeric(value)) return Convert.ToString(value, CultureInfo.InvariantCulture);
+            return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        }
+
+        private static string HashString(string raw)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(raw));
+                return BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
+            }
+        }
+
         private static Dictionary<string, object> BuildStatus(UIApplication app)
         {
             UIDocument activeUiDocument = app.ActiveUIDocument;
@@ -177,7 +673,16 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     ["count"] = activeUiDocument?.Selection?.GetElementIds()?.Count ?? 0
                 },
-                ["capabilities"] = new[] { "status", "list_documents", "get_levels", "query" },
+                ["capabilities"] = new[]
+                {
+                    "revit.status",
+                    "revit.list_documents",
+                    "revit.get_levels",
+                    "revit.query",
+                    "revit.preview_change_set",
+                    "revit.apply_change_set",
+                    "revit.cancel_request"
+                },
                 ["warnings"] = Array.Empty<object>()
             };
 
@@ -804,6 +1309,12 @@ namespace RevitMcpNext.Addin.Revit
         {
             if (root == null || !root.TryGetValue(key, out object value) || value == null) return null;
             return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+
+        private static double? GetDouble(Dictionary<string, object> root, string key)
+        {
+            if (root == null || !root.TryGetValue(key, out object value) || value == null) return null;
+            return Convert.ToDouble(value, CultureInfo.InvariantCulture);
         }
 
         private static bool GetBool(Dictionary<string, object> root, string key, bool defaultValue)

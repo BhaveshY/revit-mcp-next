@@ -36,3 +36,44 @@ test("request builder stamps current protocol and operation kind", () => {
   assert.equal(request.operationKind, "read");
   assert.equal(request.timeoutMs, 5000);
 });
+
+test("fake bridge previews and applies a bounded change set", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const changeSet = {
+    transactionName: "Update Mark",
+    operations: [
+      {
+        id: "op-1",
+        type: "set_parameter" as const,
+        elementId: "501",
+        parameterName: "Mark",
+        value: "A-101",
+      },
+    ],
+  };
+
+  const preview = await bridge.previewChange(makeRequest("session", "preview_change_set", "preview", changeSet, 30000));
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.equal(preview.data.ready, true);
+  assert.equal(preview.data.operationCount, 1);
+  assert.equal(preview.data.changes[0]?.status, "ready");
+
+  const applied = await bridge.applyChange(
+    makeRequest(
+      "session",
+      "apply_change_set",
+      "write",
+      {
+        ...changeSet,
+        previewId: preview.data.previewId,
+        confirm: true,
+      },
+      60000
+    )
+  );
+  assert.equal(applied.ok, true);
+  if (!applied.ok) return;
+  assert.equal(applied.data.applied, true);
+  assert.equal(applied.data.changedCount, 1);
+});

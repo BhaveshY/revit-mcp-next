@@ -164,8 +164,76 @@ export interface QueryResult {
   source: string;
 }
 
+export type ChangeRiskLevel = "low" | "medium" | "high";
+export type ChangeOperationType = "set_parameter" | "create_level";
+export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
+
+export type ChangeScalar = string | number | boolean;
+
+export interface ChangeOperation {
+  id?: string;
+  type: ChangeOperationType;
+  elementId?: ElementId;
+  parameterName?: string;
+  value?: ChangeScalar;
+  name?: string;
+  elevation?: UnitValue;
+}
+
+export interface ChangeSetRequest {
+  documentFingerprint?: string;
+  transactionName: string;
+  operations: ChangeOperation[];
+}
+
+export interface ChangePreviewItem {
+  operationIndex: number;
+  operationId?: string;
+  type: ChangeOperationType | string;
+  status: ChangeOperationStatus;
+  target?: Record<string, unknown>;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  message?: string;
+}
+
+export interface ChangePreviewResult {
+  previewId: string;
+  documentFingerprint: string;
+  transactionName: string;
+  operationCount: number;
+  ready: boolean;
+  requiresConfirmation: boolean;
+  riskLevel: ChangeRiskLevel;
+  changes: ChangePreviewItem[];
+}
+
+export interface ChangeApplyRequest extends ChangeSetRequest {
+  previewId: string;
+  confirm: boolean;
+}
+
+export interface ChangeApplyResult {
+  previewId: string;
+  documentFingerprint: string;
+  transactionName: string;
+  applied: boolean;
+  changedCount: number;
+  changes: ChangePreviewItem[];
+}
+
+export interface CancelRequest {
+  requestId?: string;
+  reason?: string;
+}
+
+export interface CancelResult {
+  cancelled: boolean;
+  requestId?: string;
+  message: string;
+}
+
 export interface ToolSummary<TStructured> {
   text: string;
   structured: TStructured;
 }
-

@@ -39,6 +39,41 @@ const querySchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const changeScalarSchema = z.union([z.string().max(512), z.number(), z.boolean()]);
+const changeUnitValueSchema = z.object({
+  value: z.number(),
+  unit: z.enum(["mm", "millimeters", "m", "meters", "ft", "feet", "revit-internal"]),
+  system: z.enum(["metric", "imperial", "revit-internal"]).default("metric"),
+});
+const changeOperationSchema = z
+  .object({
+    id: boundedString.optional(),
+    type: z.enum(["set_parameter", "create_level"]),
+    elementId: boundedId.optional(),
+    parameterName: boundedString.optional(),
+    value: changeScalarSchema.optional(),
+    name: z.string().min(1).max(256).optional(),
+    elevation: changeUnitValueSchema.optional(),
+  })
+  .strict();
+
+const changeSetSchema = {
+  documentFingerprint: boundedString.optional(),
+  transactionName: z.string().min(3).max(128).default("Revit MCP Next change"),
+  operations: z.array(changeOperationSchema).min(1).max(50),
+};
+
+const applyChangeSchema = {
+  ...changeSetSchema,
+  previewId: boundedString.describe("The previewId returned by revit.preview_change_set for the exact same change set."),
+  confirm: z.literal(true).describe("Must be true to apply a previewed change set."),
+};
+
+const cancelSchema = {
+  requestId: boundedString.optional().describe("Optional bridge request ID to cancel when supported by the add-in."),
+  reason: z.string().max(256).optional(),
+};
+
 const warningSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -153,7 +188,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         preset: args.preset,
         limit: args.limit ?? 50,
         cursor: args.cursor,
-        includeTotalCount: args.includeTotalCount ?? true,
+        includeTotalCount: args.includeTotalCount ?? false,
       };
       const request = makeRequest(context.sessionId, "query", "read", payload, 30000);
       const response = await context.bridge.query(request, { signal: extra.signal });
@@ -162,6 +197,81 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} item(s) returned from ${result.scope}.`
       );
+    }
+  );
+
+  server.registerTool(
+    "revit.preview_change_set",
+    {
+      title: "Preview Revit Change",
+      description:
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter and create_level.",
+      inputSchema: changeSetSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(context.sessionId, "preview_change_set", "preview", args, 30000);
+      const response = await context.bridge.previewChange(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.ready ? "Ready" : "Blocked"} preview ${result.previewId}: ${result.operationCount} operation(s), ${result.riskLevel} risk.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.apply_change_set",
+    {
+      title: "Apply Revit Change",
+      description:
+        "Apply a previously previewed bounded change set in one named Revit transaction. Requires confirm=true and the matching previewId.",
+      inputSchema: applyChangeSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(context.sessionId, "apply_change_set", "write", args, 60000);
+      const response = await context.bridge.applyChange(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          result.applied
+            ? `Applied ${result.changedCount} change(s) in transaction "${result.transactionName}".`
+            : `No changes applied for preview ${result.previewId}.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.cancel_request",
+    {
+      title: "Cancel Revit Request",
+      description: "Ask the Revit add-in to cancel queued or cancellable work when supported.",
+      inputSchema: cancelSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(context.sessionId, "cancel_request", "debug", args, 5000);
+      const response = await context.bridge.cancel(request, { signal: extra.signal });
+      return asToolResult(response, (result) => result.message);
     }
   );
 }

@@ -2,6 +2,12 @@ import net from "node:net";
 import type {
   BridgeRequest,
   BridgeResponse,
+  CancelRequest,
+  CancelResult,
+  ChangeApplyRequest,
+  ChangeApplyResult,
+  ChangePreviewResult,
+  ChangeSetRequest,
   LevelSummary,
   QueryRequest,
   QueryResult,
@@ -50,6 +56,27 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>> {
+    return this.send(request, options);
+  }
+
+  previewChange(
+    request: BridgeRequest<ChangeSetRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ChangePreviewResult>> {
+    return this.send(request, options);
+  }
+
+  applyChange(
+    request: BridgeRequest<ChangeApplyRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ChangeApplyResult>> {
+    return this.send(request, options);
+  }
+
+  cancel(
+    request: BridgeRequest<CancelRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CancelResult>> {
     return this.send(request, options);
   }
 
