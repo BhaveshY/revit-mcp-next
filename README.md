@@ -91,6 +91,7 @@ Windows installs generate a local 256-bit auth token in `%LOCALAPPDATA%\RevitMcp
 - `revit.status`
 - `revit.list_documents`
 - `revit.get_levels`
+- `revit.catalog`
 - `revit.query`
 - `revit.preview_change_set`
 - `revit.apply_change_set`
@@ -106,10 +107,12 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
 - `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
 - `copy_element`: copy one model element by an explicit 3D translation vector.
-- `change_element_type`: change one non-pinned model element to a compatible Revit type ID.
+- `change_element_type`: change one non-pinned model element to a compatible Revit type ID discovered through `revit.catalog`.
 - `set_element_pinned`: pin or unpin one model element, with optional `expectedPinned` guard.
 
 `revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
+
+Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, and `viewFamilyTypes`. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
 
 ## Production Readiness And Remaining Blockers
 

@@ -29,6 +29,61 @@ test("fake bridge returns bounded query result shape", async () => {
   assert.equal(response.data.items[0]?.id, "501");
 });
 
+test("fake bridge returns bounded catalog result shape with compatibility paging", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const firstPage = await bridge.catalog(
+    makeRequest(
+      "test",
+      "catalog",
+      "read",
+      {
+        kind: "elementTypes",
+        filter: { forElementId: "501" },
+        preset: "typeChange",
+        limit: 1,
+        includeTotalCount: true,
+      },
+      30000
+    )
+  );
+
+  assert.equal(firstPage.ok, true);
+  if (!firstPage.ok) return;
+  assert.equal(firstPage.data.kind, "elementTypes");
+  assert.equal(firstPage.data.target?.elementId, "501");
+  assert.equal(firstPage.data.target?.currentTypeId, "9001");
+  assert.equal(firstPage.data.target?.canChangeType, true);
+  assert.equal(firstPage.data.returnedCount, 1);
+  assert.equal(firstPage.data.totalCount, 2);
+  assert.equal(firstPage.data.truncated, true);
+  assert.equal(firstPage.data.cursor, "1");
+  assert.equal(firstPage.data.items[0]?.validForTarget, true);
+  assert.equal(firstPage.data.items[0]?.isCurrentType, true);
+
+  const secondPage = await bridge.catalog(
+    makeRequest(
+      "test",
+      "catalog",
+      "read",
+      {
+        kind: "elementTypes",
+        filter: { forElementId: "501" },
+        preset: "typeChange",
+        limit: 1,
+        cursor: firstPage.data.cursor,
+        includeTotalCount: true,
+      },
+      30000
+    )
+  );
+
+  assert.equal(secondPage.ok, true);
+  if (!secondPage.ok) return;
+  assert.equal(secondPage.data.returnedCount, 1);
+  assert.equal(secondPage.data.truncated, false);
+  assert.equal(secondPage.data.items[0]?.id, "9002");
+});
+
 test("request builder stamps current protocol and operation kind", () => {
   const request = makeRequest("session", "status", "read", {}, 5000);
   assert.equal(request.protocolVersion, PROTOCOL_VERSION);

@@ -4,6 +4,8 @@ import type {
   BridgeResponse,
   CancelRequest,
   CancelResult,
+  CatalogRequest,
+  CatalogResult,
   ChangeApplyRequest,
   ChangeApplyResult,
   ChangePreviewResult,
@@ -59,6 +61,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>> {
+    return this.send(request, options);
+  }
+
+  catalog(
+    request: BridgeRequest<CatalogRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CatalogResult>> {
     return this.send(request, options);
   }
 

@@ -13,6 +13,7 @@ const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
 const REQUIRED_TOOLS = [
   "revit.status",
   "revit.get_levels",
+  "revit.catalog",
   "revit.query",
   "revit.preview_change_set",
   "revit.apply_change_set",
@@ -105,6 +106,28 @@ async function main() {
     const level = chooseLevel(levels);
     const levelElevationMm = numericOrDefault(level?.elevation?.value, 0);
     console.log(`Levels OK: using ${level.name ?? "(unnamed level)"} (${level.id}) at ${levelElevationMm} mm`);
+
+    const wallTypes = await catalog(client, {
+      kind: "elementTypes",
+      filter: { classes: ["WallType"], categories: ["OST_Walls"] },
+      preset: "compact",
+      limit: 1,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(wallTypes, "elementTypes");
+    assert(wallTypes.returnedCount >= 1, "revit.catalog did not return any wall types for this project.");
+    const floorTypes = await catalog(client, {
+      kind: "elementTypes",
+      filter: { classes: ["FloorType"], categories: ["OST_Floors"] },
+      preset: "compact",
+      limit: 1,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(floorTypes, "elementTypes");
+    assert(floorTypes.returnedCount >= 1, "revit.catalog did not return any floor types for this project.");
+    console.log(
+      `Catalog OK: wall type ${wallTypes.items[0].id}, floor type ${floorTypes.items[0].id}`
+    );
 
     const runId = makeRunId();
     const gridName = `MCP-${runId}`;
@@ -512,6 +535,23 @@ async function callRequiredTool(client, name, args) {
   return data;
 }
 
+async function catalog(client, args) {
+  return callRequiredTool(client, "revit.catalog", args);
+}
+
+function assertCatalogPage(result, expectedKind) {
+  assert(result?.kind === expectedKind, `revit.catalog returned kind ${String(result?.kind)}, expected ${expectedKind}.`);
+  assert(Array.isArray(result.items), "revit.catalog did not return an items array.");
+  assert(result.returnedCount === result.items.length, "revit.catalog returnedCount did not match items length.");
+  assert(Number.isInteger(result.limit) && result.limit > 0, "revit.catalog did not return a positive limit.");
+  assert(typeof result.truncated === "boolean", "revit.catalog did not return truncated boolean.");
+  for (const item of result.items) {
+    assert(typeof item.id === "string" && item.id.length > 0, "revit.catalog item is missing id.");
+    assert(typeof item.class === "string" && item.class.length > 0, "revit.catalog item is missing class.");
+    assert(typeof item.name === "string", "revit.catalog item is missing name.");
+  }
+}
+
 async function previewChangeSet(client, changeSet, operationName) {
   const preview = await callRequiredTool(client, "revit.preview_change_set", changeSet);
   assert(preview.ready === true, `${operationName} preview was blocked:\n${formatChanges(preview.changes)}`);
@@ -767,16 +807,17 @@ function printHelp() {
 Runs a live Revit MCP smoke against the active Revit project:
   1. revit.status
   2. revit.get_levels
-  3. preview/apply create_grid
-  4. blocked preview for duplicate create_grid
-  5. preview/apply create_floor
-  6. preview/apply create_wall
-  7. revit.query for created elements
-  8. preview/apply move_element
-  9. assert the wall Y location changed by --move-y-mm
-  10. preview/apply rotate_element
-  11. preview/apply copy_element
-  12. preview/apply set_element_pinned true, then false
+  3. revit.catalog for wall and floor types
+  4. preview/apply create_grid
+  5. blocked preview for duplicate create_grid
+  6. preview/apply create_floor
+  7. preview/apply create_wall
+  8. revit.query for created elements
+  9. preview/apply move_element
+  10. assert the wall Y location changed by --move-y-mm
+  11. preview/apply rotate_element
+  12. preview/apply copy_element
+  13. preview/apply set_element_pinned true, then false
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

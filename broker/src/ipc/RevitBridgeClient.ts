@@ -3,6 +3,8 @@ import type {
   BridgeResponse,
   CancelRequest,
   CancelResult,
+  CatalogRequest,
+  CatalogResult,
   ChangeApplyRequest,
   ChangeApplyResult,
   ChangePreviewResult,
@@ -31,6 +33,10 @@ export interface RevitBridgeClient {
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>>;
+  catalog(
+    request: BridgeRequest<CatalogRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CatalogResult>>;
   previewChange(
     request: BridgeRequest<ChangeSetRequest>,
     options?: BridgeCallOptions

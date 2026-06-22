@@ -4,6 +4,10 @@ import type {
   BridgeResponse,
   CancelRequest,
   CancelResult,
+  CatalogItem,
+  CatalogKind,
+  CatalogRequest,
+  CatalogResult,
   ChangeApplyRequest,
   ChangeApplyResult,
   ChangeOperation,
@@ -53,6 +57,79 @@ const levels: LevelSummary[] = [
   },
 ];
 
+type FakeCatalogItem = CatalogItem & { kind: CatalogKind };
+
+const catalogItems: FakeCatalogItem[] = [
+  {
+    kind: "elementTypes",
+    id: "9001",
+    uniqueId: "wall-type-9001",
+    category: "OST_Walls",
+    builtInCategory: "OST_Walls",
+    class: "WallType",
+    name: "Generic - 200mm",
+    familyName: "Basic Wall",
+    isCurrentType: true,
+    validForTarget: true,
+  },
+  {
+    kind: "elementTypes",
+    id: "9002",
+    uniqueId: "wall-type-9002",
+    category: "OST_Walls",
+    builtInCategory: "OST_Walls",
+    class: "WallType",
+    name: "Generic - 300mm",
+    familyName: "Basic Wall",
+    validForTarget: true,
+  },
+  {
+    kind: "elementTypes",
+    id: "9100",
+    uniqueId: "floor-type-9100",
+    category: "OST_Floors",
+    builtInCategory: "OST_Floors",
+    class: "FloorType",
+    name: "Generic 150mm",
+    familyName: "Floor",
+  },
+  {
+    kind: "familySymbols",
+    id: "9200",
+    uniqueId: "family-symbol-9200",
+    category: "OST_Doors",
+    builtInCategory: "OST_Doors",
+    class: "FamilySymbol",
+    name: "0915 x 2134mm",
+    familyName: "Single-Flush",
+    familyId: "9199",
+    isActive: true,
+    placementType: "OneLevelBasedHosted",
+  },
+  {
+    kind: "titleBlocks",
+    id: "9300",
+    uniqueId: "titleblock-9300",
+    category: "OST_TitleBlocks",
+    builtInCategory: "OST_TitleBlocks",
+    class: "FamilySymbol",
+    name: "A1 metric",
+    familyName: "Titleblock",
+    familyId: "9299",
+    isActive: true,
+    placementType: "ViewBased",
+  },
+  {
+    kind: "viewFamilyTypes",
+    id: "9400",
+    uniqueId: "view-family-type-9400",
+    class: "ViewFamilyType",
+    name: "Floor Plan",
+    familyName: "FloorPlan",
+    viewFamily: "FloorPlan",
+  },
+];
+
 export class FakeRevitBridgeClient implements RevitBridgeClient {
   async status(
     request: BridgeRequest<Record<string, never>>,
@@ -75,6 +152,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         "revit.status",
         "revit.list_documents",
         "revit.get_levels",
+        "revit.catalog",
         "revit.query",
         "revit.preview_change_set",
         "revit.apply_change_set",
@@ -128,6 +206,41 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       units: {},
       scope: request.payload.filter.viewId ? `view:${request.payload.filter.viewId}` : "document",
       source: "fake-bridge",
+    });
+  }
+
+  async catalog(
+    request: BridgeRequest<CatalogRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CatalogResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 200);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    let items = catalogItems.filter((item) => item.kind === request.payload.kind && matchesCatalogFilter(item, filter));
+    const target = buildCatalogTarget(filter.forElementId);
+    if (filter.forElementId === "501") {
+      items = items.filter((item) => item.id === "9001" || item.id === "9002");
+    } else if (filter.forElementId) {
+      items = [];
+    }
+
+    const page = items.slice(offset, offset + limit);
+    const truncated = offset + page.length < items.length;
+
+    return ok(request, {
+      kind: request.payload.kind,
+      target,
+      items: page,
+      totalCount: request.payload.includeTotalCount ? items.length : undefined,
+      returnedCount: page.length,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      fields: request.payload.fields ?? ["id", "class", "category", "name", "familyName"],
+      scope: filter.forElementId ? `typeChange:${filter.forElementId}` : "activeDocument",
+      source: "fake-bridge",
+      units: {},
     });
   }
 
@@ -199,6 +312,66 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   dispose(): void {
     // No resources.
   }
+}
+
+function buildCatalogTarget(elementId?: string) {
+  if (!elementId) return undefined;
+  if (elementId !== "501") {
+    return {
+      elementId,
+      class: "Unknown",
+      canChangeType: false,
+      validTypeCount: 0,
+    };
+  }
+
+  return {
+    elementId: "501",
+    uniqueId: "wall-501",
+    category: "OST_Walls",
+    class: "Wall",
+    name: "Basic Wall",
+    currentTypeId: "9001",
+    currentTypeName: "Generic - 200mm",
+    pinned: false,
+    canChangeType: true,
+    validTypeCount: 2,
+  };
+}
+
+function matchesCatalogFilter(item: CatalogItem, filter: CatalogRequest["filter"]): boolean {
+  if (!filter) return true;
+  if (filter.categories?.length && !filter.categories.some((category) => equalsCatalogToken(category, item.category))) {
+    return false;
+  }
+  if (filter.classes?.length && !filter.classes.some((className) => equalsCatalogToken(className, item.class))) {
+    return false;
+  }
+  if (filter.familyName && !equalsCatalogToken(filter.familyName, item.familyName)) {
+    return false;
+  }
+  if (
+    filter.familyNameContains &&
+    !containsIgnoreCase(item.familyName ?? "", filter.familyNameContains)
+  ) {
+    return false;
+  }
+  if (filter.nameContains && !containsIgnoreCase(item.name, filter.nameContains)) {
+    return false;
+  }
+  if (filter.viewFamily?.length && !filter.viewFamily.some((viewFamily) => equalsCatalogToken(viewFamily, item.viewFamily))) {
+    return false;
+  }
+  return true;
+}
+
+function equalsCatalogToken(expected: string, actual?: string): boolean {
+  if (!actual) return false;
+  return expected.localeCompare(actual, undefined, { sensitivity: "accent" }) === 0;
+}
+
+function containsIgnoreCase(value: string, needle: string): boolean {
+  return value.toLocaleLowerCase().includes(needle.toLocaleLowerCase());
 }
 
 function maybeAbort(options?: BridgeCallOptions): void {

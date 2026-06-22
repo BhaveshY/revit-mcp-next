@@ -14,6 +14,7 @@ interface CoreToolContext {
 
 const boundedString = z.string().min(1).max(128);
 const boundedId = z.string().min(1).max(64);
+const generationSchema = z.number().int().min(0);
 const parameterScalar = z.union([z.string().max(256), z.number(), z.boolean()]);
 const parameterEqualsSchema = z
   .record(boundedString, parameterScalar)
@@ -39,6 +40,41 @@ const querySchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const catalogFilterSchema = z
+  .object({
+    forElementId: boundedId
+      .optional()
+      .describe("Optional instance element ID. When supplied for elementTypes, only Revit-valid replacement type IDs are returned."),
+    categories: z
+      .array(boundedString)
+      .max(16)
+      .optional()
+      .describe("Optional Revit category filters such as OST_Walls or OST_Floors."),
+    classes: z
+      .array(boundedString)
+      .max(16)
+      .optional()
+      .describe("Optional ElementType class filters such as WallType, FloorType, or FamilySymbol."),
+    familyName: z.string().min(1).max(128).optional(),
+    familyNameContains: z.string().min(1).max(128).optional(),
+    nameContains: z.string().min(1).max(128).optional(),
+    viewFamily: z.array(boundedString).max(16).optional(),
+    parameterEquals: parameterEqualsSchema.optional(),
+  })
+  .strict();
+
+const catalogSchema = {
+  kind: z.enum(["elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes"]),
+  documentFingerprint: boundedString.optional().describe("Optional active document fingerprint from revit.status."),
+  expectedGeneration: generationSchema.optional().describe("Expected active document generation from revit.status."),
+  filter: catalogFilterSchema.optional().describe("Filters for compact Revit catalog discovery."),
+  preset: z.enum(["idOnly", "compact", "typeChange", "placement", "sheet"]).default("compact"),
+  fields: z.array(boundedString).max(32).optional().describe("Optional catalog fields. Use param:<name> for explicit parameters."),
+  limit: z.number().int().min(1).max(200).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+};
+
 const changeScalarSchema = z.union([z.string().max(512), z.number(), z.boolean()]);
 const changeUnitValueSchema = z.object({
   value: z.number(),
@@ -59,7 +95,6 @@ const changePoint3Schema = z
   })
   .strict();
 const changeSetHashSchema = z.string().min(1).max(128);
-const generationSchema = z.number().int().min(0);
 const expiresAtSchema = z
   .string()
   .datetime({ offset: true })
@@ -121,7 +156,7 @@ const changeElementTypeOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("change_element_type"),
     elementId: boundedId.describe("Target Revit element ID."),
-    typeId: boundedId.describe("New Revit element type ID. Use revit.query to inspect current type IDs first."),
+    typeId: boundedId.describe("New Revit element type ID. Use revit.catalog with kind=elementTypes and filter.forElementId first."),
   })
   .strict();
 const setElementPinnedOperationSchema = operationBaseSchema
@@ -276,6 +311,43 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const request = makeRequest(context.sessionId, "get_levels", "read", args, 10000);
       const response = await context.bridge.getLevels(request, { signal: extra.signal });
       return asToolResult(response, (levels) => `${levels.length} level(s) returned with exact IDs and elevations.`);
+    }
+  );
+
+  server.registerTool(
+    "revit.catalog",
+    {
+      title: "Revit Catalog",
+      description:
+        "Return compact Revit catalog IDs for safe writes: element types, family symbols, title blocks, and view family types. Use kind=elementTypes with filter.forElementId before change_element_type.",
+      inputSchema: catalogSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        kind: args.kind,
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        preset: args.preset ?? "compact",
+        fields: args.fields,
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "catalog", "read", payload, 30000);
+      const response = await context.bridge.catalog(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} ${result.kind} catalog item(s) returned from ${result.scope}.`
+      );
     }
   );
 

@@ -170,6 +170,79 @@ export interface QueryResult {
   source: string;
 }
 
+export type CatalogKind = "elementTypes" | "familySymbols" | "titleBlocks" | "viewFamilyTypes";
+export type CatalogPreset = "idOnly" | "compact" | "typeChange" | "placement" | "sheet";
+
+export type CatalogScalar = string | number | boolean;
+
+export interface CatalogFilter {
+  forElementId?: ElementId;
+  categories?: string[];
+  classes?: string[];
+  familyName?: string;
+  familyNameContains?: string;
+  nameContains?: string;
+  viewFamily?: string[];
+  parameterEquals?: Record<string, CatalogScalar>;
+}
+
+export interface CatalogRequest {
+  kind: CatalogKind;
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: CatalogFilter;
+  preset?: CatalogPreset;
+  fields?: string[];
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+}
+
+export interface CatalogTarget {
+  elementId: ElementId;
+  uniqueId?: UniqueId;
+  category?: string;
+  class: string;
+  name?: string;
+  currentTypeId?: ElementId;
+  currentTypeName?: string;
+  pinned?: boolean;
+  canChangeType: boolean;
+  validTypeCount?: number;
+}
+
+export interface CatalogItem {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  class: string;
+  category?: string;
+  builtInCategory?: string;
+  name: string;
+  familyName?: string;
+  familyId?: ElementId;
+  isCurrentType?: boolean;
+  validForTarget?: boolean;
+  isActive?: boolean;
+  placementType?: string;
+  viewFamily?: string;
+  fields?: Record<string, unknown>;
+}
+
+export interface CatalogResult {
+  kind: CatalogKind;
+  target?: CatalogTarget;
+  items: CatalogItem[];
+  totalCount?: number;
+  returnedCount: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  fields: string[];
+  scope: string;
+  source: string;
+  units: Record<string, string>;
+}
+
 export type ChangeRiskLevel = "low" | "medium" | "high";
 export type ChangeOperationType =
   | "set_parameter"

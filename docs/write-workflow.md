@@ -3,9 +3,19 @@
 Write operations use a preview/apply contract.
 
 1. Run `revit.status` and record the active document fingerprint.
-2. Run `revit.preview_change_set` with a bounded change set.
-3. Inspect every returned change. Do not apply blocked previews.
-4. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, and `confirm: true`.
+2. Run `revit.get_levels` and `revit.catalog` for IDs that the change set needs.
+3. Run `revit.preview_change_set` with a bounded change set.
+4. Inspect every returned change. Do not apply blocked previews.
+5. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, and `confirm: true`.
+
+## Discover Before Writing
+
+Use `revit.catalog` instead of guessing type IDs:
+
+- `create_wall.wallTypeId`: `revit.catalog` with `kind: "elementTypes"` and filters such as `classes: ["WallType"]`, `categories: ["OST_Walls"]`.
+- `create_floor.floorTypeId`: `revit.catalog` with `kind: "elementTypes"` and filters such as `classes: ["FloorType"]`, `categories: ["OST_Floors"]`.
+- `change_element_type.typeId`: `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"` so the returned IDs come from Revit's compatible type list.
+- Future placement and sheets: `revit.catalog` also supports `kind: "familySymbols"`, `kind: "titleBlocks"`, and `kind: "viewFamilyTypes"`.
 
 End-to-end supported operations:
 

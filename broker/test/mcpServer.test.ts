@@ -40,9 +40,62 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.match(result.content[0].text, /Revit bridge connected/);
     assert.equal(result.structuredContent?.data?.connected, true);
 
-    for (const expected of ["revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request"]) {
+    for (const expected of ["revit.catalog", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request"]) {
       assert.ok(tools.tools.find((tool) => tool.name === expected), `${expected} tool should be listed`);
     }
+
+    const catalogTool = tools.tools.find((tool) => tool.name === "revit.catalog");
+    assert.ok(catalogTool?.inputSchema, "revit.catalog should declare inputSchema");
+    assert.equal(catalogTool.annotations?.readOnlyHint, true);
+    const catalogSchema = JSON.stringify(catalogTool.inputSchema);
+    for (const expectedCatalogSchemaTerm of [
+      "kind",
+      "elementTypes",
+      "familySymbols",
+      "titleBlocks",
+      "viewFamilyTypes",
+      "forElementId",
+      "typeChange",
+      "familyNameContains",
+      "nameContains",
+      "viewFamily",
+    ]) {
+      assert.match(catalogSchema, new RegExp(expectedCatalogSchemaTerm));
+    }
+
+    const catalog = (await client.callTool({
+      name: "revit.catalog",
+      arguments: {
+        kind: "elementTypes",
+        filter: { forElementId: "501" },
+        preset: "typeChange",
+        limit: 1,
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          kind?: string;
+          returnedCount?: number;
+          totalCount?: number;
+          truncated?: boolean;
+          cursor?: string;
+          target?: { elementId?: string; currentTypeId?: string };
+          items?: Array<{ id?: string; isCurrentType?: boolean; validForTarget?: boolean }>;
+        };
+      };
+    };
+    assert.equal(catalog.isError, undefined);
+    assert.equal(catalog.structuredContent?.data?.kind, "elementTypes");
+    assert.equal(catalog.structuredContent?.data?.target?.elementId, "501");
+    assert.equal(catalog.structuredContent?.data?.target?.currentTypeId, "9001");
+    assert.equal(catalog.structuredContent?.data?.returnedCount, 1);
+    assert.equal(catalog.structuredContent?.data?.totalCount, 2);
+    assert.equal(catalog.structuredContent?.data?.truncated, true);
+    assert.equal(catalog.structuredContent?.data?.cursor, "1");
+    assert.equal(catalog.structuredContent?.data?.items?.[0]?.validForTarget, true);
+    assert.equal(catalog.structuredContent?.data?.items?.[0]?.isCurrentType, true);
 
     const previewTool = tools.tools.find((tool) => tool.name === "revit.preview_change_set");
     assert.ok(previewTool?.inputSchema, "revit.preview_change_set should declare inputSchema");
