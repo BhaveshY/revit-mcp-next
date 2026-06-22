@@ -170,18 +170,35 @@ export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
 
-export interface ChangeOperation {
+export interface ChangeOperationBase {
   id?: string;
   type: ChangeOperationType;
-  elementId?: ElementId;
-  parameterName?: string;
-  value?: ChangeScalar;
-  name?: string;
-  elevation?: UnitValue;
 }
 
-export interface ChangeSetRequest {
+export interface SetParameterChangeOperation extends ChangeOperationBase {
+  type: "set_parameter";
+  elementId: ElementId;
+  parameterName: string;
+  value: ChangeScalar;
+}
+
+export interface CreateLevelChangeOperation extends ChangeOperationBase {
+  type: "create_level";
+  name: string;
+  elevation: UnitValue;
+}
+
+export type ChangeOperation = SetParameterChangeOperation | CreateLevelChangeOperation;
+
+export interface ChangeSetSafetyFields {
   documentFingerprint?: string;
+  expectedGeneration?: number;
+  baseGeneration?: number;
+  changeSetHash?: string;
+  expiresAt?: string;
+}
+
+export interface ChangeSetRequest extends ChangeSetSafetyFields {
   transactionName: string;
   operations: ChangeOperation[];
 }
@@ -200,6 +217,9 @@ export interface ChangePreviewItem {
 export interface ChangePreviewResult {
   previewId: string;
   documentFingerprint: string;
+  changeSetHash?: string;
+  baseGeneration?: number;
+  expiresAt?: string;
   transactionName: string;
   operationCount: number;
   ready: boolean;
@@ -216,6 +236,8 @@ export interface ChangeApplyRequest extends ChangeSetRequest {
 export interface ChangeApplyResult {
   previewId: string;
   documentFingerprint: string;
+  changeSetHash?: string;
+  baseGeneration?: number;
   transactionName: string;
   applied: boolean;
   changedCount: number;

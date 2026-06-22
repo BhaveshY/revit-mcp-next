@@ -45,20 +45,38 @@ const changeUnitValueSchema = z.object({
   unit: z.enum(["mm", "millimeters", "m", "meters", "ft", "feet", "revit-internal"]),
   system: z.enum(["metric", "imperial", "revit-internal"]).default("metric"),
 });
-const changeOperationSchema = z
-  .object({
-    id: boundedString.optional(),
-    type: z.enum(["set_parameter", "create_level"]),
-    elementId: boundedId.optional(),
-    parameterName: boundedString.optional(),
-    value: changeScalarSchema.optional(),
-    name: z.string().min(1).max(256).optional(),
-    elevation: changeUnitValueSchema.optional(),
+const changeSetHashSchema = z.string().min(1).max(128);
+const generationSchema = z.number().int().min(0);
+const expiresAtSchema = z
+  .string()
+  .datetime({ offset: true })
+  .describe("ISO 8601 expiry timestamp returned by preview_change_set and echoed to apply_change_set.");
+const operationBaseSchema = z.object({
+  id: boundedString.optional().describe("Optional client-supplied operation identifier for preview/apply correlation."),
+});
+const setParameterOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("set_parameter"),
+    elementId: boundedId.describe("Target Revit element ID."),
+    parameterName: boundedString.describe("Exact parameter name to set on the target element."),
+    value: changeScalarSchema.describe("New parameter value as a string, number, or boolean."),
   })
   .strict();
+const createLevelOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_level"),
+    name: z.string().min(1).max(256).describe("Name for the new Revit level."),
+    elevation: changeUnitValueSchema.describe("Level elevation with explicit units."),
+  })
+  .strict();
+const changeOperationSchema = z.discriminatedUnion("type", [setParameterOperationSchema, createLevelOperationSchema]);
 
 const changeSetSchema = {
-  documentFingerprint: boundedString.optional(),
+  documentFingerprint: boundedString.optional().describe("Active document fingerprint from revit.status or preview output."),
+  expectedGeneration: generationSchema.optional().describe("Expected active document generation before previewing/applying."),
+  baseGeneration: generationSchema.optional().describe("Document generation captured by preview_change_set and echoed to apply."),
+  changeSetHash: changeSetHashSchema.optional().describe("Opaque hash for the exact previewed change set."),
+  expiresAt: expiresAtSchema.optional(),
   transactionName: z.string().min(3).max(128).default("Revit MCP Next change"),
   operations: z.array(changeOperationSchema).min(1).max(50),
 };

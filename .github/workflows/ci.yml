@@ -15,10 +15,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
       - run: npm ci
       - run: npm run build
+      - run: npm run typecheck
       - run: npm test
       - run: node scripts/validate-repo.mjs
+      - name: Build .NET bridge contracts
+        shell: pwsh
+        run: dotnet build addin\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj -c Release
       - name: Check installer dry run when Revit artifacts are present
         shell: pwsh
         run: |

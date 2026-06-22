@@ -18,13 +18,22 @@ namespace RevitMcpNext.Addin.Revit
         private const string AddinVersion = "0.1.0";
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxQueryLimit = 500;
+        private const int MaxChangeSetOperations = 50;
         private readonly RevitRequestQueue _queue;
         private readonly TransactionService _transactions;
+        private readonly DocumentGenerationTracker _generations;
+        private readonly PreviewTokenStore _previewTokens;
 
-        public RevitExternalEventHandler(RevitRequestQueue queue, TransactionService transactions)
+        public RevitExternalEventHandler(
+            RevitRequestQueue queue,
+            TransactionService transactions,
+            DocumentGenerationTracker generations = null,
+            PreviewTokenStore previewTokens = null)
         {
             _queue = queue;
             _transactions = transactions;
+            _generations = generations ?? new DocumentGenerationTracker();
+            _previewTokens = previewTokens ?? new PreviewTokenStore();
         }
 
         public void Execute(UIApplication app)
@@ -47,6 +56,37 @@ namespace RevitMcpNext.Addin.Revit
             return "Revit MCP Next External Event Handler";
         }
 
+        private long GetActiveDocumentGeneration(UIApplication app)
+        {
+            Document activeDocument = app.ActiveUIDocument?.Document;
+            return activeDocument == null ? 0 : _generations.GetGeneration(activeDocument);
+        }
+
+        private BridgeResponseEnvelope ValidateExpectedGeneration(
+            BridgeRequestEnvelope request,
+            Document document,
+            Stopwatch sw,
+            out long generation)
+        {
+            generation = _generations.GetGeneration(document);
+            long? expectedGeneration =
+                request.ExpectedGeneration ??
+                GetLong(request.Payload, "expectedGeneration") ??
+                GetLong(request.Payload, "baseGeneration");
+
+            if (expectedGeneration.HasValue && expectedGeneration.Value != generation)
+            {
+                return Failure(
+                    request,
+                    "GENERATION_MISMATCH",
+                    "The document generation is " + generation.ToString(CultureInfo.InvariantCulture) +
+                    " but the request expected " + expectedGeneration.Value.ToString(CultureInfo.InvariantCulture) + ". Refresh the document state before retrying.",
+                    sw);
+            }
+
+            return null;
+        }
+
         private BridgeResponseEnvelope Handle(UIApplication app, BridgeRequestEnvelope request)
         {
             var sw = Stopwatch.StartNew();
@@ -57,9 +97,9 @@ namespace RevitMcpNext.Addin.Revit
                     switch (request.Operation)
                     {
                         case "status":
-                            return Success(request, BuildStatus(app), sw);
+                            return Success(request, BuildStatus(app), sw, generation: GetActiveDocumentGeneration(app));
                         case "list_documents":
-                            return Success(request, BuildDocumentList(app), sw);
+                            return Success(request, BuildDocumentList(app), sw, generation: GetActiveDocumentGeneration(app));
                         case "get_levels":
                             return HandleGetLevels(app, request, sw);
                         case "query":
@@ -82,13 +122,16 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static BridgeResponseEnvelope HandleGetLevels(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private BridgeResponseEnvelope HandleGetLevels(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_levels.", sw);
             }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
 
             var collectorSw = Stopwatch.StartNew();
             var levels = new FilteredElementCollector(document)
@@ -109,16 +152,20 @@ namespace RevitMcpNext.Addin.Revit
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = levels.Length,
                     TotalCount = levels.Length
-                });
+                },
+                generation: generation);
         }
 
-        private static BridgeResponseEnvelope HandleQuery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private BridgeResponseEnvelope HandleQuery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.query.", sw);
             }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
 
             var warnings = new List<BridgeWarning>();
             var collectorSw = Stopwatch.StartNew();
@@ -167,16 +214,20 @@ namespace RevitMcpNext.Addin.Revit
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = page.Count,
                     TotalCount = includeTotalCount ? totalCount : (int?)null
-                });
+                },
+                generation: generation);
         }
 
-        private static BridgeResponseEnvelope HandlePreviewChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private BridgeResponseEnvelope HandlePreviewChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.preview_change_set.", sw);
             }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
 
             var warnings = new List<BridgeWarning>();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
@@ -185,34 +236,55 @@ namespace RevitMcpNext.Addin.Revit
             {
                 return Failure(request, "EMPTY_CHANGE_SET", "A change set must contain at least one operation.", sw);
             }
-            if (operations.Count > 50)
+            if (operations.Count > MaxChangeSetOperations)
             {
                 return Failure(request, "CHANGE_SET_TOO_LARGE", "A change set can contain at most 50 operations.", sw);
             }
 
             string transactionName = GetTransactionName(payload);
+            string documentFingerprint = ComputeDocumentFingerprint(document);
             string previewId = ComputePreviewId(document, transactionName, operations);
             var changes = new List<Dictionary<string, object>>();
+            var validationContext = new PreviewValidationContext();
             bool ready = true;
             string riskLevel = "low";
 
             for (int index = 0; index < operations.Count; index++)
             {
-                Dictionary<string, object> change = PreviewOperation(document, operations[index], index);
+                Dictionary<string, object> change = PreviewOperation(document, operations[index], index, validationContext);
                 changes.Add(change);
                 string status = GetString(change, "status");
                 if (string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
                 if (string.Equals(GetString(operations[index], "type"), "create_level", StringComparison.OrdinalIgnoreCase)) riskLevel = "medium";
             }
 
+            string operationsHash = ComputeChangeSetHash(operations);
+            string changesHash = ComputeChangeSetHash(changes);
+            string changeSetHash = ComputePreviewChangeSetHash(documentFingerprint, generation, transactionName, operationsHash, changesHash);
+            PreviewToken token = _previewTokens.Issue(
+                previewId,
+                documentFingerprint,
+                generation,
+                transactionName,
+                operationsHash,
+                changesHash,
+                changeSetHash,
+                ready,
+                operations.Count);
+
             var data = new Dictionary<string, object>
             {
                 ["previewId"] = previewId,
-                ["documentFingerprint"] = ComputeDocumentFingerprint(document),
+                ["documentFingerprint"] = documentFingerprint,
+                ["changeSetHash"] = changeSetHash,
+                ["baseGeneration"] = generation,
+                ["generation"] = generation,
                 ["transactionName"] = transactionName,
                 ["operationCount"] = operations.Count,
                 ["ready"] = ready,
                 ["requiresConfirmation"] = true,
+                ["expiresAt"] = FormatUtc(token.ExpiresAtUtc),
+                ["previewExpiresAtUtc"] = FormatUtc(token.ExpiresAtUtc),
                 ["riskLevel"] = riskLevel,
                 ["changes"] = changes.ToArray()
             };
@@ -222,7 +294,7 @@ namespace RevitMcpNext.Addin.Revit
                 ElapsedMs = sw.ElapsedMilliseconds,
                 ReturnedCount = changes.Count,
                 TotalCount = changes.Count
-            });
+            }, generation: generation);
         }
 
         private BridgeResponseEnvelope HandleApplyChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
@@ -232,6 +304,9 @@ namespace RevitMcpNext.Addin.Revit
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.apply_change_set.", sw);
             }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
 
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             if (!GetBool(payload, "confirm", false))
@@ -244,12 +319,13 @@ namespace RevitMcpNext.Addin.Revit
             {
                 return Failure(request, "EMPTY_CHANGE_SET", "A change set must contain at least one operation.", sw);
             }
-            if (operations.Count > 50)
+            if (operations.Count > MaxChangeSetOperations)
             {
                 return Failure(request, "CHANGE_SET_TOO_LARGE", "A change set can contain at most 50 operations.", sw);
             }
 
             string transactionName = GetTransactionName(payload);
+            string documentFingerprint = ComputeDocumentFingerprint(document);
             string expectedPreviewId = ComputePreviewId(document, transactionName, operations);
             string providedPreviewId = GetString(payload, "previewId");
             if (!string.Equals(providedPreviewId, expectedPreviewId, StringComparison.Ordinal))
@@ -258,27 +334,24 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             var previewChanges = new List<Dictionary<string, object>>();
-            bool ready = true;
+            var validationContext = new PreviewValidationContext();
             for (int index = 0; index < operations.Count; index++)
             {
-                Dictionary<string, object> change = PreviewOperation(document, operations[index], index);
+                Dictionary<string, object> change = PreviewOperation(document, operations[index], index, validationContext);
                 previewChanges.Add(change);
-                if (string.Equals(GetString(change, "status"), "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
             }
-            if (!ready)
+
+            PreviewTokenValidation tokenValidation = _previewTokens.Validate(
+                providedPreviewId,
+                documentFingerprint,
+                generation,
+                transactionName,
+                ComputeChangeSetHash(operations),
+                ComputeChangeSetHash(previewChanges),
+                GetString(payload, "changeSetHash"));
+            if (!tokenValidation.Ok)
             {
-                return Success(request, new Dictionary<string, object>
-                {
-                    ["previewId"] = expectedPreviewId,
-                    ["documentFingerprint"] = ComputeDocumentFingerprint(document),
-                    ["transactionName"] = transactionName,
-                    ["applied"] = false,
-                    ["changedCount"] = 0,
-                    ["changes"] = previewChanges.ToArray()
-                }, sw, new List<BridgeWarning>
-                {
-                    new BridgeWarning { Code = "PREVIEW_BLOCKED", Message = "The change set contains blocked operations and was not applied." }
-                });
+                return Failure(request, tokenValidation.Code, tokenValidation.Message, sw);
             }
 
             List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
@@ -290,11 +363,16 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 return results;
             });
+            _previewTokens.Consume(providedPreviewId);
+            long appliedGeneration = _generations.GetGeneration(document);
 
             var data = new Dictionary<string, object>
             {
                 ["previewId"] = expectedPreviewId,
-                ["documentFingerprint"] = ComputeDocumentFingerprint(document),
+                ["documentFingerprint"] = documentFingerprint,
+                ["changeSetHash"] = tokenValidation.Token.ChangeSetHash,
+                ["baseGeneration"] = tokenValidation.Token.Generation,
+                ["generation"] = appliedGeneration,
                 ["transactionName"] = transactionName,
                 ["applied"] = true,
                 ["changedCount"] = appliedChanges.Count,
@@ -306,7 +384,7 @@ namespace RevitMcpNext.Addin.Revit
                 ElapsedMs = sw.ElapsedMilliseconds,
                 ReturnedCount = appliedChanges.Count,
                 TotalCount = appliedChanges.Count
-            });
+            }, generation: appliedGeneration);
         }
 
         private static BridgeResponseEnvelope HandleCancel(BridgeRequestEnvelope request, Stopwatch sw)
@@ -323,7 +401,11 @@ namespace RevitMcpNext.Addin.Revit
             return Success(request, data, sw);
         }
 
-        private static Dictionary<string, object> PreviewOperation(Document document, Dictionary<string, object> operation, int index)
+        private static Dictionary<string, object> PreviewOperation(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
         {
             string type = GetString(operation, "type");
             switch (type)
@@ -331,7 +413,7 @@ namespace RevitMcpNext.Addin.Revit
                 case "set_parameter":
                     return PreviewSetParameter(document, operation, index);
                 case "create_level":
-                    return PreviewCreateLevel(document, operation, index);
+                    return PreviewCreateLevel(document, operation, index, validationContext);
                 default:
                     return BlockedChange(operation, index, "Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -404,13 +486,21 @@ namespace RevitMcpNext.Addin.Revit
                 });
         }
 
-        private static Dictionary<string, object> PreviewCreateLevel(Document document, Dictionary<string, object> operation, int index)
+        private static Dictionary<string, object> PreviewCreateLevel(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
         {
             string name = GetString(operation, "name");
             Dictionary<string, object> elevation = GetDictionary(operation, "elevation");
             if (string.IsNullOrWhiteSpace(name)) return BlockedChange(operation, index, "create_level requires name.");
             if (elevation == null) return BlockedChange(operation, index, "create_level requires elevation.");
             if (LevelNameExists(document, name)) return BlockedChange(operation, index, "A level named '" + name + "' already exists.");
+            if (validationContext != null && !validationContext.TryAddLevelName(name))
+            {
+                return BlockedChange(operation, index, "The change set creates duplicate level name '" + name + "'.");
+            }
 
             double internalElevation;
             try
@@ -485,6 +575,16 @@ namespace RevitMcpNext.Addin.Revit
         private static Dictionary<string, object> BlockedChange(Dictionary<string, object> operation, int index, string message)
         {
             return Change(operation, index, "blocked", null, null, null, message);
+        }
+
+        private sealed class PreviewValidationContext
+        {
+            private readonly HashSet<string> _levelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            public bool TryAddLevelName(string name)
+            {
+                return _levelNames.Add((name ?? string.Empty).Trim());
+            }
         }
 
         private static Dictionary<string, object> ElementTarget(Element element, string parameterName)
@@ -619,6 +719,33 @@ namespace RevitMcpNext.Addin.Revit
             return HashString(raw).Substring(0, 24);
         }
 
+        private static string ComputeChangeSetHash(object value)
+        {
+            return "sha256:" + HashString(Canonicalize(value));
+        }
+
+        private static string ComputePreviewChangeSetHash(
+            string documentFingerprint,
+            long generation,
+            string transactionName,
+            string operationsHash,
+            string changesHash)
+        {
+            return ComputeChangeSetHash(new Dictionary<string, object>
+            {
+                ["documentFingerprint"] = documentFingerprint,
+                ["baseGeneration"] = generation,
+                ["transactionName"] = transactionName,
+                ["operationsHash"] = operationsHash,
+                ["changesHash"] = changesHash
+            });
+        }
+
+        private static string FormatUtc(DateTimeOffset value)
+        {
+            return value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        }
+
         private static string Canonicalize(object value)
         {
             if (value == null) return "null";
@@ -653,7 +780,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static Dictionary<string, object> BuildStatus(UIApplication app)
+        private Dictionary<string, object> BuildStatus(UIApplication app)
         {
             UIDocument activeUiDocument = app.ActiveUIDocument;
             Document activeDocument = activeUiDocument?.Document;
@@ -694,7 +821,7 @@ namespace RevitMcpNext.Addin.Revit
             return data;
         }
 
-        private static object[] BuildDocumentList(UIApplication app)
+        private object[] BuildDocumentList(UIApplication app)
         {
             Document activeDocument = app.ActiveUIDocument?.Document;
             return EnumerateDocuments(app)
@@ -999,7 +1126,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static Dictionary<string, object> BuildDocumentSummary(Document document, Document activeDocument)
+        private Dictionary<string, object> BuildDocumentSummary(Document document, Document activeDocument)
         {
             var summary = new Dictionary<string, object>
             {
@@ -1009,7 +1136,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["isActive"] = ReferenceEquals(document, activeDocument),
                 ["isWorkshared"] = document.IsWorkshared,
                 ["isModified"] = document.IsModified,
-                ["generation"] = 0
+                ["generation"] = _generations.GetGeneration(document)
             };
 
             if (!string.IsNullOrWhiteSpace(document.PathName)) summary["path"] = document.PathName;
@@ -1090,12 +1217,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static string ComputeDocumentFingerprint(Document document)
         {
-            string raw = document.Title + "|" + document.PathName + "|" + document.GetHashCode().ToString(CultureInfo.InvariantCulture);
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(raw));
-                return BitConverter.ToString(hash).Replace("-", string.Empty).Substring(0, 16).ToLowerInvariant();
-            }
+            return DocumentGenerationTracker.ComputeDocumentFingerprint(document);
         }
 
         private static View SafeActiveView(Document document)
@@ -1311,6 +1433,12 @@ namespace RevitMcpNext.Addin.Revit
             return Convert.ToInt32(value, CultureInfo.InvariantCulture);
         }
 
+        private static long? GetLong(Dictionary<string, object> root, string key)
+        {
+            if (root == null || !root.TryGetValue(key, out object value) || value == null) return null;
+            return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
         private static double? GetDouble(Dictionary<string, object> root, string key)
         {
             if (root == null || !root.TryGetValue(key, out object value) || value == null) return null;
@@ -1328,7 +1456,8 @@ namespace RevitMcpNext.Addin.Revit
             object data,
             Stopwatch sw,
             List<BridgeWarning> warnings = null,
-            BridgeMetrics metrics = null)
+            BridgeMetrics metrics = null,
+            long? generation = null)
         {
             sw.Stop();
             BridgeMetrics actualMetrics = metrics ?? new BridgeMetrics();
@@ -1340,7 +1469,7 @@ namespace RevitMcpNext.Addin.Revit
                 Data = data,
                 Warnings = warnings ?? new List<BridgeWarning>(),
                 Metrics = actualMetrics,
-                Generation = 0
+                Generation = generation ?? 0
             };
         }
 

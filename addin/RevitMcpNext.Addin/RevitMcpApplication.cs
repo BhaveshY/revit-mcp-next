@@ -1,4 +1,6 @@
 using System;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
 using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Addin.Ipc;
@@ -12,13 +14,17 @@ namespace RevitMcpNext.Addin
         private RevitRequestQueue _queue;
         private RevitExternalEventHandler _handler;
         private ExternalEvent _externalEvent;
+        private DocumentGenerationTracker _generationTracker;
 
         public Result OnStartup(UIControlledApplication application)
         {
             try
             {
                 _queue = new RevitRequestQueue();
-                _handler = new RevitExternalEventHandler(_queue, new TransactionService());
+                _generationTracker = new DocumentGenerationTracker();
+                application.ControlledApplication.DocumentChanged += OnDocumentChanged;
+
+                _handler = new RevitExternalEventHandler(_queue, new TransactionService(), _generationTracker);
                 _externalEvent = ExternalEvent.Create(_handler);
 
                 _queue.AttachExternalEvent(_externalEvent);
@@ -33,6 +39,7 @@ namespace RevitMcpNext.Addin
             }
             catch (Exception ex)
             {
+                application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
                 DiagnosticsLogger.Error("Revit MCP Next add-in startup failed.", ex);
                 return Result.Failed;
             }
@@ -42,6 +49,7 @@ namespace RevitMcpNext.Addin
         {
             try
             {
+                application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
                 _pipeHost?.Dispose();
                 _queue?.CancelAll("ADDIN_SHUTDOWN", "Revit is shutting down.");
                 _externalEvent?.Dispose();
@@ -52,6 +60,22 @@ namespace RevitMcpNext.Addin
             {
                 DiagnosticsLogger.Error("Revit MCP Next add-in shutdown failed.", ex);
                 return Result.Failed;
+            }
+        }
+
+        private void OnDocumentChanged(object sender, DocumentChangedEventArgs args)
+        {
+            try
+            {
+                Document document = args.GetDocument();
+                if (document != null)
+                {
+                    _generationTracker?.MarkChanged(document);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("Failed to update document generation after Revit document change.", ex);
             }
         }
     }

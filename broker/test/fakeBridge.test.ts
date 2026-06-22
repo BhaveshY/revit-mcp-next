@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
+import { PROTOCOL_VERSION, type ChangeApplyRequest, type ChangeSetRequest } from "@revit-mcp-next/contracts";
 import { FakeRevitBridgeClient } from "../src/ipc/FakeRevitBridgeClient.js";
 import { makeRequest } from "../src/ipc/RequestFactory.js";
 
@@ -40,7 +40,9 @@ test("request builder stamps current protocol and operation kind", () => {
 test("fake bridge previews and applies a bounded change set", async () => {
   const bridge = new FakeRevitBridgeClient();
   const changeSet = {
-    transactionName: "Update Mark",
+    documentFingerprint: "sample-doc-fingerprint",
+    expectedGeneration: 7,
+    transactionName: "Update Mark And Level",
     operations: [
       {
         id: "op-1",
@@ -49,31 +51,43 @@ test("fake bridge previews and applies a bounded change set", async () => {
         parameterName: "Mark",
         value: "A-101",
       },
+      {
+        id: "op-2",
+        type: "create_level" as const,
+        name: "Level 3",
+        elevation: { value: 7000, unit: "mm", system: "metric" as const },
+      },
     ],
-  };
+  } satisfies ChangeSetRequest;
 
   const preview = await bridge.previewChange(makeRequest("session", "preview_change_set", "preview", changeSet, 30000));
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 1);
+  assert.equal(preview.data.operationCount, 2);
+  assert.equal(preview.data.riskLevel, "medium");
+  assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
+  assert.equal(preview.data.baseGeneration, 7);
+  assert.match(preview.data.changeSetHash ?? "", /^sha256:/);
+  assert.equal(preview.data.expiresAt, "2099-01-01T00:00:00.000Z");
   assert.equal(preview.data.changes[0]?.status, "ready");
 
+  const applyPayload = {
+    ...changeSet,
+    previewId: preview.data.previewId,
+    confirm: true,
+    changeSetHash: preview.data.changeSetHash,
+    baseGeneration: preview.data.baseGeneration,
+    expiresAt: preview.data.expiresAt,
+  } satisfies ChangeApplyRequest;
+
   const applied = await bridge.applyChange(
-    makeRequest(
-      "session",
-      "apply_change_set",
-      "write",
-      {
-        ...changeSet,
-        previewId: preview.data.previewId,
-        confirm: true,
-      },
-      60000
-    )
+    makeRequest("session", "apply_change_set", "write", applyPayload, 60000)
   );
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 1);
+  assert.equal(applied.data.changedCount, 2);
+  assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
+  assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
 });

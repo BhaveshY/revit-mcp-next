@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   BridgeRequest,
   BridgeResponse,
@@ -5,6 +6,7 @@ import type {
   CancelResult,
   ChangeApplyRequest,
   ChangeApplyResult,
+  ChangeOperation,
   ChangePreviewResult,
   ChangeSetRequest,
   LevelSummary,
@@ -134,9 +136,13 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<ChangePreviewResult>> {
     maybeAbort(options);
+    const metadata = getChangeSetMetadata(request.payload);
     return ok(request, {
       previewId: `fake-preview-${request.payload.operations.length}`,
-      documentFingerprint: request.payload.documentFingerprint ?? activeDocument.fingerprint,
+      documentFingerprint: metadata.documentFingerprint,
+      changeSetHash: metadata.changeSetHash,
+      baseGeneration: metadata.baseGeneration,
+      expiresAt: metadata.expiresAt,
       transactionName: request.payload.transactionName,
       operationCount: request.payload.operations.length,
       ready: true,
@@ -147,8 +153,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         operationId: operation.id,
         type: operation.type,
         status: "ready",
-        target: operation.elementId ? { elementId: operation.elementId } : { document: activeDocument.title },
-        after: { value: operation.value ?? operation.name },
+        target: getOperationTarget(operation),
+        after: getOperationAfter(operation),
       })),
     });
   }
@@ -158,9 +164,12 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<ChangeApplyResult>> {
     maybeAbort(options);
+    const metadata = getChangeSetMetadata(request.payload);
     return ok(request, {
       previewId: request.payload.previewId,
-      documentFingerprint: request.payload.documentFingerprint ?? activeDocument.fingerprint,
+      documentFingerprint: metadata.documentFingerprint,
+      changeSetHash: metadata.changeSetHash,
+      baseGeneration: metadata.baseGeneration,
       transactionName: request.payload.transactionName,
       applied: request.payload.confirm,
       changedCount: request.payload.operations.length,
@@ -169,8 +178,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         operationId: operation.id,
         type: operation.type,
         status: "applied",
-        target: operation.elementId ? { elementId: operation.elementId } : { document: activeDocument.title },
-        after: { value: operation.value ?? operation.name },
+        target: getOperationTarget(operation),
+        after: getOperationAfter(operation),
       })),
     });
   }
@@ -196,6 +205,58 @@ function maybeAbort(options?: BridgeCallOptions): void {
   if (options?.signal?.aborted) {
     throw new Error("Bridge call aborted");
   }
+}
+
+function getChangeSetMetadata(payload: ChangeSetRequest): {
+  documentFingerprint: string;
+  changeSetHash: string;
+  baseGeneration: number;
+  expiresAt: string;
+} {
+  const documentFingerprint = payload.documentFingerprint ?? activeDocument.fingerprint;
+  const baseGeneration = payload.baseGeneration ?? payload.expectedGeneration ?? activeDocument.generation;
+  return {
+    documentFingerprint,
+    changeSetHash: payload.changeSetHash ?? hashChangeSet(payload, documentFingerprint, baseGeneration),
+    baseGeneration,
+    expiresAt: payload.expiresAt ?? "2099-01-01T00:00:00.000Z",
+  };
+}
+
+function hashChangeSet(payload: ChangeSetRequest, documentFingerprint: string, baseGeneration: number): string {
+  const canonicalPayload = {
+    documentFingerprint,
+    baseGeneration,
+    transactionName: payload.transactionName,
+    operations: payload.operations,
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalPayload)).digest("hex")}`;
+}
+
+function getOperationTarget(operation: ChangeOperation): Record<string, unknown> {
+  if (operation.type === "set_parameter") {
+    return {
+      elementId: operation.elementId,
+      parameterName: operation.parameterName,
+    };
+  }
+
+  return {
+    document: activeDocument.title,
+  };
+}
+
+function getOperationAfter(operation: ChangeOperation): Record<string, unknown> {
+  if (operation.type === "set_parameter") {
+    return {
+      value: operation.value,
+    };
+  }
+
+  return {
+    name: operation.name,
+    elevation: operation.elevation,
+  };
 }
 
 function ok<T>(request: BridgeRequest, data: T): BridgeResponse<T> {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Autodesk.Revit.DB;
 
 namespace RevitMcpNext.Addin.Revit
@@ -17,21 +18,83 @@ namespace RevitMcpNext.Addin.Revit
 
             using (var transaction = new Transaction(document, name))
             {
-                transaction.Start();
+                TransactionStatus startStatus = transaction.Start();
+                if (startStatus != TransactionStatus.Started)
+                {
+                    throw new InvalidOperationException("Revit transaction '" + name + "' could not start. Status: " + startStatus + ".");
+                }
+
+                var preprocessor = new RollbackOnFailurePreprocessor();
+                FailureHandlingOptions options = transaction.GetFailureHandlingOptions();
+                options.SetClearAfterRollback(true);
+                options.SetFailuresPreprocessor(preprocessor);
+                transaction.SetFailureHandlingOptions(options);
+
                 try
                 {
                     T result = action();
-                    transaction.Commit();
+                    TransactionStatus commitStatus = transaction.Commit();
+                    if (commitStatus != TransactionStatus.Committed)
+                    {
+                        throw new InvalidOperationException(
+                            "Revit transaction '" + name + "' did not commit. Status: " + commitStatus + FormatFailures(preprocessor.FailureMessages) + ".");
+                    }
+
                     return result;
                 }
                 catch
                 {
-                    if (transaction.GetStatus() == TransactionStatus.Started)
-                    {
-                        transaction.RollBack();
-                    }
+                    RollBackIfStarted(transaction);
                     throw;
                 }
+            }
+        }
+
+        private static void RollBackIfStarted(Transaction transaction)
+        {
+            if (transaction.GetStatus() == TransactionStatus.Started)
+            {
+                transaction.RollBack();
+            }
+        }
+
+        private static string FormatFailures(IReadOnlyCollection<string> failureMessages)
+        {
+            if (failureMessages == null || failureMessages.Count == 0) return string.Empty;
+            return " Failures: " + string.Join("; ", failureMessages);
+        }
+
+        private sealed class RollbackOnFailurePreprocessor : IFailuresPreprocessor
+        {
+            private readonly List<string> _failureMessages = new List<string>();
+
+            public IReadOnlyCollection<string> FailureMessages => _failureMessages;
+
+            public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
+            {
+                IList<FailureMessageAccessor> failures = failuresAccessor.GetFailureMessages();
+                bool hasError = false;
+
+                foreach (FailureMessageAccessor failure in failures)
+                {
+                    FailureSeverity severity = failure.GetSeverity();
+                    if (severity == FailureSeverity.Warning)
+                    {
+                        failuresAccessor.DeleteWarning(failure);
+                        continue;
+                    }
+
+                    hasError = true;
+                    string description = failure.GetDescriptionText();
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        _failureMessages.Add(description);
+                    }
+                }
+
+                return hasError
+                    ? FailureProcessingResult.ProceedWithRollBack
+                    : FailureProcessingResult.Continue;
             }
         }
     }

@@ -37,6 +37,8 @@ Working local productionization slice:
 - `broker/`: MCP stdio server with bounded read/write tools, output schemas, structured errors, and bridge tests.
 - `addin/`: Revit 2024 add-in with named-pipe IPC, cancellation-aware `ExternalEvent` queue, read handlers, and preview/apply write handlers.
 - `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, and creates a Claude/Codex launcher.
+- `scripts/package-release.ps1`: staged Windows release package with payload checksums and optional bundled production dependencies.
+- `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
 
 ## First Local Commands
 
@@ -48,9 +50,26 @@ npm test
 node scripts\validate-repo.mjs
 npm run install:windows
 npm run doctor:windows
+npm run package:windows:dry-run
 ```
 
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
+
+## Packaging And Support
+
+Create a staged Windows release package:
+
+```powershell
+npm run package:windows
+```
+
+The package lands in `artifacts\release`, includes `release-manifest.json` plus `CHECKSUMS.sha256`, and can be installed from the unpacked package by running `installer\install-windows.ps1`. See [release-packaging.md](docs/release-packaging.md).
+
+Collect a redacted support bundle:
+
+```powershell
+npm run support:bundle
+```
 
 ## MVP Tool Surface
 

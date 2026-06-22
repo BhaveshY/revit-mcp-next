@@ -13,7 +13,25 @@ The doctor checks:
 - The staged broker imports successfully.
 - Revit add-in DLLs are staged.
 - The Revit `.addin` manifest is installed.
+- The Revit `.addin` manifest points at the staged add-in DLL.
 - Production `node_modules` are present under the staged broker.
+- Optional install receipt, release manifest, and PDB files are present when available.
+
+Collect a redacted support bundle:
+
+```powershell
+npm run support:bundle
+```
+
+The bundle includes doctor output, add-in logs, launcher and install metadata, file hashes, and basic tool versions. It does not collect environment variables. Text files are redacted for common secret names, JWT-shaped tokens, private keys, and local profile paths.
+
+Installer package checks:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\install-windows.ps1 -PackageRoot C:\path\to\package -DryRun
+```
+
+Package installs verify `CHECKSUMS.sha256` before copying payload files unless `-SkipChecksumVerification` is passed.
 
 Common states:
 

@@ -55,4 +55,5 @@ The add-in recomputes the preview hash before applying. If the model, transactio
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
+- Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.
