@@ -132,6 +132,27 @@ const setElementPinnedOperationSchema = operationBaseSchema
     expectedPinned: z.boolean().optional().describe("Optional current pinned state guard."),
   })
   .strict();
+const createGridOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_grid"),
+    name: z.string().min(1).max(64).optional().describe("Optional unique grid name."),
+    start: changePoint3Schema.describe("Grid line start point."),
+    end: changePoint3Schema.describe("Grid line end point."),
+  })
+  .strict();
+const createFloorOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_floor"),
+    levelId: boundedId.describe("Level ID that hosts the floor."),
+    outline: z
+      .array(changePoint3Schema)
+      .min(3)
+      .max(64)
+      .describe("Single closed floor boundary as ordered points. Repeat of the first point is optional."),
+    floorTypeId: boundedId.optional().describe("Optional floor type ID. Uses the first available floor type when omitted."),
+    structural: z.boolean().optional().describe("Whether to create a structural floor when the Revit API supports it."),
+  })
+  .strict();
 const changeOperationSchema = z.discriminatedUnion("type", [
   setParameterOperationSchema,
   createLevelOperationSchema,
@@ -141,6 +162,8 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   copyElementOperationSchema,
   changeElementTypeOperationSchema,
   setElementPinnedOperationSchema,
+  createGridOperationSchema,
+  createFloorOperationSchema,
 ]);
 
 const changeSetSchema = {
@@ -295,7 +318,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, move_element, rotate_element, copy_element, change_element_type, and set_element_pinned.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, and create_floor.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {

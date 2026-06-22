@@ -91,6 +91,8 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `set_parameter`: set a writable instance parameter by element ID and parameter name.
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
+- `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
+- `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
 - `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
 - `copy_element`: copy one model element by an explicit 3D translation vector.

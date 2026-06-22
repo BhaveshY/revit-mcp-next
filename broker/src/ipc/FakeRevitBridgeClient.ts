@@ -271,6 +271,17 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         elementId: operation.elementId,
       };
+    case "create_grid":
+      return {
+        document: activeDocument.title,
+        name: operation.name,
+      };
+    case "create_floor":
+      return {
+        document: activeDocument.title,
+        levelId: operation.levelId,
+        floorTypeId: operation.floorTypeId,
+      };
     default:
       return assertNever(operation);
   }
@@ -319,6 +330,19 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         pinned: operation.pinned,
         expectedPinned: operation.expectedPinned,
       };
+    case "create_grid":
+      return {
+        name: operation.name,
+        start: operation.start,
+        end: operation.end,
+      };
+    case "create_floor":
+      return {
+        levelId: operation.levelId,
+        outline: operation.outline,
+        floorTypeId: operation.floorTypeId,
+        structural: operation.structural,
+      };
     default:
       return assertNever(operation);
   }
@@ -328,6 +352,8 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
   return (
     operation.type === "create_level" ||
     operation.type === "create_wall" ||
+    operation.type === "create_grid" ||
+    operation.type === "create_floor" ||
     operation.type === "copy_element" ||
     operation.type === "change_element_type"
   );

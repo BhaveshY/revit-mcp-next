@@ -179,7 +179,9 @@ export type ChangeOperationType =
   | "rotate_element"
   | "copy_element"
   | "change_element_type"
-  | "set_element_pinned";
+  | "set_element_pinned"
+  | "create_grid"
+  | "create_floor";
 export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
@@ -246,6 +248,21 @@ export interface SetElementPinnedOperation extends ChangeOperationBase {
   expectedPinned?: boolean;
 }
 
+export interface CreateGridOperation extends ChangeOperationBase {
+  type: "create_grid";
+  name?: string;
+  start: Point3;
+  end: Point3;
+}
+
+export interface CreateFloorOperation extends ChangeOperationBase {
+  type: "create_floor";
+  levelId: ElementId;
+  outline: Point3[];
+  floorTypeId?: ElementId;
+  structural?: boolean;
+}
+
 export type ChangeOperation =
   | SetParameterChangeOperation
   | CreateLevelChangeOperation
@@ -254,7 +271,9 @@ export type ChangeOperation =
   | RotateElementChangeOperation
   | CopyElementChangeOperation
   | ChangeElementTypeOperation
-  | SetElementPinnedOperation;
+  | SetElementPinnedOperation
+  | CreateGridOperation
+  | CreateFloorOperation;
 
 export interface ChangeSetSafetyFields {
   documentFingerprint?: string;

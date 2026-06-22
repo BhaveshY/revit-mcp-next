@@ -107,6 +107,71 @@ async function main() {
     console.log(`Levels OK: using ${level.name ?? "(unnamed level)"} (${level.id}) at ${levelElevationMm} mm`);
 
     const runId = makeRunId();
+    const gridName = `MCP-${runId}`;
+    const gridOperation = {
+      id: "create-smoke-grid",
+      type: "create_grid",
+      name: gridName,
+      start: pointMm(-1000, -1000, levelElevationMm),
+      end: pointMm(options.wallLengthMm + 1000, -1000, levelElevationMm),
+    };
+    const gridTransaction = makeTransactionName(options.transactionPrefix, "create grid", runId);
+    const gridChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: startingGeneration,
+      transactionName: gridTransaction,
+      operations: [gridOperation],
+    });
+
+    const gridPreview = await previewChangeSet(client, gridChangeSet, "create_grid");
+    const gridApply = await applyChangeSet(client, gridChangeSet, gridPreview, "create_grid");
+    const gridChange = findChange(gridApply, "create_grid");
+    const gridId = getCreatedElementId(gridChange);
+    assert(gridId, "create_grid applied but the created grid element ID was not returned.");
+    await queryElementById(client, "Grid", gridId);
+    console.log(`Create grid OK: ${gridName} (${gridId})`);
+
+    const floorGeneration = numericOrUndefined(gridApply.generation);
+    await previewBlockedChangeSet(
+      client,
+      compactObject({
+        documentFingerprint,
+        expectedGeneration: floorGeneration,
+        transactionName: makeTransactionName(options.transactionPrefix, "duplicate grid preview", runId),
+        operations: [{ ...gridOperation, id: "duplicate-smoke-grid" }],
+      }),
+      "duplicate create_grid"
+    );
+
+    const floorOperation = {
+      id: "create-smoke-floor",
+      type: "create_floor",
+      levelId: String(level.id),
+      outline: [
+        pointMm(0, -options.wallLengthMm - 1000, levelElevationMm),
+        pointMm(options.wallLengthMm, -options.wallLengthMm - 1000, levelElevationMm),
+        pointMm(options.wallLengthMm, -1000, levelElevationMm),
+        pointMm(0, -1000, levelElevationMm),
+      ],
+      structural: false,
+    };
+    const floorTransaction = makeTransactionName(options.transactionPrefix, "create floor", runId);
+    const floorChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: floorGeneration,
+      transactionName: floorTransaction,
+      operations: [floorOperation],
+    });
+
+    const floorPreview = await previewChangeSet(client, floorChangeSet, "create_floor");
+    const floorApply = await applyChangeSet(client, floorChangeSet, floorPreview, "create_floor");
+    const floorChange = findChange(floorApply, "create_floor");
+    const floorId = getCreatedElementId(floorChange);
+    assert(floorId, "create_floor applied but the created floor element ID was not returned.");
+    await queryElementById(client, "Floor", floorId);
+    console.log(`Create floor OK: element ${floorId}`);
+
+    const createWallGeneration = numericOrUndefined(floorApply.generation);
     const wallOperation = {
       id: "create-smoke-wall",
       type: "create_wall",
@@ -120,7 +185,7 @@ async function main() {
     const createTransaction = makeTransactionName(options.transactionPrefix, "create wall", runId);
     const createChangeSet = compactObject({
       documentFingerprint,
-      expectedGeneration: startingGeneration,
+      expectedGeneration: createWallGeneration,
       transactionName: createTransaction,
       operations: [wallOperation],
     });
@@ -461,6 +526,17 @@ async function previewChangeSet(client, changeSet, operationName) {
   return preview;
 }
 
+async function previewBlockedChangeSet(client, changeSet, operationName) {
+  const preview = await callRequiredTool(client, "revit.preview_change_set", changeSet);
+  assert(preview.ready === false, `${operationName} preview unexpectedly returned ready=true.`);
+  assert(
+    Array.isArray(preview.changes) && preview.changes.some((change) => change.status === "blocked"),
+    `${operationName} preview did not return a blocked change:\n${formatChanges(preview.changes)}`
+  );
+  console.log(`Blocked preview OK: ${operationName}`);
+  return preview;
+}
+
 async function applyChangeSet(client, changeSet, preview, operationName) {
   const applyPayload = compactObject({
     ...changeSet,
@@ -481,11 +557,15 @@ async function applyChangeSet(client, changeSet, preview, operationName) {
 }
 
 async function queryWallById(client, wallId) {
+  return queryElementById(client, "Wall", wallId);
+}
+
+async function queryElementById(client, className, elementId) {
   let cursor = undefined;
   let scanned = 0;
   do {
     const query = await callRequiredTool(client, "revit.query", {
-      filter: { classes: ["Wall"] },
+      filter: { classes: [className] },
       fields: ["id", "uniqueId", "category", "class", "name", "typeId", "levelId"],
       limit: 500,
       cursor,
@@ -494,12 +574,12 @@ async function queryWallById(client, wallId) {
 
     const items = Array.isArray(query.items) ? query.items : [];
     scanned += items.length;
-    const match = items.find((item) => String(item.id) === String(wallId));
+    const match = items.find((item) => String(item.id) === String(elementId));
     if (match) return match;
     cursor = typeof query.cursor === "string" && query.cursor.length > 0 ? query.cursor : undefined;
   } while (cursor);
 
-  throw new Error(`Created wall ${wallId} was not found by revit.query after scanning ${scanned} wall item(s).`);
+  throw new Error(`Created ${className} ${elementId} was not found by revit.query after scanning ${scanned} item(s).`);
 }
 
 function chooseLevel(levels) {
@@ -687,13 +767,16 @@ function printHelp() {
 Runs a live Revit MCP smoke against the active Revit project:
   1. revit.status
   2. revit.get_levels
-  3. preview/apply create_wall
-  4. revit.query for the created wall
-  5. preview/apply move_element
-  6. assert the wall Y location changed by --move-y-mm
-  7. preview/apply rotate_element
-  8. preview/apply copy_element
-  9. preview/apply set_element_pinned true, then false
+  3. preview/apply create_grid
+  4. blocked preview for duplicate create_grid
+  5. preview/apply create_floor
+  6. preview/apply create_wall
+  7. revit.query for created elements
+  8. preview/apply move_element
+  9. assert the wall Y location changed by --move-y-mm
+  10. preview/apply rotate_element
+  11. preview/apply copy_element
+  12. preview/apply set_element_pinned true, then false
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

@@ -125,6 +125,34 @@ test("fake bridge previews and applies a bounded change set", async () => {
         pinned: true,
         expectedPinned: false,
       },
+      {
+        id: "op-9",
+        type: "create_grid" as const,
+        name: "A",
+        start,
+        end,
+      },
+      {
+        id: "op-10",
+        type: "create_floor" as const,
+        levelId: "311",
+        floorTypeId: "9100",
+        structural: false,
+        outline: [
+          start,
+          end,
+          {
+            x: { value: 5000, unit: "mm", system: "metric" as const },
+            y: { value: 3000, unit: "mm", system: "metric" as const },
+            z: { value: 0, unit: "mm", system: "metric" as const },
+          },
+          {
+            x: { value: 0, unit: "mm", system: "metric" as const },
+            y: { value: 3000, unit: "mm", system: "metric" as const },
+            z: { value: 0, unit: "mm", system: "metric" as const },
+          },
+        ],
+      },
     ],
   } satisfies ChangeSetRequest;
 
@@ -132,7 +160,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 8);
+  assert.equal(preview.data.operationCount, 10);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -167,6 +195,17 @@ test("fake bridge previews and applies a bounded change set", async () => {
     pinned: true,
     expectedPinned: false,
   });
+  assert.equal(preview.data.changes[8]?.type, "create_grid");
+  assert.deepEqual(preview.data.changes[8]?.target, {
+    document: "Sample.rvt",
+    name: "A",
+  });
+  assert.equal(preview.data.changes[9]?.type, "create_floor");
+  assert.deepEqual(preview.data.changes[9]?.target, {
+    document: "Sample.rvt",
+    levelId: "311",
+    floorTypeId: "9100",
+  });
 
   const applyPayload = {
     ...changeSet,
@@ -183,7 +222,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 8);
+  assert.equal(applied.data.changedCount, 10);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
@@ -192,4 +231,6 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.data.changes[5]?.type, "copy_element");
   assert.equal(applied.data.changes[6]?.type, "change_element_type");
   assert.equal(applied.data.changes[7]?.type, "set_element_pinned");
+  assert.equal(applied.data.changes[8]?.type, "create_grid");
+  assert.equal(applied.data.changes[9]?.type, "create_floor");
 });

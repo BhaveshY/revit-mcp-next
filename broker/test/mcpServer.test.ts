@@ -56,6 +56,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "copy_element",
       "change_element_type",
       "set_element_pinned",
+      "create_grid",
+      "create_floor",
       "levelId",
       "start",
       "end",
@@ -70,6 +72,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "typeId",
       "pinned",
       "expectedPinned",
+      "outline",
+      "floorTypeId",
       "changeSetHash",
       "documentFingerprint",
       "expectedGeneration",
@@ -150,6 +154,48 @@ test("broker exposes annotated tools with output schemas and callable structured
         pinned: true,
         expectedPinned: false,
       },
+      {
+        type: "create_grid",
+        name: "A",
+        start: {
+          x: { value: 0, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+        end: {
+          x: { value: 5000, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+      },
+      {
+        type: "create_floor",
+        levelId: "311",
+        floorTypeId: "9100",
+        structural: false,
+        outline: [
+          {
+            x: { value: 0, unit: "mm", system: "metric" },
+            y: { value: 0, unit: "mm", system: "metric" },
+            z: { value: 0, unit: "mm", system: "metric" },
+          },
+          {
+            x: { value: 4000, unit: "mm", system: "metric" },
+            y: { value: 0, unit: "mm", system: "metric" },
+            z: { value: 0, unit: "mm", system: "metric" },
+          },
+          {
+            x: { value: 4000, unit: "mm", system: "metric" },
+            y: { value: 3000, unit: "mm", system: "metric" },
+            z: { value: 0, unit: "mm", system: "metric" },
+          },
+          {
+            x: { value: 0, unit: "mm", system: "metric" },
+            y: { value: 3000, unit: "mm", system: "metric" },
+            z: { value: 0, unit: "mm", system: "metric" },
+          },
+        ],
+      },
     ];
     const preview = (await client.callTool({
       name: "revit.preview_change_set",
@@ -195,7 +241,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 7);
+    assert.equal(apply.structuredContent?.data?.changedCount, 9);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

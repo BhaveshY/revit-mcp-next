@@ -12,6 +12,8 @@ End-to-end supported operations:
 - `set_parameter`: set a writable instance parameter by element ID and parameter name.
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
+- `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
+- `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `move_element`: move one non-pinned model element by `elementId` and a `translation` vector.
 - `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`.
 - `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs.
@@ -66,6 +68,6 @@ Production readiness:
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
-- Run `npm run smoke:revit` only against a disposable active Revit project; it creates, moves, rotates, copies, pins, and unpins walls through preview/apply.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it creates a grid, floor, and walls, then moves, rotates, copies, pins, and unpins elements through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

@@ -258,6 +258,8 @@ namespace RevitMcpNext.Addin.Revit
                 string operationType = GetString(operations[index], "type");
                 if (string.Equals(operationType, "create_level", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_wall", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_grid", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_floor", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "copy_element", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase))
                 {
@@ -433,6 +435,10 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewChangeElementType(document, operation, index);
                 case "set_element_pinned":
                     return PreviewSetElementPinned(document, operation, index);
+                case "create_grid":
+                    return PreviewCreateGrid(document, operation, index, validationContext);
+                case "create_floor":
+                    return PreviewCreateFloor(document, operation, index);
                 default:
                     return BlockedChange(operation, index, "Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -459,6 +465,10 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyChangeElementType(document, operation, index);
                 case "set_element_pinned":
                     return ApplySetElementPinned(document, operation, index);
+                case "create_grid":
+                    return ApplyCreateGrid(document, operation, index);
+                case "create_floor":
+                    return ApplyCreateFloor(document, operation, index);
                 default:
                     throw new InvalidOperationException("Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -696,6 +706,148 @@ namespace RevitMcpNext.Addin.Revit
                 target: ElementTarget(wall, null),
                 before: null,
                 after: WallSnapshot(wall));
+        }
+
+        private static Dictionary<string, object> PreviewCreateGrid(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
+        {
+            Dictionary<string, object> startValue = GetDictionary(operation, "start");
+            Dictionary<string, object> endValue = GetDictionary(operation, "end");
+            if (startValue == null) return BlockedChange(operation, index, "create_grid requires start.");
+            if (endValue == null) return BlockedChange(operation, index, "create_grid requires end.");
+
+            string name = GetString(operation, "name");
+            if (!string.IsNullOrWhiteSpace(name) && GridNameExists(document, name))
+            {
+                return BlockedChange(operation, index, "A grid named '" + name + "' already exists.");
+            }
+            if (!string.IsNullOrWhiteSpace(name) && validationContext != null && !validationContext.TryAddGridName(name))
+            {
+                return BlockedChange(operation, index, "The change set creates duplicate grid name '" + name + "'.");
+            }
+
+            XYZ start;
+            XYZ end;
+            try
+            {
+                start = ToInternalPoint(startValue, "start");
+                end = ToInternalPoint(endValue, "end");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            string geometryError = ValidateLinearDatum(document, start, end, "create_grid");
+            if (!string.IsNullOrWhiteSpace(geometryError)) return BlockedChange(operation, index, geometryError);
+
+            var after = new Dictionary<string, object>
+            {
+                ["start"] = PointValue(start),
+                ["end"] = PointValue(end),
+                ["length"] = LengthValue(start.DistanceTo(end))
+            };
+            if (!string.IsNullOrWhiteSpace(name)) after["name"] = name.Trim();
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object> { ["document"] = document.Title },
+                before: null,
+                after: after);
+        }
+
+        private static Dictionary<string, object> ApplyCreateGrid(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateGrid(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_grid preview failed.");
+            }
+
+            XYZ start = ToInternalPoint(GetDictionary(operation, "start"), "start");
+            XYZ end = ToInternalPoint(GetDictionary(operation, "end"), "end");
+            Grid grid = Grid.Create(document, Line.CreateBound(start, end));
+            string name = GetString(operation, "name");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                grid.Name = name.Trim();
+            }
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(grid, null),
+                before: null,
+                after: GridSnapshot(grid));
+        }
+
+        private static Dictionary<string, object> PreviewCreateFloor(Document document, Dictionary<string, object> operation, int index)
+        {
+            string levelId = GetString(operation, "levelId");
+            if (string.IsNullOrWhiteSpace(levelId)) return BlockedChange(operation, index, "create_floor requires levelId.");
+
+            Level level = ResolveElement(document, levelId) as Level;
+            if (level == null) return BlockedChange(operation, index, "Level " + levelId + " was not found.");
+
+            FloorType floorType = ResolveFloorType(document, GetString(operation, "floorTypeId"));
+            if (floorType == null) return BlockedChange(operation, index, "A usable floor type was not found.");
+
+            List<Dictionary<string, object>> outline = GetPointList(operation, "outline");
+            if (outline.Count < 3) return BlockedChange(operation, index, "create_floor requires at least three outline points.");
+
+            List<XYZ> points;
+            try
+            {
+                points = ToInternalPointList(outline, "outline");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            string outlineError = ValidateFloorOutline(document, level, points);
+            if (!string.IsNullOrWhiteSpace(outlineError)) return BlockedChange(operation, index, outlineError);
+
+            bool structural = GetBool(operation, "structural", false);
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["document"] = document.Title,
+                    ["levelId"] = ToElementIdString(level.Id),
+                    ["levelName"] = level.Name,
+                    ["floorTypeId"] = ToElementIdString(floorType.Id),
+                    ["floorTypeName"] = SafeElementName(floorType)
+                },
+                before: null,
+                after: new Dictionary<string, object>
+                {
+                    ["levelId"] = ToElementIdString(level.Id),
+                    ["floorTypeId"] = ToElementIdString(floorType.Id),
+                    ["outline"] = PointArrayValue(NormalizeClosedLoop(points)),
+                    ["area"] = AreaValue(PolygonAreaInternal(NormalizeClosedLoop(points))),
+                    ["structural"] = structural
+                });
+        }
+
+        private static Dictionary<string, object> ApplyCreateFloor(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateFloor(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_floor preview failed.");
+            }
+
+            Level level = ResolveElement(document, GetString(operation, "levelId")) as Level;
+            FloorType floorType = ResolveFloorType(document, GetString(operation, "floorTypeId"));
+            List<XYZ> points = NormalizeClosedLoop(ToInternalPointList(GetPointList(operation, "outline"), "outline"));
+            CurveLoop loop = BuildCurveLoop(points);
+            bool structural = GetBool(operation, "structural", false);
+            Floor floor = Floor.Create(document, new List<CurveLoop> { loop }, floorType.Id, level.Id, structural, null, 0.0);
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(floor, null),
+                before: null,
+                after: FloorSnapshot(floor, points));
         }
 
         private static Dictionary<string, object> PreviewMoveElement(Document document, Dictionary<string, object> operation, int index)
@@ -1043,10 +1195,16 @@ namespace RevitMcpNext.Addin.Revit
         private sealed class PreviewValidationContext
         {
             private readonly HashSet<string> _levelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<string> _gridNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             public bool TryAddLevelName(string name)
             {
                 return _levelNames.Add((name ?? string.Empty).Trim());
+            }
+
+            public bool TryAddGridName(string name)
+            {
+                return _gridNames.Add((name ?? string.Empty).Trim());
             }
         }
 
@@ -1124,6 +1282,27 @@ namespace RevitMcpNext.Addin.Revit
                 .Any(level => string.Equals(level.Name, name, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static bool GridNameExists(Document document, string name)
+        {
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(Grid))
+                .Cast<Grid>()
+                .Any(grid => string.Equals(grid.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static FloorType ResolveFloorType(Document document, string floorTypeId)
+        {
+            if (!string.IsNullOrWhiteSpace(floorTypeId))
+            {
+                return ResolveElement(document, floorTypeId) as FloorType;
+            }
+
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(FloorType))
+                .Cast<FloorType>()
+                .FirstOrDefault();
+        }
+
         private static double ToInternalElevation(Dictionary<string, object> elevation)
         {
             return ToInternalLength(elevation, "Elevation");
@@ -1178,6 +1357,17 @@ namespace RevitMcpNext.Addin.Revit
                 ToInternalLength(GetDictionary(point, "z"), fieldName + ".z"));
         }
 
+        private static List<XYZ> ToInternalPointList(IReadOnlyList<Dictionary<string, object>> points, string fieldName)
+        {
+            var result = new List<XYZ>();
+            for (int index = 0; index < points.Count; index++)
+            {
+                result.Add(ToInternalPoint(points[index], fieldName + "[" + index.ToString(CultureInfo.InvariantCulture) + "]"));
+            }
+
+            return result;
+        }
+
         private static string ValidateWallBaseline(Document document, XYZ start, XYZ end)
         {
             if (Math.Abs(start.Z - end.Z) > 0.000001)
@@ -1195,6 +1385,93 @@ namespace RevitMcpNext.Addin.Revit
             return null;
         }
 
+        private static string ValidateLinearDatum(Document document, XYZ start, XYZ end, string operationName)
+        {
+            if (Math.Abs(start.Z - end.Z) > 0.000001)
+            {
+                return operationName + " start and end must have the same z elevation.";
+            }
+
+            double length = start.DistanceTo(end);
+            double minimumLength = Math.Max(document.Application.ShortCurveTolerance, 0.000001);
+            if (length <= minimumLength)
+            {
+                return operationName + " line is shorter than Revit's minimum curve length.";
+            }
+
+            return null;
+        }
+
+        private static string ValidateFloorOutline(Document document, Level level, List<XYZ> rawPoints)
+        {
+            List<XYZ> points = NormalizeClosedLoop(rawPoints);
+            if (points.Count < 3)
+            {
+                return "create_floor requires at least three unique outline points.";
+            }
+
+            double tolerance = Math.Max(document.Application.ShortCurveTolerance, 0.000001);
+            for (int index = 0; index < points.Count; index++)
+            {
+                XYZ current = points[index];
+                if (Math.Abs(current.Z - level.Elevation) > 0.000001)
+                {
+                    return "create_floor outline points must be on the target level elevation.";
+                }
+
+                XYZ next = points[(index + 1) % points.Count];
+                if (current.DistanceTo(next) <= tolerance)
+                {
+                    return "create_floor outline has a segment shorter than Revit's minimum curve length.";
+                }
+            }
+
+            double area = PolygonAreaInternal(points);
+            if (area <= tolerance * tolerance)
+            {
+                return "create_floor outline area is too small.";
+            }
+
+            return null;
+        }
+
+        private static List<XYZ> NormalizeClosedLoop(List<XYZ> points)
+        {
+            var result = new List<XYZ>(points ?? new List<XYZ>());
+            if (result.Count > 1 && result[0].DistanceTo(result[result.Count - 1]) <= 0.000001)
+            {
+                result.RemoveAt(result.Count - 1);
+            }
+
+            return result;
+        }
+
+        private static CurveLoop BuildCurveLoop(IReadOnlyList<XYZ> points)
+        {
+            var loop = new CurveLoop();
+            for (int index = 0; index < points.Count; index++)
+            {
+                loop.Append(Line.CreateBound(points[index], points[(index + 1) % points.Count]));
+            }
+
+            return loop;
+        }
+
+        private static double PolygonAreaInternal(IReadOnlyList<XYZ> points)
+        {
+            if (points == null || points.Count < 3) return 0;
+
+            double signedArea = 0;
+            for (int index = 0; index < points.Count; index++)
+            {
+                XYZ current = points[index];
+                XYZ next = points[(index + 1) % points.Count];
+                signedArea += (current.X * next.Y) - (next.X * current.Y);
+            }
+
+            return Math.Abs(signedArea) / 2.0;
+        }
+
         private static double VectorLength(XYZ vector)
         {
             return Math.Sqrt(vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z);
@@ -1203,6 +1480,12 @@ namespace RevitMcpNext.Addin.Revit
         private static Dictionary<string, object> LengthValue(double internalLength)
         {
             return UnitValue(UnitUtils.ConvertFromInternalUnits(internalLength, UnitTypeId.Millimeters), "mm", "metric");
+        }
+
+        private static Dictionary<string, object> AreaValue(double internalArea)
+        {
+            double squareMeters = UnitUtils.ConvertFromInternalUnits(internalArea, UnitTypeId.SquareMeters);
+            return UnitValue(squareMeters, "m2", "metric");
         }
 
         private static Dictionary<string, object> AngleValue(double radians)
@@ -1223,6 +1506,11 @@ namespace RevitMcpNext.Addin.Revit
                 ["y"] = LengthValue(point.Y),
                 ["z"] = LengthValue(point.Z)
             };
+        }
+
+        private static object[] PointArrayValue(IEnumerable<XYZ> points)
+        {
+            return points.Select(PointValue).ToArray();
         }
 
         private static void SetWallDoubleParameter(Wall wall, BuiltInParameter builtInParameter, double value, string parameterName)
@@ -1330,6 +1618,40 @@ namespace RevitMcpNext.Addin.Revit
             return snapshot;
         }
 
+        private static Dictionary<string, object> GridSnapshot(Grid grid)
+        {
+            var snapshot = ElementSummary(grid.Document, grid);
+            Curve curve = grid.Curve;
+            if (curve != null && curve.IsBound)
+            {
+                snapshot["start"] = PointValue(curve.GetEndPoint(0));
+                snapshot["end"] = PointValue(curve.GetEndPoint(1));
+                snapshot["length"] = LengthValue(curve.Length);
+            }
+
+            return snapshot;
+        }
+
+        private static Dictionary<string, object> FloorSnapshot(Floor floor, IReadOnlyList<XYZ> outline)
+        {
+            var snapshot = ElementSummary(floor.Document, floor);
+            ElementId levelId = GetLevelId(floor);
+            if (IsValidElementId(levelId)) snapshot["levelId"] = ToElementIdString(levelId);
+            if (outline != null && outline.Count > 0)
+            {
+                snapshot["outline"] = PointArrayValue(outline);
+                snapshot["area"] = AreaValue(PolygonAreaInternal(outline));
+            }
+
+            Parameter structural = floor.get_Parameter(BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL);
+            if (structural != null && structural.StorageType == StorageType.Integer)
+            {
+                snapshot["structural"] = structural.AsInteger() != 0;
+            }
+
+            return snapshot;
+        }
+
         private static Dictionary<string, object> LocationSnapshot(Element element)
         {
             if (element == null) return null;
@@ -1392,6 +1714,29 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return operations;
+        }
+
+        private static List<Dictionary<string, object>> GetPointList(Dictionary<string, object> payload, string key)
+        {
+            var points = new List<Dictionary<string, object>>();
+            if (payload == null || !payload.TryGetValue(key, out object value) || value == null) return points;
+
+            if (value is object[] array)
+            {
+                foreach (object item in array)
+                {
+                    if (item is Dictionary<string, object> point) points.Add(point);
+                }
+            }
+            else if (value is ArrayList list)
+            {
+                foreach (object item in list)
+                {
+                    if (item is Dictionary<string, object> point) points.Add(point);
+                }
+            }
+
+            return points;
         }
 
         private static string GetTransactionName(Dictionary<string, object> payload)
