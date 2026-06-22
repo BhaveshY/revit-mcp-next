@@ -1,6 +1,6 @@
 # Production Readiness Audit
 
-This project is not yet a signed production release. The current repository state supports local development, staged Windows packaging, install diagnostics, and redacted support bundle collection.
+This project is not yet a signed production release. The current repository state supports local development, staged Windows packaging, install diagnostics, redacted support bundle collection, and release evidence bundle generation.
 
 Use this audit to separate evidence that already exists from blockers that still need release work.
 
@@ -13,6 +13,8 @@ Use this audit to separate evidence that already exists from blockers that still
 - `npm run package:windows:dry-run` validates package inputs after the broker/contracts/add-in build outputs exist.
 - `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`; `-Sign` can request Authenticode signing before manifest, checksum, and zip capture when a certificate is supplied.
 - `npm run test:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates unsigned package creation, zip creation, package install into temp profile paths, doctor output, support bundle redaction, and checksum-tamper rejection without requiring Revit API DLLs on the runner.
+- `npm run evidence:release:windows` creates a release evidence bundle for one staged package. It records package metadata, package zip SHA-256, signing status, named validation logs, support-bundle evidence, live-smoke evidence, explicit skip reasons, and an inventory of copied evidence files.
+- `npm run test:evidence:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates release evidence generation, explicit missing-evidence gates, package hash capture, copied package metadata, support/live-smoke evidence capture, validation log capture, and token redaction.
 - `npm run doctor:windows` validates the installed launcher, staged broker files, add-in DLLs, Revit manifest, packaged production dependencies, local pipe auth token shape, and add-in DLL signature status.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, and redacted auth configuration.
 - `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.query`, plus preview/apply flows for `create_grid`, `create_floor`, `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
@@ -26,11 +28,11 @@ Use this audit to separate evidence that already exists from blockers that still
 - End-to-end live validation evidence that ties installer behavior, broker/add-in pipe auth, `revit.status`, read tools, and preview/apply write flows to a specific packaged build. Hosted package-contract CI covers package mechanics only; it does not prove Revit can load a release DLL.
 - Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.
-- Release evidence capture that ties a package, checksums, support diagnostics, and live smoke result to the same build.
+- Archived release evidence bundle for each release candidate, generated from that exact package, signing state, validation logs, support bundle, and live-smoke output.
 
-## Release Hardening Slice
+## Release Evidence Gate
 
-The next production hardening slice should be documented as release-gated until the implementation and evidence exist. Do not describe artifacts as signed unless a certificate was configured for that build and signature verification output was archived.
+Release evidence generation exists, but a production release still needs evidence from a real candidate build. Do not describe artifacts as signed unless a certificate was configured for that build and signature verification output was archived.
 
 Acceptance criteria for this slice:
 
@@ -75,7 +77,7 @@ Current non-coverage:
 
 - It does not launch Revit or create a project document.
 - It does not validate signed release artifacts.
-- It does not produce a packaged release evidence bundle by itself.
+- It does not collect a packaged release evidence bundle by itself; run `npm run evidence:release:windows` with the smoke artifact after the smoke.
 - It does not cover cancellation, `change_element_type`, destructive operations, or Revit versions other than the active installed version.
 
 ## Manual Self-Hosted Revit Smoke
@@ -141,4 +143,17 @@ npm run smoke:revit
 npm run support:bundle
 ```
 
-Archive the command logs, staged package metadata, support bundle, add-in logs under `%LOCALAPPDATA%\RevitMcpNext\logs`, and signing verification output when signing is enabled.
+7. Generate the release evidence bundle:
+
+```powershell
+npm run evidence:release:windows -- `
+  -PackageRoot artifacts\release\revit-mcp-next-<version>-windows `
+  -ValidateRepoLogPath artifacts\release-logs\validate-repo.log `
+  -PackageLogPath artifacts\release-logs\package-release.log `
+  -DoctorLogPath artifacts\release-logs\doctor-windows.log `
+  -SigningSkipReason "No release certificate configured for this candidate." `
+  -LiveSmokeEvidencePath artifacts\live-revit-smoke `
+  -SupportBundlePath artifacts\support\revit-mcp-next-support-<timestamp>.zip
+```
+
+Archive the release evidence bundle with the staged package. Include signing verification output when signing is enabled; otherwise keep the explicit signing skip reason in the evidence manifest.

@@ -39,6 +39,7 @@ Local productionization slice, not yet a signed production release:
 - `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates a Claude/Codex launcher.
 - `scripts/package-release.ps1`: staged Windows release package with payload checksums and optional bundled production dependencies.
 - `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
+- `scripts/collect-release-evidence.ps1`: release evidence bundle that ties one package, checksums, signing status, validation logs, support diagnostics, and live-smoke evidence or skip reasons together.
 
 ## First Local Commands
 
@@ -52,6 +53,7 @@ npm run install:windows
 npm run doctor:windows
 npm run smoke:revit
 npm run package:windows:dry-run
+npm run test:evidence:release:windows
 ```
 
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
@@ -73,6 +75,14 @@ Collect a redacted support bundle:
 ```powershell
 npm run support:bundle
 ```
+
+Collect release evidence for a staged package:
+
+```powershell
+npm run evidence:release:windows -- -PackageRoot artifacts\release\revit-mcp-next-<version>-windows -SigningSkipReason "No release certificate configured." -LiveSmokeSkipReason "No Revit host for this local run." -SupportBundleSkipReason "No installed candidate support bundle for this local run."
+```
+
+The evidence command refuses to omit signing, live-smoke, or support-bundle evidence silently. Pass the artifact path when evidence exists, or an explicit skip reason when it does not.
 
 Windows installs generate a local 256-bit auth token in `%LOCALAPPDATA%\RevitMcpNext\config\auth.env` and restrict the file ACL to the installing user, Administrators, and SYSTEM when Windows allows it. The generated launcher reads that config and exports `REVIT_MCP_NEXT_AUTH_TOKEN` for the broker process. Doctor and support bundle output report token presence/shape only; support bundles redact the token value.
 
@@ -111,6 +121,6 @@ Remaining blockers:
 
 - Signed release artifacts from an available release certificate, plus archived signing verification evidence.
 - Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, and preview/apply flows.
-- Release evidence capture that ties checksums, package metadata, signing verification when enabled, diagnostics, and live-smoke output to one build.
+- Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, and live-smoke output for that build.
 - Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.

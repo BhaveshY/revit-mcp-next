@@ -39,6 +39,14 @@ npm run test:release:windows
 
 That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
 
+Hosted CI also runs the release evidence contract:
+
+```powershell
+npm run test:evidence:release:windows
+```
+
+That contract packages with synthetic add-in DLLs, installs into temporary profile paths, runs doctor/support collection, creates a synthetic live-smoke artifact, verifies missing evidence requires explicit skip reasons, and verifies the release evidence manifest, summary, zip, hashes, and token redaction.
+
 ## Signing Status
 
 The default packaging command produces unsigned staged artifacts. No certificate is committed or assumed.
@@ -109,7 +117,41 @@ The support bundle is written under `artifacts\support`. It collects doctor outp
 
 ## Release Evidence Capture
 
-Until a dedicated evidence bundle command exists, capture release evidence as a set of files and command logs next to the staged package. The evidence should identify one build, not a mix of local attempts.
+Use the release evidence collector after creating and installing a candidate package. The evidence should identify one build, not a mix of local attempts.
+
+Local unsigned package example:
+
+```powershell
+npm run evidence:release:windows -- `
+  -PackageRoot artifacts\release\revit-mcp-next-<version>-windows `
+  -ValidateRepoLogPath artifacts\release-logs\validate-repo.log `
+  -PackageLogPath artifacts\release-logs\package-release.log `
+  -DoctorLogPath artifacts\release-logs\doctor-windows.log `
+  -SigningSkipReason "No release certificate configured for this local candidate." `
+  -LiveSmokeSkipReason "No self-hosted Revit runner evidence for this local candidate." `
+  -SupportBundleSkipReason "No installed candidate support bundle collected for this local candidate."
+```
+
+Release-candidate example with live smoke and support artifacts:
+
+```powershell
+npm run evidence:release:windows -- `
+  -PackageRoot artifacts\release\revit-mcp-next-<version>-windows `
+  -ValidateRepoLogPath artifacts\release-logs\validate-repo.log `
+  -PackageLogPath artifacts\release-logs\package-release.log `
+  -DoctorLogPath artifacts\release-logs\doctor-windows.log `
+  -SigningLogPath artifacts\release-logs\signing.log `
+  -LiveSmokeEvidencePath artifacts\live-revit-smoke `
+  -SupportBundlePath artifacts\support\revit-mcp-next-support-<timestamp>.zip
+```
+
+The command writes `artifacts\release-evidence\revit-mcp-next-<version>-windows-evidence-<timestamp>-<id>` plus a sibling `.zip`. The bundle includes:
+
+- `release-evidence-manifest.json` with package metadata, package zip SHA-256, signing status, validation logs, support-bundle evidence, live-smoke evidence, and an inventory of copied evidence files.
+- `release-evidence-summary.md` with the release evidence headline facts.
+- Copies of `release-manifest.json`, `CHECKSUMS.sha256`, and `package-zip.sha256`.
+- Named validation logs when paths are provided.
+- Live-smoke and support-bundle artifacts when paths are provided.
 
 Minimum evidence for a release candidate:
 
@@ -124,4 +166,4 @@ Minimum evidence for a release candidate:
 - `npm run support:bundle` output after install or after any failed smoke.
 - Authenticode signing and verification output when signing is enabled.
 
-If signing, live smoke, or support bundle capture is skipped, record the reason in the release evidence rather than implying coverage exists.
+If signing, live smoke, or support bundle capture is skipped, pass the corresponding skip reason. The collector refuses to create evidence when those evidence classes are absent without an explicit reason.

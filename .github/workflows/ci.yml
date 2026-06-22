@@ -26,6 +26,9 @@ jobs:
       - name: Release package contract
         shell: pwsh
         run: npm run test:release:windows
+      - name: Release evidence contract
+        shell: pwsh
+        run: npm run test:evidence:release:windows
       - name: Build .NET bridge contracts
         shell: pwsh
         run: dotnet build addin\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj -c Release
