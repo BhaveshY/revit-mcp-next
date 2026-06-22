@@ -65,6 +65,18 @@ function Get-Sha256Hash($Path) {
     }
 }
 
+function Get-AuthenticodeStatus($Path) {
+    try {
+        return Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
+    } catch {
+        return [pscustomobject] @{
+            Status = "Unavailable"
+            StatusMessage = $_.Exception.Message
+            SignerCertificate = $null
+        }
+    }
+}
+
 function Resolve-RequiredFile($Path, $Message) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Message Missing: $Path"
@@ -204,7 +216,7 @@ function Get-SignatureEntries($Root) {
         Sort-Object FullName
 
     foreach ($file in $files) {
-        $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+        $signature = Get-AuthenticodeStatus $file.FullName
         $relativePath = ((Get-RelativePath $Root $file.FullName) -replace "\\", "/")
         $statusMessage = $signature.StatusMessage
         if (-not [string]::IsNullOrWhiteSpace($statusMessage)) {
@@ -276,7 +288,7 @@ function Assert-SignatureEntries($Entries) {
             throw "Signature for $($entry.path) is $($entry.status), expected Valid."
         }
 
-        if ($RequireSigned -and $entry.status -eq "NotSigned") {
+        if ($RequireSigned -and ($entry.status -eq "NotSigned" -or $entry.status -eq "Unavailable")) {
             throw "Signature is missing for $($entry.path)."
         }
     }
