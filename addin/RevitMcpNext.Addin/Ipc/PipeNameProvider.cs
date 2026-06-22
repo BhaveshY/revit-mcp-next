@@ -1,4 +1,4 @@
-using System.Security.Principal;
+using System;
 
 namespace RevitMcpNext.Addin.Ipc
 {
@@ -6,9 +6,8 @@ namespace RevitMcpNext.Addin.Ipc
     {
         public static string GetDefaultPipeName()
         {
-            string userSid = WindowsIdentity.GetCurrent()?.User?.Value ?? "unknown-user";
-            return "revit-mcp-next-" + userSid.Replace("-", "_");
+            string configured = Environment.GetEnvironmentVariable("REVIT_MCP_NEXT_PIPE");
+            return string.IsNullOrWhiteSpace(configured) ? "revit-mcp-next" : configured.Trim();
         }
     }
 }
-

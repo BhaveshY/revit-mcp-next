@@ -143,5 +143,8 @@ function errorResponse<T>(
       suggestedNextAction,
     },
     warnings: [],
+    metrics: {
+      elapsedMs: 0,
+    },
   };
 }

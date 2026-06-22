@@ -39,7 +39,8 @@ test("asToolResult marks bridge failures as MCP tool errors", () => {
 
   assert.equal(result.isError, true);
   assert.match(textContent(result), /BRIDGE_UNAVAILABLE/);
-  assert.equal((result.structuredContent?.error as { code: string }).code, "BRIDGE_UNAVAILABLE");
+  assert.equal((result.structuredContent?.data as { error: { code: string } }).error.code, "BRIDGE_UNAVAILABLE");
+  assert.deepEqual(result.structuredContent?.metrics, { elapsedMs: 0 });
 });
 
 function textContent(result: CallToolResult): string {

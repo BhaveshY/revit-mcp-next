@@ -36,7 +36,7 @@ uint32_be payload_length
 utf8_json_payload
 ```
 
-The initial C# add-in includes framing and queue scaffolding. The JSON serializer and generated contracts are deliberately isolated because the next milestone is canonical contract generation.
+The broker and add-in exchange the canonical camelCase bridge envelope over this framing. The add-in preserves request IDs, validates protocol version, and returns compact structured data or structured bridge errors.
 
 ## Safety Boundaries
 
@@ -45,4 +45,3 @@ The initial C# add-in includes framing and queue scaffolding. The JSON serialize
 - Writes use one explicit named transaction or a transaction group.
 - No arbitrary code execution in normal mode.
 - Large results are paginated or exposed as MCP resources.
-

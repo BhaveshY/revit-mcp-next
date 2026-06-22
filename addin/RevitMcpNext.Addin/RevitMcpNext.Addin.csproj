@@ -2,8 +2,9 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
+    <Nullable>disable</Nullable>
     <ImplicitUsings>false</ImplicitUsings>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AssemblyName>RevitMcpNext.Addin</AssemblyName>
     <RootNamespace>RevitMcpNext.Addin</RootNamespace>
     <RevitApiPath Condition="'$(RevitApiPath)' == ''">$(ProgramFiles)\Autodesk\Revit 2024</RevitApiPath>
@@ -18,10 +19,14 @@
       <HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj" />
   </ItemGroup>
 </Project>
-

@@ -12,24 +12,31 @@ interface CoreToolContext {
   protocolVersion: ProtocolVersion;
 }
 
+const boundedString = z.string().min(1).max(128);
+const boundedId = z.string().min(1).max(64);
+const parameterScalar = z.union([z.string().max(256), z.number(), z.boolean()]);
+const parameterEqualsSchema = z
+  .record(boundedString, parameterScalar)
+  .refine((value) => Object.keys(value).length <= 16, "At most 16 parameter equality filters are allowed.");
+
 const queryFilterSchema = z.object({
-  categories: z.array(z.string()).optional(),
-  classes: z.array(z.string()).optional(),
-  viewId: z.string().optional(),
+  categories: z.array(boundedString).max(16).optional(),
+  classes: z.array(boundedString).max(16).optional(),
+  viewId: boundedId.optional(),
   selectionOnly: z.boolean().optional(),
-  levelIds: z.array(z.string()).optional(),
-  worksetIds: z.array(z.string()).optional(),
-  designOptionIds: z.array(z.string()).optional(),
-  parameterEquals: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  levelIds: z.array(boundedId).max(64).optional(),
+  worksetIds: z.array(boundedId).max(64).optional(),
+  designOptionIds: z.array(boundedId).max(64).optional(),
+  parameterEquals: parameterEqualsSchema.optional(),
 });
 
 const querySchema = {
   filter: queryFilterSchema.describe("Revit-native filters to apply before projection."),
-  fields: z.array(z.string()).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
+  fields: z.array(boundedString).max(32).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
   preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).optional(),
   limit: z.number().int().min(1).max(500).default(50),
   cursor: z.string().optional(),
-  includeTotalCount: z.boolean().default(true),
+  includeTotalCount: z.boolean().default(false),
 };
 
 const warningSchema = z.object({

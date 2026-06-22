@@ -19,4 +19,20 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: node scripts/validate-repo.mjs
-
+      - name: Check installer dry run when Revit artifacts are present
+        shell: pwsh
+        run: |
+          if (Test-Path "addin\RevitMcpNext.Addin\bin\Release\net48\RevitMcpNext.Addin.dll") {
+            .\installer\install-windows.ps1 -DryRun -SkipDependencyInstall
+          } else {
+            Write-Host "Skipping installer dry run because Revit add-in artifacts are not available in CI."
+          }
+      - name: Build Revit add-in when Revit API is installed
+        shell: pwsh
+        run: |
+          $revitApiPath = "C:\Program Files\Autodesk\Revit 2024"
+          if (Test-Path "$revitApiPath\RevitAPI.dll") {
+            .\scripts\build-addin.ps1 -RevitApiPath $revitApiPath
+          } else {
+            Write-Host "Skipping add-in build because Revit API DLLs are not installed on the runner."
+          }

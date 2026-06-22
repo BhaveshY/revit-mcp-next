@@ -15,9 +15,11 @@ export function asToolResult<T>(
         },
       ],
       structuredContent: {
-        error: response.error,
+        data: {
+          error: response.error,
+        },
         warnings: response.warnings,
-        metrics: response.metrics,
+        metrics: response.metrics ?? { elapsedMs: 0 },
       },
     };
   }
@@ -37,4 +39,3 @@ export function asToolResult<T>(
     },
   };
 }
-

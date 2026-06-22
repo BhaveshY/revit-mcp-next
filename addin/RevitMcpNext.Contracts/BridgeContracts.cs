@@ -16,17 +16,17 @@ namespace RevitMcpNext.Contracts
         public string Operation { get; set; } = string.Empty;
         public string OperationKind { get; set; } = "read";
         public int TimeoutMs { get; set; } = 30000;
-        public string DocumentFingerprint { get; set; }
+        public string? DocumentFingerprint { get; set; }
         public long? ExpectedGeneration { get; set; }
-        public string PayloadJson { get; set; } = "{}";
+        public Dictionary<string, object> Payload { get; set; } = new Dictionary<string, object>();
     }
 
     public sealed class BridgeResponseEnvelope
     {
         public bool Ok { get; set; }
         public string RequestId { get; set; } = string.Empty;
-        public string DataJson { get; set; } = "{}";
-        public BridgeError Error { get; set; }
+        public object? Data { get; set; } = new Dictionary<string, object>();
+        public BridgeError? Error { get; set; }
         public List<BridgeWarning> Warnings { get; set; } = new List<BridgeWarning>();
         public BridgeMetrics Metrics { get; set; } = new BridgeMetrics();
         public long? Generation { get; set; }
@@ -43,7 +43,7 @@ namespace RevitMcpNext.Contracts
         public string Code { get; set; } = string.Empty;
         public string Message { get; set; } = string.Empty;
         public bool Recoverable { get; set; } = true;
-        public string SuggestedNextAction { get; set; }
+        public string? SuggestedNextAction { get; set; }
     }
 
     public sealed class BridgeMetrics
@@ -67,4 +67,3 @@ namespace RevitMcpNext.Contracts
         public DateTimeOffset EnqueuedAt { get; }
     }
 }
-
