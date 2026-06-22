@@ -14,7 +14,7 @@ Use this audit to separate evidence that already exists from blockers that still
 - `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`; `-Sign` can request Authenticode signing before manifest, checksum, and zip capture when a certificate is supplied.
 - `npm run doctor:windows` validates the installed launcher, staged broker files, add-in DLLs, Revit manifest, packaged production dependencies, local pipe auth token shape, and add-in DLL signature status.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, and redacted auth configuration.
-- `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.query`, `create_wall` preview/apply, and `move_element` preview/apply.
+- `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.query`, plus preview/apply flows for `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
 - `npm run sign:windows` provides optional Authenticode signing and verification for `.dll` and `.ps1` package targets. No release certificate is assumed by this repository.
 - `.github/workflows/live-revit-smoke.yml` defines a manual self-hosted Windows/Revit smoke workflow. It builds and installs the current checkout, can optionally launch Revit, runs doctor and live smoke, collects a support bundle, and uploads `artifacts/live-revit-smoke`.
 
@@ -55,7 +55,7 @@ Run the local live smoke after installing the staged build, opening Revit, loadi
 npm run smoke:revit
 ```
 
-The smoke mutates the active project. It creates a straight wall on the first building-story level, queries it back, moves it on the Y axis, and verifies the reported movement.
+The smoke mutates the active project. It creates a straight wall on the first building-story level, queries it back, moves it on the Y axis, verifies the reported movement, rotates the wall, copies it by an offset, then pins and unpins the copied wall.
 
 Useful direct wrapper form:
 
@@ -67,7 +67,7 @@ Current coverage:
 
 - Exact command: `npm run smoke:revit`.
 - Required state: Windows, Node 24, installed Revit MCP Next launcher, Revit running with the add-in loaded, and an active disposable project document.
-- Smoke scope: installed launcher, broker/add-in pipe auth via the launcher, `revit.status`, `revit.get_levels`, `revit.query`, `create_wall`, and `move_element`.
+- Smoke scope: installed launcher, broker/add-in pipe auth via the launcher, `revit.status`, `revit.get_levels`, `revit.query`, `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
 - Pass/fail artifacts: console output plus add-in logs under `%LOCALAPPDATA%\RevitMcpNext\logs`; use `npm run support:bundle` after a failure.
 
 Current non-coverage:
@@ -75,7 +75,7 @@ Current non-coverage:
 - It does not launch Revit or create a project document.
 - It does not validate signed release artifacts.
 - It does not produce a packaged release evidence bundle by itself.
-- It does not cover cancellation, destructive operations, or Revit versions other than the active installed version.
+- It does not cover cancellation, `change_element_type`, destructive operations, or Revit versions other than the active installed version.
 
 ## Manual Self-Hosted Revit Smoke
 

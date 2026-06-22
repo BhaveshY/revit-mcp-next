@@ -254,6 +254,23 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         elementId: operation.elementId,
       };
+    case "rotate_element":
+      return {
+        elementId: operation.elementId,
+      };
+    case "copy_element":
+      return {
+        sourceElementId: operation.elementId,
+      };
+    case "change_element_type":
+      return {
+        elementId: operation.elementId,
+        typeId: operation.typeId,
+      };
+    case "set_element_pinned":
+      return {
+        elementId: operation.elementId,
+      };
     default:
       return assertNever(operation);
   }
@@ -283,13 +300,37 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
       return {
         translation: operation.translation,
       };
+    case "rotate_element":
+      return {
+        axisStart: operation.axisStart,
+        axisEnd: operation.axisEnd,
+        angle: operation.angle,
+      };
+    case "copy_element":
+      return {
+        translation: operation.translation,
+      };
+    case "change_element_type":
+      return {
+        typeId: operation.typeId,
+      };
+    case "set_element_pinned":
+      return {
+        pinned: operation.pinned,
+        expectedPinned: operation.expectedPinned,
+      };
     default:
       return assertNever(operation);
   }
 }
 
 function isMediumRiskOperation(operation: ChangeOperation): boolean {
-  return operation.type === "create_level" || operation.type === "create_wall";
+  return (
+    operation.type === "create_level" ||
+    operation.type === "create_wall" ||
+    operation.type === "copy_element" ||
+    operation.type === "change_element_type"
+  );
 }
 
 function assertNever(value: never): never {

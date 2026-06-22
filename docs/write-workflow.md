@@ -13,6 +13,10 @@ End-to-end supported operations:
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
 - `move_element`: move one non-pinned model element by `elementId` and a `translation` vector.
+- `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`.
+- `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs.
+- `change_element_type`: change one non-pinned model element to a compatible `typeId`.
+- `set_element_pinned`: set one model element's pinned state, optionally guarded by `expectedPinned`.
 
 Example preview payload:
 
@@ -62,6 +66,6 @@ Production readiness:
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
-- Run `npm run smoke:revit` only against a disposable active Revit project; it creates and moves a wall through preview/apply.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it creates, moves, rotates, copies, pins, and unpins walls through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

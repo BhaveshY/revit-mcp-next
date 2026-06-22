@@ -45,6 +45,12 @@ const changeUnitValueSchema = z.object({
   unit: z.enum(["mm", "millimeters", "m", "meters", "ft", "feet", "revit-internal"]),
   system: z.enum(["metric", "imperial", "revit-internal"]).default("metric"),
 });
+const changeAngleValueSchema = z
+  .object({
+    value: z.number(),
+    unit: z.enum(["degrees", "radians"]).default("degrees"),
+  })
+  .strict();
 const changePoint3Schema = z
   .object({
     x: changeUnitValueSchema.describe("X coordinate with explicit units."),
@@ -95,11 +101,46 @@ const moveElementOperationSchema = operationBaseSchema
     translation: changePoint3Schema.describe("Translation vector to apply to the target element."),
   })
   .strict();
+const rotateElementOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("rotate_element"),
+    elementId: boundedId.describe("Target Revit element ID."),
+    axisStart: changePoint3Schema.describe("Rotation axis start point."),
+    axisEnd: changePoint3Schema.describe("Rotation axis end point."),
+    angle: changeAngleValueSchema.describe("Signed rotation angle. Positive follows Revit's axis direction right-hand rule."),
+  })
+  .strict();
+const copyElementOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("copy_element"),
+    elementId: boundedId.describe("Source Revit element ID to duplicate."),
+    translation: changePoint3Schema.describe("Translation vector from source to copied element."),
+  })
+  .strict();
+const changeElementTypeOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("change_element_type"),
+    elementId: boundedId.describe("Target Revit element ID."),
+    typeId: boundedId.describe("New Revit element type ID. Use revit.query to inspect current type IDs first."),
+  })
+  .strict();
+const setElementPinnedOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("set_element_pinned"),
+    elementId: boundedId.describe("Target Revit element ID."),
+    pinned: z.boolean().describe("Desired pinned state."),
+    expectedPinned: z.boolean().optional().describe("Optional current pinned state guard."),
+  })
+  .strict();
 const changeOperationSchema = z.discriminatedUnion("type", [
   setParameterOperationSchema,
   createLevelOperationSchema,
   createWallOperationSchema,
   moveElementOperationSchema,
+  rotateElementOperationSchema,
+  copyElementOperationSchema,
+  changeElementTypeOperationSchema,
+  setElementPinnedOperationSchema,
 ]);
 
 const changeSetSchema = {
@@ -254,7 +295,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, and move_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, move_element, rotate_element, copy_element, change_element_type, and set_element_pinned.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {

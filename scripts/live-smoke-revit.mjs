@@ -158,6 +158,96 @@ async function main() {
 
     const movedWall = await queryWallById(client, wallId);
     console.log(`Post-move query OK: wall ${movedWall.id} is still queryable`);
+
+    const rotationGeneration = numericOrUndefined(moveApply.generation);
+    const axisStart = pointFromLocationSnapshot(moveChange?.after?.location, pointMm(0, options.moveYMm, levelElevationMm));
+    const axisEnd = offsetPointMm(axisStart, 0, 0, 1000);
+    const rotateOperation = {
+      id: "rotate-smoke-wall",
+      type: "rotate_element",
+      elementId: wallId,
+      axisStart,
+      axisEnd,
+      angle: { value: 5, unit: "degrees" },
+    };
+    const rotateTransaction = makeTransactionName(options.transactionPrefix, "rotate wall", runId);
+    const rotateChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: rotationGeneration,
+      transactionName: rotateTransaction,
+      operations: [rotateOperation],
+    });
+
+    const rotatePreview = await previewChangeSet(client, rotateChangeSet, "rotate_element");
+    const rotateApply = await applyChangeSet(client, rotateChangeSet, rotatePreview, "rotate_element");
+    const rotateChange = findChange(rotateApply, "rotate_element");
+    assert(rotateChange?.after?.location, "rotate_element apply did not include an after.location snapshot.");
+    console.log(`Rotate wall OK: element ${wallId} rotated by 5 degrees`);
+
+    const copyGeneration = numericOrUndefined(rotateApply.generation);
+    const copyOperation = {
+      id: "copy-smoke-wall",
+      type: "copy_element",
+      elementId: wallId,
+      translation: pointMm(options.wallLengthMm + 1000, 0, 0),
+    };
+    const copyTransaction = makeTransactionName(options.transactionPrefix, "copy wall", runId);
+    const copyChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: copyGeneration,
+      transactionName: copyTransaction,
+      operations: [copyOperation],
+    });
+
+    const copyPreview = await previewChangeSet(client, copyChangeSet, "copy_element");
+    const copyApply = await applyChangeSet(client, copyChangeSet, copyPreview, "copy_element");
+    const copyChange = findChange(copyApply, "copy_element");
+    const copiedWallId = getCopiedElementId(copyChange);
+    assert(copiedWallId, "copy_element applied but no copied element ID was returned.");
+    await queryWallById(client, copiedWallId);
+    console.log(`Copy wall OK: source ${wallId} copied to ${copiedWallId}`);
+
+    const pinGeneration = numericOrUndefined(copyApply.generation);
+    const pinOperation = {
+      id: "pin-smoke-wall",
+      type: "set_element_pinned",
+      elementId: copiedWallId,
+      pinned: true,
+      expectedPinned: false,
+    };
+    const pinTransaction = makeTransactionName(options.transactionPrefix, "pin wall", runId);
+    const pinChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: pinGeneration,
+      transactionName: pinTransaction,
+      operations: [pinOperation],
+    });
+
+    const pinPreview = await previewChangeSet(client, pinChangeSet, "set_element_pinned");
+    const pinApply = await applyChangeSet(client, pinChangeSet, pinPreview, "set_element_pinned");
+    assertPinnedState(findChange(pinApply, "set_element_pinned"), true);
+    console.log(`Pin wall OK: element ${copiedWallId} pinned`);
+
+    const unpinGeneration = numericOrUndefined(pinApply.generation);
+    const unpinOperation = {
+      id: "unpin-smoke-wall",
+      type: "set_element_pinned",
+      elementId: copiedWallId,
+      pinned: false,
+      expectedPinned: true,
+    };
+    const unpinTransaction = makeTransactionName(options.transactionPrefix, "unpin wall", runId);
+    const unpinChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: unpinGeneration,
+      transactionName: unpinTransaction,
+      operations: [unpinOperation],
+    });
+
+    const unpinPreview = await previewChangeSet(client, unpinChangeSet, "set_element_pinned");
+    const unpinApply = await applyChangeSet(client, unpinChangeSet, unpinPreview, "set_element_pinned");
+    assertPinnedState(findChange(unpinApply, "set_element_pinned"), false);
+    console.log(`Unpin wall OK: element ${copiedWallId} unpinned`);
     console.log("Live smoke passed.");
   } catch (error) {
     if (stderr.length > 0) {
@@ -427,6 +517,24 @@ function getCreatedElementId(change) {
   return stringOrUndefined(change?.after?.id) ?? stringOrUndefined(change?.target?.elementId);
 }
 
+function getCopiedElementId(change) {
+  const copiedIds = change?.after?.copiedElementIds;
+  if (Array.isArray(copiedIds) && copiedIds.length > 0) return stringOrUndefined(String(copiedIds[0]));
+  const copiedElements = change?.after?.copiedElements;
+  if (Array.isArray(copiedElements) && copiedElements.length > 0) {
+    return stringOrUndefined(String(copiedElements[0]?.id));
+  }
+  return undefined;
+}
+
+function assertPinnedState(change, expectedPinned) {
+  assert(change?.after, "set_element_pinned apply did not include after state.");
+  assert(
+    change.after.pinned === expectedPinned,
+    `Expected pinned=${expectedPinned} but observed pinned=${String(change.after.pinned)}.`
+  );
+}
+
 function assertMoveYChanged(change, expectedDeltaMm) {
   const beforeLocation = change?.before;
   const afterLocation = change?.after?.location;
@@ -456,6 +564,24 @@ function extractLocationYValues(location) {
   if (location?.min?.y) values.push(unitValueNumber(location.min.y));
   if (location?.max?.y) values.push(unitValueNumber(location.max.y));
   return values.filter((value) => Number.isFinite(value));
+}
+
+function pointFromLocationSnapshot(location, fallbackPoint) {
+  const source = location?.start ?? location?.point ?? location?.min;
+  if (!source) return fallbackPoint;
+  return pointMm(
+    numericOrDefault(source?.x?.value, unitValueNumber(fallbackPoint.x)),
+    numericOrDefault(source?.y?.value, unitValueNumber(fallbackPoint.y)),
+    numericOrDefault(source?.z?.value, unitValueNumber(fallbackPoint.z))
+  );
+}
+
+function offsetPointMm(point, x, y, z) {
+  return pointMm(
+    unitValueNumber(point.x) + x,
+    unitValueNumber(point.y) + y,
+    unitValueNumber(point.z) + z
+  );
 }
 
 function unitValueNumber(unitValue) {
@@ -565,6 +691,9 @@ Runs a live Revit MCP smoke against the active Revit project:
   4. revit.query for the created wall
   5. preview/apply move_element
   6. assert the wall Y location changed by --move-y-mm
+  7. preview/apply rotate_element
+  8. preview/apply copy_element
+  9. preview/apply set_element_pinned true, then false
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

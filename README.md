@@ -92,6 +92,10 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
 - `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
+- `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
+- `copy_element`: copy one model element by an explicit 3D translation vector.
+- `change_element_type`: change one non-pinned model element to a compatible Revit type ID.
+- `set_element_pinned`: pin or unpin one model element, with optional `expectedPinned` guard.
 
 `revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
 

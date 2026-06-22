@@ -257,7 +257,9 @@ namespace RevitMcpNext.Addin.Revit
                 if (string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
                 string operationType = GetString(operations[index], "type");
                 if (string.Equals(operationType, "create_level", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(operationType, "create_wall", StringComparison.OrdinalIgnoreCase))
+                    string.Equals(operationType, "create_wall", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "copy_element", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase))
                 {
                     riskLevel = "medium";
                 }
@@ -423,6 +425,14 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewCreateWall(document, operation, index);
                 case "move_element":
                     return PreviewMoveElement(document, operation, index);
+                case "rotate_element":
+                    return PreviewRotateElement(document, operation, index);
+                case "copy_element":
+                    return PreviewCopyElement(document, operation, index);
+                case "change_element_type":
+                    return PreviewChangeElementType(document, operation, index);
+                case "set_element_pinned":
+                    return PreviewSetElementPinned(document, operation, index);
                 default:
                     return BlockedChange(operation, index, "Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -441,6 +451,14 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyCreateWall(document, operation, index);
                 case "move_element":
                     return ApplyMoveElement(document, operation, index);
+                case "rotate_element":
+                    return ApplyRotateElement(document, operation, index);
+                case "copy_element":
+                    return ApplyCopyElement(document, operation, index);
+                case "change_element_type":
+                    return ApplyChangeElementType(document, operation, index);
+                case "set_element_pinned":
+                    return ApplySetElementPinned(document, operation, index);
                 default:
                     throw new InvalidOperationException("Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -735,6 +753,263 @@ namespace RevitMcpNext.Addin.Revit
                 });
         }
 
+        private static Dictionary<string, object> PreviewRotateElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            Dictionary<string, object> axisStartValue = GetDictionary(operation, "axisStart");
+            Dictionary<string, object> axisEndValue = GetDictionary(operation, "axisEnd");
+            Dictionary<string, object> angleValue = GetDictionary(operation, "angle");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "rotate_element requires elementId.");
+            if (axisStartValue == null) return BlockedChange(operation, index, "rotate_element requires axisStart.");
+            if (axisEndValue == null) return BlockedChange(operation, index, "rotate_element requires axisEnd.");
+            if (angleValue == null) return BlockedChange(operation, index, "rotate_element requires angle.");
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be rotated.");
+            if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot be rotated.");
+
+            XYZ axisStart;
+            XYZ axisEnd;
+            double angleRadians;
+            try
+            {
+                axisStart = ToInternalPoint(axisStartValue, "axisStart");
+                axisEnd = ToInternalPoint(axisEndValue, "axisEnd");
+                angleRadians = ToInternalAngle(angleValue);
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            if (axisStart.DistanceTo(axisEnd) <= Math.Max(document.Application.ShortCurveTolerance, 0.000001))
+            {
+                return BlockedChange(operation, index, "rotate_element axisStart and axisEnd must define a non-zero axis.");
+            }
+            if (Math.Abs(angleRadians) <= 0.000000001)
+            {
+                return BlockedChange(operation, index, "rotate_element angle must be non-zero.");
+            }
+
+            return Change(operation, index, "ready", ElementTarget(element, null),
+                before: LocationSnapshot(element),
+                after: new Dictionary<string, object>
+                {
+                    ["axisStart"] = PointValue(axisStart),
+                    ["axisEnd"] = PointValue(axisEnd),
+                    ["angle"] = AngleValue(angleRadians)
+                });
+        }
+
+        private static Dictionary<string, object> ApplyRotateElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewRotateElement(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "rotate_element preview failed.");
+            }
+
+            Element element = ResolveElement(document, GetString(operation, "elementId"));
+            Dictionary<string, object> before = LocationSnapshot(element);
+            XYZ axisStart = ToInternalPoint(GetDictionary(operation, "axisStart"), "axisStart");
+            XYZ axisEnd = ToInternalPoint(GetDictionary(operation, "axisEnd"), "axisEnd");
+            double angleRadians = ToInternalAngle(GetDictionary(operation, "angle"));
+            ElementTransformUtils.RotateElement(document, element.Id, Line.CreateBound(axisStart, axisEnd), angleRadians);
+            Element rotatedElement = document.GetElement(element.Id);
+
+            return Change(operation, index, "applied", ElementTarget(rotatedElement, null),
+                before: before,
+                after: new Dictionary<string, object>
+                {
+                    ["axisStart"] = PointValue(axisStart),
+                    ["axisEnd"] = PointValue(axisEnd),
+                    ["angle"] = AngleValue(angleRadians),
+                    ["location"] = LocationSnapshot(rotatedElement)
+                });
+        }
+
+        private static Dictionary<string, object> PreviewCopyElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            Dictionary<string, object> translationValue = GetDictionary(operation, "translation");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "copy_element requires elementId.");
+            if (translationValue == null) return BlockedChange(operation, index, "copy_element requires translation.");
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be copied.");
+            if (element.ViewSpecific) return BlockedChange(operation, index, "Element " + elementId + " is view-specific and cannot be copied by copy_element.");
+
+            XYZ translation;
+            try
+            {
+                translation = ToInternalPoint(translationValue, "translation");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            if (VectorLength(translation) <= 0) return BlockedChange(operation, index, "copy_element translation must be non-zero.");
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["source"] = ElementSummary(document, element)
+                },
+                before: LocationSnapshot(element),
+                after: new Dictionary<string, object>
+                {
+                    ["translation"] = PointValue(translation)
+                });
+        }
+
+        private static Dictionary<string, object> ApplyCopyElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCopyElement(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "copy_element preview failed.");
+            }
+
+            Element source = ResolveElement(document, GetString(operation, "elementId"));
+            XYZ translation = ToInternalPoint(GetDictionary(operation, "translation"), "translation");
+            ICollection<ElementId> copiedIds = ElementTransformUtils.CopyElement(document, source.Id, translation);
+            if (copiedIds == null || copiedIds.Count == 0)
+            {
+                throw new InvalidOperationException("copy_element did not return any copied element ids.");
+            }
+
+            Element[] copiedElements = copiedIds
+                .Select(id => document.GetElement(id))
+                .Where(element => element != null)
+                .ToArray();
+
+            return Change(operation, index, "applied",
+                target: new Dictionary<string, object>
+                {
+                    ["source"] = ElementSummary(document, source)
+                },
+                before: LocationSnapshot(source),
+                after: new Dictionary<string, object>
+                {
+                    ["translation"] = PointValue(translation),
+                    ["copiedElementIds"] = copiedIds.Select(ToElementIdString).ToArray(),
+                    ["copiedElements"] = copiedElements.Select(element => ElementSummary(document, element)).ToArray()
+                });
+        }
+
+        private static Dictionary<string, object> PreviewChangeElementType(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            string typeId = GetString(operation, "typeId");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "change_element_type requires elementId.");
+            if (string.IsNullOrWhiteSpace(typeId)) return BlockedChange(operation, index, "change_element_type requires typeId.");
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is already an element type and cannot change type.");
+            if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot change type.");
+
+            ElementType targetType = ResolveElement(document, typeId) as ElementType;
+            if (targetType == null) return BlockedChange(operation, index, "Type " + typeId + " was not found.");
+
+            ElementId currentTypeId = element.GetTypeId();
+            if (!IsValidElementId(currentTypeId)) return BlockedChange(operation, index, "Element " + elementId + " does not expose a valid type id.");
+            if (string.Equals(ToElementIdString(currentTypeId), ToElementIdString(targetType.Id), StringComparison.Ordinal))
+            {
+                return BlockedChange(operation, index, "Element " + elementId + " already has type " + typeId + ".");
+            }
+            if (!IsValidTypeForElement(element, targetType.Id))
+            {
+                return BlockedChange(operation, index, "Type " + typeId + " is not valid for element " + elementId + ".");
+            }
+
+            return Change(operation, index, "ready", ElementTarget(element, null),
+                before: TypeSnapshot(document, element),
+                after: TypeSnapshot(document, targetType));
+        }
+
+        private static Dictionary<string, object> ApplyChangeElementType(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewChangeElementType(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "change_element_type preview failed.");
+            }
+
+            Element element = ResolveElement(document, GetString(operation, "elementId"));
+            Dictionary<string, object> before = TypeSnapshot(document, element);
+            ElementType targetType = ResolveElement(document, GetString(operation, "typeId")) as ElementType;
+            ElementId changedElementId = element.ChangeTypeId(targetType.Id);
+            Element changedElement = IsValidElementId(changedElementId) ? document.GetElement(changedElementId) : null;
+            if (changedElement == null) changedElement = document.GetElement(element.Id) ?? element;
+
+            return Change(operation, index, "applied", ElementTarget(changedElement, null),
+                before: before,
+                after: TypeSnapshot(document, changedElement));
+        }
+
+        private static Dictionary<string, object> PreviewSetElementPinned(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "set_element_pinned requires elementId.");
+            if (!operation.TryGetValue("pinned", out object pinnedValue) || pinnedValue == null)
+            {
+                return BlockedChange(operation, index, "set_element_pinned requires pinned.");
+            }
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be pinned or unpinned.");
+
+            bool desiredPinned = Convert.ToBoolean(pinnedValue, CultureInfo.InvariantCulture);
+            bool? expectedPinned = GetNullableBool(operation, "expectedPinned");
+            if (expectedPinned.HasValue && expectedPinned.Value != element.Pinned)
+            {
+                return BlockedChange(
+                    operation,
+                    index,
+                    "Element " + elementId + " pinned state is " + element.Pinned.ToString(CultureInfo.InvariantCulture) +
+                    " but expectedPinned was " + expectedPinned.Value.ToString(CultureInfo.InvariantCulture) + ".");
+            }
+
+            return Change(operation, index, "ready", ElementTarget(element, null),
+                before: new Dictionary<string, object>
+                {
+                    ["pinned"] = element.Pinned
+                },
+                after: new Dictionary<string, object>
+                {
+                    ["pinned"] = desiredPinned
+                });
+        }
+
+        private static Dictionary<string, object> ApplySetElementPinned(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewSetElementPinned(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "set_element_pinned preview failed.");
+            }
+
+            Element element = ResolveElement(document, GetString(operation, "elementId"));
+            bool before = element.Pinned;
+            bool desiredPinned = GetBool(operation, "pinned", false);
+            element.Pinned = desiredPinned;
+
+            return Change(operation, index, "applied", ElementTarget(element, null),
+                before: new Dictionary<string, object>
+                {
+                    ["pinned"] = before
+                },
+                after: new Dictionary<string, object>
+                {
+                    ["pinned"] = element.Pinned
+                });
+        }
+
         private static Dictionary<string, object> Change(
             Dictionary<string, object> operation,
             int index,
@@ -877,6 +1152,23 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static double ToInternalAngle(Dictionary<string, object> angleValue)
+        {
+            if (angleValue == null) throw new ArgumentException("Angle is required.");
+            double value = GetDouble(angleValue, "value") ?? throw new ArgumentException("Angle value is required.");
+            string unit = (GetString(angleValue, "unit") ?? "degrees").Trim().ToLowerInvariant();
+
+            switch (unit)
+            {
+                case "degrees":
+                    return value * Math.PI / 180.0;
+                case "radians":
+                    return value;
+                default:
+                    throw new ArgumentException("Unsupported angle unit: " + unit);
+            }
+        }
+
         private static XYZ ToInternalPoint(Dictionary<string, object> point, string fieldName)
         {
             if (point == null) throw new ArgumentException(fieldName + " is required.");
@@ -913,6 +1205,16 @@ namespace RevitMcpNext.Addin.Revit
             return UnitValue(UnitUtils.ConvertFromInternalUnits(internalLength, UnitTypeId.Millimeters), "mm", "metric");
         }
 
+        private static Dictionary<string, object> AngleValue(double radians)
+        {
+            return new Dictionary<string, object>
+            {
+                ["value"] = Math.Round(radians * 180.0 / Math.PI, 6),
+                ["unit"] = "degrees",
+                ["radians"] = Math.Round(radians, 9)
+            };
+        }
+
         private static Dictionary<string, object> PointValue(XYZ point)
         {
             return new Dictionary<string, object>
@@ -929,6 +1231,74 @@ namespace RevitMcpNext.Addin.Revit
             if (parameter == null) throw new InvalidOperationException("Wall " + parameterName + " parameter was not found.");
             if (parameter.IsReadOnly) throw new InvalidOperationException("Wall " + parameterName + " parameter is read-only.");
             parameter.Set(value);
+        }
+
+        private static Dictionary<string, object> ElementSummary(Document document, Element element)
+        {
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(element.Id),
+                ["uniqueId"] = element.UniqueId,
+                ["class"] = element.GetType().Name,
+                ["name"] = SafeElementName(element)
+            };
+
+            if (element.Category != null) summary["category"] = element.Category.Name;
+
+            ElementId typeId = element.GetTypeId();
+            if (IsValidElementId(typeId)) summary["typeId"] = ToElementIdString(typeId);
+
+            ElementId levelId = GetLevelId(element);
+            if (IsValidElementId(levelId)) summary["levelId"] = ToElementIdString(levelId);
+
+            ElementType elementType = element as ElementType;
+            if (elementType != null && !string.IsNullOrWhiteSpace(elementType.FamilyName))
+            {
+                summary["familyName"] = elementType.FamilyName;
+            }
+
+            return summary;
+        }
+
+        private static Dictionary<string, object> TypeSnapshot(Document document, Element element)
+        {
+            ElementType elementType = element as ElementType;
+            if (elementType != null) return ElementSummary(document, elementType);
+
+            ElementId typeId = element?.GetTypeId();
+            if (!IsValidElementId(typeId))
+            {
+                return new Dictionary<string, object>
+                {
+                    ["available"] = false
+                };
+            }
+
+            ElementType resolvedType = document.GetElement(typeId) as ElementType;
+            if (resolvedType == null)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["typeId"] = ToElementIdString(typeId),
+                    ["available"] = false
+                };
+            }
+
+            return ElementSummary(document, resolvedType);
+        }
+
+        private static bool IsValidTypeForElement(Element element, ElementId typeId)
+        {
+            try
+            {
+                ICollection<ElementId> validTypeIds = element.GetValidTypes();
+                if (validTypeIds == null || validTypeIds.Count == 0) return true;
+                return validTypeIds.Any(candidate => string.Equals(ToElementIdString(candidate), ToElementIdString(typeId), StringComparison.Ordinal));
+            }
+            catch
+            {
+                return true;
+            }
         }
 
         private static Dictionary<string, object> WallSnapshot(Wall wall)
@@ -1765,6 +2135,12 @@ namespace RevitMcpNext.Addin.Revit
         private static bool GetBool(Dictionary<string, object> root, string key, bool defaultValue)
         {
             if (root == null || !root.TryGetValue(key, out object value) || value == null) return defaultValue;
+            return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+        }
+
+        private static bool? GetNullableBool(Dictionary<string, object> root, string key)
+        {
+            if (root == null || !root.TryGetValue(key, out object value) || value == null) return null;
             return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
         }
 

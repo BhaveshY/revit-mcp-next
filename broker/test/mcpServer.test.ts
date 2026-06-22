@@ -52,6 +52,10 @@ test("broker exposes annotated tools with output schemas and callable structured
       "create_level",
       "create_wall",
       "move_element",
+      "rotate_element",
+      "copy_element",
+      "change_element_type",
+      "set_element_pinned",
       "levelId",
       "start",
       "end",
@@ -60,6 +64,12 @@ test("broker exposes annotated tools with output schemas and callable structured
       "structural",
       "flip",
       "translation",
+      "axisStart",
+      "axisEnd",
+      "angle",
+      "typeId",
+      "pinned",
+      "expectedPinned",
       "changeSetHash",
       "documentFingerprint",
       "expectedGeneration",
@@ -104,6 +114,41 @@ test("broker exposes annotated tools with output schemas and callable structured
           y: { value: 250, unit: "mm", system: "metric" },
           z: { value: 0, unit: "mm", system: "metric" },
         },
+      },
+      {
+        type: "rotate_element",
+        elementId: "501",
+        axisStart: {
+          x: { value: 0, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+        axisEnd: {
+          x: { value: 0, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 1, unit: "m", system: "metric" },
+        },
+        angle: { value: 90, unit: "degrees" },
+      },
+      {
+        type: "copy_element",
+        elementId: "501",
+        translation: {
+          x: { value: 1200, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+      },
+      {
+        type: "change_element_type",
+        elementId: "501",
+        typeId: "9002",
+      },
+      {
+        type: "set_element_pinned",
+        elementId: "501",
+        pinned: true,
+        expectedPinned: false,
       },
     ];
     const preview = (await client.callTool({
@@ -150,7 +195,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 3);
+    assert.equal(apply.structuredContent?.data?.changedCount, 7);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

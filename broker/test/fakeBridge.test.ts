@@ -90,6 +90,41 @@ test("fake bridge previews and applies a bounded change set", async () => {
         elementId: "501",
         translation,
       },
+      {
+        id: "op-5",
+        type: "rotate_element" as const,
+        elementId: "501",
+        axisStart: start,
+        axisEnd: {
+          x: { value: 0, unit: "mm", system: "metric" as const },
+          y: { value: 0, unit: "mm", system: "metric" as const },
+          z: { value: 1, unit: "m", system: "metric" as const },
+        },
+        angle: { value: 90, unit: "degrees" as const },
+      },
+      {
+        id: "op-6",
+        type: "copy_element" as const,
+        elementId: "501",
+        translation: {
+          x: { value: 1200, unit: "mm", system: "metric" as const },
+          y: { value: 0, unit: "mm", system: "metric" as const },
+          z: { value: 0, unit: "mm", system: "metric" as const },
+        },
+      },
+      {
+        id: "op-7",
+        type: "change_element_type" as const,
+        elementId: "501",
+        typeId: "9002",
+      },
+      {
+        id: "op-8",
+        type: "set_element_pinned" as const,
+        elementId: "501",
+        pinned: true,
+        expectedPinned: false,
+      },
     ],
   } satisfies ChangeSetRequest;
 
@@ -97,7 +132,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 4);
+  assert.equal(preview.data.operationCount, 8);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -117,6 +152,21 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.deepEqual(preview.data.changes[3]?.after, {
     translation,
   });
+  assert.equal(preview.data.changes[4]?.type, "rotate_element");
+  assert.deepEqual(preview.data.changes[4]?.after?.angle, { value: 90, unit: "degrees" });
+  assert.deepEqual(preview.data.changes[5]?.target, {
+    sourceElementId: "501",
+  });
+  assert.equal(preview.data.changes[6]?.type, "change_element_type");
+  assert.deepEqual(preview.data.changes[6]?.target, {
+    elementId: "501",
+    typeId: "9002",
+  });
+  assert.equal(preview.data.changes[7]?.type, "set_element_pinned");
+  assert.deepEqual(preview.data.changes[7]?.after, {
+    pinned: true,
+    expectedPinned: false,
+  });
 
   const applyPayload = {
     ...changeSet,
@@ -133,9 +183,13 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 4);
+  assert.equal(applied.data.changedCount, 8);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
   assert.equal(applied.data.changes[3]?.type, "move_element");
+  assert.equal(applied.data.changes[4]?.type, "rotate_element");
+  assert.equal(applied.data.changes[5]?.type, "copy_element");
+  assert.equal(applied.data.changes[6]?.type, "change_element_type");
+  assert.equal(applied.data.changes[7]?.type, "set_element_pinned");
 });

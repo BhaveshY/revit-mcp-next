@@ -19,6 +19,11 @@ export interface Point3 {
   z: UnitValue;
 }
 
+export interface AngleValue {
+  value: number;
+  unit: "degrees" | "radians";
+}
+
 export interface BridgeWarning {
   code: string;
   message: string;
@@ -166,7 +171,15 @@ export interface QueryResult {
 }
 
 export type ChangeRiskLevel = "low" | "medium" | "high";
-export type ChangeOperationType = "set_parameter" | "create_level" | "create_wall" | "move_element";
+export type ChangeOperationType =
+  | "set_parameter"
+  | "create_level"
+  | "create_wall"
+  | "move_element"
+  | "rotate_element"
+  | "copy_element"
+  | "change_element_type"
+  | "set_element_pinned";
 export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
@@ -206,11 +219,42 @@ export interface MoveElementChangeOperation extends ChangeOperationBase {
   translation: Point3;
 }
 
+export interface RotateElementChangeOperation extends ChangeOperationBase {
+  type: "rotate_element";
+  elementId: ElementId;
+  axisStart: Point3;
+  axisEnd: Point3;
+  angle: AngleValue;
+}
+
+export interface CopyElementChangeOperation extends ChangeOperationBase {
+  type: "copy_element";
+  elementId: ElementId;
+  translation: Point3;
+}
+
+export interface ChangeElementTypeOperation extends ChangeOperationBase {
+  type: "change_element_type";
+  elementId: ElementId;
+  typeId: ElementId;
+}
+
+export interface SetElementPinnedOperation extends ChangeOperationBase {
+  type: "set_element_pinned";
+  elementId: ElementId;
+  pinned: boolean;
+  expectedPinned?: boolean;
+}
+
 export type ChangeOperation =
   | SetParameterChangeOperation
   | CreateLevelChangeOperation
   | CreateWallChangeOperation
-  | MoveElementChangeOperation;
+  | MoveElementChangeOperation
+  | RotateElementChangeOperation
+  | CopyElementChangeOperation
+  | ChangeElementTypeOperation
+  | SetElementPinnedOperation;
 
 export interface ChangeSetSafetyFields {
   documentFingerprint?: string;
