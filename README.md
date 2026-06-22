@@ -31,11 +31,11 @@ Autodesk Revit API
 
 ## Current Status
 
-Working local productionization slice:
+Local productionization slice, not yet a signed production release:
 
 - `contracts/`: shared protocol and tool-result TypeScript types plus JSON schema.
-- `broker/`: MCP stdio server with bounded read/write tools, output schemas, structured errors, and bridge tests.
-- `addin/`: Revit 2024 add-in with named-pipe IPC, cancellation-aware `ExternalEvent` queue, read handlers, and preview/apply write handlers.
+- `broker/`: MCP stdio server with bounded read/write tools, output schemas, structured errors, pipe auth token forwarding, and bridge tests.
+- `addin/`: Revit 2024 add-in with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers, and preview/apply write handlers.
 - `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates a Claude/Codex launcher.
 - `scripts/package-release.ps1`: staged Windows release package with payload checksums and optional bundled production dependencies.
 - `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
@@ -83,6 +83,22 @@ Windows installs generate a local 256-bit auth token in `%LOCALAPPDATA%\RevitMcp
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
-Write tools are intentionally bounded. `revit.preview_change_set` validates `set_parameter` and `create_level` operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
+Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 
-Production hardening still in progress: signed release artifacts, live Revit integration smoke on a Revit runner, broker/add-in enforcement of the provisioned pipe auth token, and broader write operation coverage.
+- `set_parameter`: set a writable instance parameter by element ID and parameter name.
+- `create_level`: create a level by name and elevation.
+- `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
+- `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
+
+`revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
+
+## Production Readiness And Remaining Blockers
+
+This repository is ready for local development and staged Windows packaging, but production release hardening is still in progress.
+
+Remaining blockers:
+
+- Signed release artifacts and a repeatable signing/release process.
+- Live Revit integration smoke on a Revit runner, including installer, broker/add-in pipe auth, and preview/apply flows.
+- Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
+- Multi-version Revit compatibility validation beyond the current Revit 2024 target.

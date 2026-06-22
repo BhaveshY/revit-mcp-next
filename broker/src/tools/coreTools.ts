@@ -45,6 +45,13 @@ const changeUnitValueSchema = z.object({
   unit: z.enum(["mm", "millimeters", "m", "meters", "ft", "feet", "revit-internal"]),
   system: z.enum(["metric", "imperial", "revit-internal"]).default("metric"),
 });
+const changePoint3Schema = z
+  .object({
+    x: changeUnitValueSchema.describe("X coordinate with explicit units."),
+    y: changeUnitValueSchema.describe("Y coordinate with explicit units."),
+    z: changeUnitValueSchema.describe("Z coordinate with explicit units."),
+  })
+  .strict();
 const changeSetHashSchema = z.string().min(1).max(128);
 const generationSchema = z.number().int().min(0);
 const expiresAtSchema = z
@@ -69,7 +76,31 @@ const createLevelOperationSchema = operationBaseSchema
     elevation: changeUnitValueSchema.describe("Level elevation with explicit units."),
   })
   .strict();
-const changeOperationSchema = z.discriminatedUnion("type", [setParameterOperationSchema, createLevelOperationSchema]);
+const createWallOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_wall"),
+    levelId: boundedId.describe("Level ID that hosts the new wall."),
+    start: changePoint3Schema.describe("Wall baseline start point."),
+    end: changePoint3Schema.describe("Wall baseline end point."),
+    wallTypeId: boundedId.optional().describe("Optional wall type ID. Uses the active/default wall type when omitted."),
+    height: changeUnitValueSchema.optional().describe("Optional unconnected wall height."),
+    structural: z.boolean().optional().describe("Whether to create the wall as structural."),
+    flip: z.boolean().optional().describe("Whether to flip the wall orientation after creation."),
+  })
+  .strict();
+const moveElementOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("move_element"),
+    elementId: boundedId.describe("Target Revit element ID."),
+    translation: changePoint3Schema.describe("Translation vector to apply to the target element."),
+  })
+  .strict();
+const changeOperationSchema = z.discriminatedUnion("type", [
+  setParameterOperationSchema,
+  createLevelOperationSchema,
+  createWallOperationSchema,
+  moveElementOperationSchema,
+]);
 
 const changeSetSchema = {
   documentFingerprint: boundedString.optional().describe("Active document fingerprint from revit.status or preview output."),
@@ -223,7 +254,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter and create_level.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, and move_element.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {

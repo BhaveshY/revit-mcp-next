@@ -255,7 +255,12 @@ namespace RevitMcpNext.Addin.Revit
                 changes.Add(change);
                 string status = GetString(change, "status");
                 if (string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
-                if (string.Equals(GetString(operations[index], "type"), "create_level", StringComparison.OrdinalIgnoreCase)) riskLevel = "medium";
+                string operationType = GetString(operations[index], "type");
+                if (string.Equals(operationType, "create_level", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_wall", StringComparison.OrdinalIgnoreCase))
+                {
+                    riskLevel = "medium";
+                }
             }
 
             string operationsHash = ComputeChangeSetHash(operations);
@@ -414,6 +419,10 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewSetParameter(document, operation, index);
                 case "create_level":
                     return PreviewCreateLevel(document, operation, index, validationContext);
+                case "create_wall":
+                    return PreviewCreateWall(document, operation, index);
+                case "move_element":
+                    return PreviewMoveElement(document, operation, index);
                 default:
                     return BlockedChange(operation, index, "Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -428,6 +437,10 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplySetParameter(document, operation, index);
                 case "create_level":
                     return ApplyCreateLevel(document, operation, index);
+                case "create_wall":
+                    return ApplyCreateWall(document, operation, index);
+                case "move_element":
+                    return ApplyMoveElement(document, operation, index);
                 default:
                     throw new InvalidOperationException("Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -547,6 +560,181 @@ namespace RevitMcpNext.Addin.Revit
                 });
         }
 
+        private static Dictionary<string, object> PreviewCreateWall(Document document, Dictionary<string, object> operation, int index)
+        {
+            string levelId = GetString(operation, "levelId");
+            Dictionary<string, object> startValue = GetDictionary(operation, "start");
+            Dictionary<string, object> endValue = GetDictionary(operation, "end");
+            if (string.IsNullOrWhiteSpace(levelId)) return BlockedChange(operation, index, "create_wall requires levelId.");
+            if (startValue == null) return BlockedChange(operation, index, "create_wall requires start.");
+            if (endValue == null) return BlockedChange(operation, index, "create_wall requires end.");
+
+            Level level = ResolveElement(document, levelId) as Level;
+            if (level == null) return BlockedChange(operation, index, "Level " + levelId + " was not found.");
+
+            string wallTypeId = GetString(operation, "wallTypeId");
+            WallType wallType = null;
+            if (!string.IsNullOrWhiteSpace(wallTypeId))
+            {
+                wallType = ResolveElement(document, wallTypeId) as WallType;
+                if (wallType == null) return BlockedChange(operation, index, "Wall type " + wallTypeId + " was not found.");
+            }
+
+            XYZ start;
+            XYZ end;
+            double? height = null;
+            try
+            {
+                start = ToInternalPoint(startValue, "start");
+                end = ToInternalPoint(endValue, "end");
+                Dictionary<string, object> heightValue = GetDictionary(operation, "height");
+                if (heightValue != null)
+                {
+                    height = ToInternalLength(heightValue, "height");
+                    if (height.Value <= 0) return BlockedChange(operation, index, "create_wall height must be greater than zero.");
+                }
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            string geometryError = ValidateWallBaseline(document, start, end);
+            if (!string.IsNullOrWhiteSpace(geometryError)) return BlockedChange(operation, index, geometryError);
+
+            bool structural = GetBool(operation, "structural", false);
+            bool flip = GetBool(operation, "flip", false);
+            double baseOffset = start.Z - level.Elevation;
+            var target = new Dictionary<string, object>
+            {
+                ["document"] = document.Title,
+                ["levelId"] = ToElementIdString(level.Id),
+                ["levelName"] = level.Name
+            };
+            if (wallType != null)
+            {
+                target["wallTypeId"] = ToElementIdString(wallType.Id);
+                target["wallTypeName"] = SafeElementName(wallType);
+            }
+
+            var after = new Dictionary<string, object>
+            {
+                ["levelId"] = ToElementIdString(level.Id),
+                ["start"] = PointValue(start),
+                ["end"] = PointValue(end),
+                ["length"] = LengthValue(start.DistanceTo(end)),
+                ["baseOffset"] = LengthValue(baseOffset),
+                ["structural"] = structural,
+                ["flip"] = flip
+            };
+            if (wallType != null) after["wallTypeId"] = ToElementIdString(wallType.Id);
+            if (height.HasValue) after["height"] = LengthValue(height.Value);
+
+            return Change(operation, index, "ready", target, before: null, after: after);
+        }
+
+        private static Dictionary<string, object> ApplyCreateWall(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateWall(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_wall preview failed.");
+            }
+
+            Level level = ResolveElement(document, GetString(operation, "levelId")) as Level;
+            XYZ start = ToInternalPoint(GetDictionary(operation, "start"), "start");
+            XYZ end = ToInternalPoint(GetDictionary(operation, "end"), "end");
+            bool structural = GetBool(operation, "structural", false);
+            bool flip = GetBool(operation, "flip", false);
+            Wall wall = Wall.Create(document, Line.CreateBound(start, end), level.Id, structural);
+
+            string wallTypeId = GetString(operation, "wallTypeId");
+            if (!string.IsNullOrWhiteSpace(wallTypeId))
+            {
+                WallType wallType = ResolveElement(document, wallTypeId) as WallType;
+                ElementId changedId = wall.ChangeTypeId(wallType.Id);
+                if (IsValidElementId(changedId) &&
+                    !string.Equals(ToElementIdString(changedId), ToElementIdString(wall.Id), StringComparison.Ordinal))
+                {
+                    Wall changedWall = document.GetElement(changedId) as Wall;
+                    if (changedWall != null) wall = changedWall;
+                }
+            }
+
+            SetWallDoubleParameter(wall, BuiltInParameter.WALL_BASE_OFFSET, start.Z - level.Elevation, "base offset");
+
+            Dictionary<string, object> heightValue = GetDictionary(operation, "height");
+            if (heightValue != null)
+            {
+                SetWallDoubleParameter(wall, BuiltInParameter.WALL_USER_HEIGHT_PARAM, ToInternalLength(heightValue, "height"), "height");
+            }
+
+            if (flip)
+            {
+                wall.Flip();
+            }
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(wall, null),
+                before: null,
+                after: WallSnapshot(wall));
+        }
+
+        private static Dictionary<string, object> PreviewMoveElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            Dictionary<string, object> translationValue = GetDictionary(operation, "translation");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "move_element requires elementId.");
+            if (translationValue == null) return BlockedChange(operation, index, "move_element requires translation.");
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be moved.");
+            if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot be moved.");
+
+            XYZ translation;
+            try
+            {
+                translation = ToInternalPoint(translationValue, "translation");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            if (VectorLength(translation) <= 0) return BlockedChange(operation, index, "move_element translation must be non-zero.");
+
+            return Change(operation, index, "ready", ElementTarget(element, null),
+                before: LocationSnapshot(element),
+                after: new Dictionary<string, object>
+                {
+                    ["translation"] = PointValue(translation)
+                });
+        }
+
+        private static Dictionary<string, object> ApplyMoveElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewMoveElement(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "move_element preview failed.");
+            }
+
+            Element element = ResolveElement(document, GetString(operation, "elementId"));
+            Dictionary<string, object> before = LocationSnapshot(element);
+            XYZ translation = ToInternalPoint(GetDictionary(operation, "translation"), "translation");
+            ElementTransformUtils.MoveElement(document, element.Id, translation);
+            Element movedElement = document.GetElement(element.Id);
+
+            return Change(operation, index, "applied", ElementTarget(movedElement, null),
+                before: before,
+                after: new Dictionary<string, object>
+                {
+                    ["translation"] = PointValue(translation),
+                    ["location"] = LocationSnapshot(movedElement)
+                });
+        }
+
         private static Dictionary<string, object> Change(
             Dictionary<string, object> operation,
             int index,
@@ -663,9 +851,14 @@ namespace RevitMcpNext.Addin.Revit
 
         private static double ToInternalElevation(Dictionary<string, object> elevation)
         {
-            if (elevation == null) throw new ArgumentException("Elevation is required.");
-            double value = GetDouble(elevation, "value") ?? throw new ArgumentException("Elevation value is required.");
-            string unit = (GetString(elevation, "unit") ?? "mm").Trim().ToLowerInvariant();
+            return ToInternalLength(elevation, "Elevation");
+        }
+
+        private static double ToInternalLength(Dictionary<string, object> unitValue, string fieldName)
+        {
+            if (unitValue == null) throw new ArgumentException(fieldName + " is required.");
+            double value = GetDouble(unitValue, "value") ?? throw new ArgumentException(fieldName + " value is required.");
+            string unit = (GetString(unitValue, "unit") ?? "mm").Trim().ToLowerInvariant();
 
             switch (unit)
             {
@@ -680,8 +873,132 @@ namespace RevitMcpNext.Addin.Revit
                 case "revit-internal":
                     return value;
                 default:
-                    throw new ArgumentException("Unsupported elevation unit: " + unit);
+                    throw new ArgumentException("Unsupported " + fieldName.ToLowerInvariant() + " unit: " + unit);
             }
+        }
+
+        private static XYZ ToInternalPoint(Dictionary<string, object> point, string fieldName)
+        {
+            if (point == null) throw new ArgumentException(fieldName + " is required.");
+            return new XYZ(
+                ToInternalLength(GetDictionary(point, "x"), fieldName + ".x"),
+                ToInternalLength(GetDictionary(point, "y"), fieldName + ".y"),
+                ToInternalLength(GetDictionary(point, "z"), fieldName + ".z"));
+        }
+
+        private static string ValidateWallBaseline(Document document, XYZ start, XYZ end)
+        {
+            if (Math.Abs(start.Z - end.Z) > 0.000001)
+            {
+                return "create_wall start and end must have the same z elevation.";
+            }
+
+            double length = start.DistanceTo(end);
+            double minimumLength = Math.Max(document.Application.ShortCurveTolerance, 0.000001);
+            if (length <= minimumLength)
+            {
+                return "create_wall baseline is shorter than Revit's minimum curve length.";
+            }
+
+            return null;
+        }
+
+        private static double VectorLength(XYZ vector)
+        {
+            return Math.Sqrt(vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z);
+        }
+
+        private static Dictionary<string, object> LengthValue(double internalLength)
+        {
+            return UnitValue(UnitUtils.ConvertFromInternalUnits(internalLength, UnitTypeId.Millimeters), "mm", "metric");
+        }
+
+        private static Dictionary<string, object> PointValue(XYZ point)
+        {
+            return new Dictionary<string, object>
+            {
+                ["x"] = LengthValue(point.X),
+                ["y"] = LengthValue(point.Y),
+                ["z"] = LengthValue(point.Z)
+            };
+        }
+
+        private static void SetWallDoubleParameter(Wall wall, BuiltInParameter builtInParameter, double value, string parameterName)
+        {
+            Parameter parameter = wall.get_Parameter(builtInParameter);
+            if (parameter == null) throw new InvalidOperationException("Wall " + parameterName + " parameter was not found.");
+            if (parameter.IsReadOnly) throw new InvalidOperationException("Wall " + parameterName + " parameter is read-only.");
+            parameter.Set(value);
+        }
+
+        private static Dictionary<string, object> WallSnapshot(Wall wall)
+        {
+            var snapshot = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(wall.Id),
+                ["uniqueId"] = wall.UniqueId,
+                ["name"] = SafeElementName(wall),
+                ["typeId"] = ToElementIdString(wall.GetTypeId()),
+                ["levelId"] = ToElementIdString(GetLevelId(wall)),
+                ["flipped"] = wall.Flipped
+            };
+
+            Parameter height = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
+            if (height != null && height.StorageType == StorageType.Double) snapshot["height"] = LengthValue(height.AsDouble());
+
+            Parameter baseOffset = wall.get_Parameter(BuiltInParameter.WALL_BASE_OFFSET);
+            if (baseOffset != null && baseOffset.StorageType == StorageType.Double) snapshot["baseOffset"] = LengthValue(baseOffset.AsDouble());
+
+            LocationCurve locationCurve = wall.Location as LocationCurve;
+            if (locationCurve?.Curve != null && locationCurve.Curve.IsBound)
+            {
+                snapshot["start"] = PointValue(locationCurve.Curve.GetEndPoint(0));
+                snapshot["end"] = PointValue(locationCurve.Curve.GetEndPoint(1));
+                snapshot["length"] = LengthValue(locationCurve.Curve.Length);
+            }
+
+            return snapshot;
+        }
+
+        private static Dictionary<string, object> LocationSnapshot(Element element)
+        {
+            if (element == null) return null;
+
+            LocationPoint point = element.Location as LocationPoint;
+            if (point != null)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["point"] = PointValue(point.Point),
+                    ["rotation"] = Math.Round(point.Rotation, 6)
+                };
+            }
+
+            LocationCurve curve = element.Location as LocationCurve;
+            if (curve?.Curve != null && curve.Curve.IsBound)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["start"] = PointValue(curve.Curve.GetEndPoint(0)),
+                    ["end"] = PointValue(curve.Curve.GetEndPoint(1)),
+                    ["length"] = LengthValue(curve.Curve.Length)
+                };
+            }
+
+            BoundingBoxXYZ boundingBox = element.get_BoundingBox(null);
+            if (boundingBox != null)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["min"] = PointValue(boundingBox.Min),
+                    ["max"] = PointValue(boundingBox.Max)
+                };
+            }
+
+            return new Dictionary<string, object>
+            {
+                ["available"] = false
+            };
         }
 
         private static List<Dictionary<string, object>> GetOperations(Dictionary<string, object> payload)

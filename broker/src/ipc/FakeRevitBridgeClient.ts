@@ -147,7 +147,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       operationCount: request.payload.operations.length,
       ready: true,
       requiresConfirmation: true,
-      riskLevel: request.payload.operations.some((operation) => operation.type === "create_level") ? "medium" : "low",
+      riskLevel: request.payload.operations.some(isMediumRiskOperation) ? "medium" : "low",
       changes: request.payload.operations.map((operation, index) => ({
         operationIndex: index,
         operationId: operation.id,
@@ -234,29 +234,66 @@ function hashChangeSet(payload: ChangeSetRequest, documentFingerprint: string, b
 }
 
 function getOperationTarget(operation: ChangeOperation): Record<string, unknown> {
-  if (operation.type === "set_parameter") {
-    return {
-      elementId: operation.elementId,
-      parameterName: operation.parameterName,
-    };
+  switch (operation.type) {
+    case "set_parameter":
+      return {
+        elementId: operation.elementId,
+        parameterName: operation.parameterName,
+      };
+    case "create_level":
+      return {
+        document: activeDocument.title,
+      };
+    case "create_wall":
+      return {
+        document: activeDocument.title,
+        levelId: operation.levelId,
+        wallTypeId: operation.wallTypeId,
+      };
+    case "move_element":
+      return {
+        elementId: operation.elementId,
+      };
+    default:
+      return assertNever(operation);
   }
-
-  return {
-    document: activeDocument.title,
-  };
 }
 
 function getOperationAfter(operation: ChangeOperation): Record<string, unknown> {
-  if (operation.type === "set_parameter") {
-    return {
-      value: operation.value,
-    };
+  switch (operation.type) {
+    case "set_parameter":
+      return {
+        value: operation.value,
+      };
+    case "create_level":
+      return {
+        name: operation.name,
+        elevation: operation.elevation,
+      };
+    case "create_wall":
+      return {
+        start: operation.start,
+        end: operation.end,
+        wallTypeId: operation.wallTypeId,
+        height: operation.height,
+        structural: operation.structural,
+        flip: operation.flip,
+      };
+    case "move_element":
+      return {
+        translation: operation.translation,
+      };
+    default:
+      return assertNever(operation);
   }
+}
 
-  return {
-    name: operation.name,
-    elevation: operation.elevation,
-  };
+function isMediumRiskOperation(operation: ChangeOperation): boolean {
+  return operation.type === "create_level" || operation.type === "create_wall";
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported change operation: ${JSON.stringify(value)}`);
 }
 
 function ok<T>(request: BridgeRequest, data: T): BridgeResponse<T> {

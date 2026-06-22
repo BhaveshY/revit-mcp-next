@@ -40,10 +40,25 @@ test("request builder stamps current protocol and operation kind", () => {
 
 test("fake bridge previews and applies a bounded change set", async () => {
   const bridge = new FakeRevitBridgeClient();
+  const start = {
+    x: { value: 0, unit: "mm", system: "metric" as const },
+    y: { value: 0, unit: "mm", system: "metric" as const },
+    z: { value: 0, unit: "mm", system: "metric" as const },
+  };
+  const end = {
+    x: { value: 5000, unit: "mm", system: "metric" as const },
+    y: { value: 0, unit: "mm", system: "metric" as const },
+    z: { value: 0, unit: "mm", system: "metric" as const },
+  };
+  const translation = {
+    x: { value: 0, unit: "mm", system: "metric" as const },
+    y: { value: 250, unit: "mm", system: "metric" as const },
+    z: { value: 0, unit: "mm", system: "metric" as const },
+  };
   const changeSet = {
     documentFingerprint: "sample-doc-fingerprint",
     expectedGeneration: 7,
-    transactionName: "Update Mark And Level",
+    transactionName: "Update Mark Level Wall Move",
     operations: [
       {
         id: "op-1",
@@ -58,6 +73,23 @@ test("fake bridge previews and applies a bounded change set", async () => {
         name: "Level 3",
         elevation: { value: 7000, unit: "mm", system: "metric" as const },
       },
+      {
+        id: "op-3",
+        type: "create_wall" as const,
+        levelId: "311",
+        start,
+        end,
+        wallTypeId: "9001",
+        height: { value: 3000, unit: "mm", system: "metric" as const },
+        structural: true,
+        flip: false,
+      },
+      {
+        id: "op-4",
+        type: "move_element" as const,
+        elementId: "501",
+        translation,
+      },
     ],
   } satisfies ChangeSetRequest;
 
@@ -65,13 +97,26 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 2);
+  assert.equal(preview.data.operationCount, 4);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
   assert.match(preview.data.changeSetHash ?? "", /^sha256:/);
   assert.equal(preview.data.expiresAt, "2099-01-01T00:00:00.000Z");
   assert.equal(preview.data.changes[0]?.status, "ready");
+  assert.deepEqual(preview.data.changes[2]?.target, {
+    document: "Sample.rvt",
+    levelId: "311",
+    wallTypeId: "9001",
+  });
+  assert.deepEqual(preview.data.changes[2]?.after?.start, start);
+  assert.deepEqual(preview.data.changes[2]?.after?.end, end);
+  assert.deepEqual(preview.data.changes[3]?.target, {
+    elementId: "501",
+  });
+  assert.deepEqual(preview.data.changes[3]?.after, {
+    translation,
+  });
 
   const applyPayload = {
     ...changeSet,
@@ -88,7 +133,9 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 2);
+  assert.equal(applied.data.changedCount, 4);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
+  assert.equal(applied.data.changes[2]?.type, "create_wall");
+  assert.equal(applied.data.changes[3]?.type, "move_element");
 });

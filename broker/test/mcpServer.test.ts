@@ -50,6 +50,16 @@ test("broker exposes annotated tools with output schemas and callable structured
     for (const expectedSchemaTerm of [
       "set_parameter",
       "create_level",
+      "create_wall",
+      "move_element",
+      "levelId",
+      "start",
+      "end",
+      "wallTypeId",
+      "height",
+      "structural",
+      "flip",
+      "translation",
       "changeSetHash",
       "documentFingerprint",
       "expectedGeneration",
@@ -59,6 +69,16 @@ test("broker exposes annotated tools with output schemas and callable structured
       assert.match(previewSchema, new RegExp(expectedSchemaTerm));
     }
 
+    const wallStart = {
+      x: { value: 0, unit: "mm", system: "metric" },
+      y: { value: 0, unit: "mm", system: "metric" },
+      z: { value: 0, unit: "mm", system: "metric" },
+    };
+    const wallEnd = {
+      x: { value: 4200, unit: "mm", system: "metric" },
+      y: { value: 0, unit: "mm", system: "metric" },
+      z: { value: 0, unit: "mm", system: "metric" },
+    };
     const operations = [
       {
         type: "set_parameter",
@@ -66,11 +86,30 @@ test("broker exposes annotated tools with output schemas and callable structured
         parameterName: "Mark",
         value: "A-101",
       },
+      {
+        type: "create_wall",
+        levelId: "311",
+        start: wallStart,
+        end: wallEnd,
+        wallTypeId: "9001",
+        height: { value: 3000, unit: "mm", system: "metric" },
+        structural: false,
+        flip: true,
+      },
+      {
+        type: "move_element",
+        elementId: "501",
+        translation: {
+          x: { value: 0, unit: "mm", system: "metric" },
+          y: { value: 250, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+      },
     ];
     const preview = (await client.callTool({
       name: "revit.preview_change_set",
       arguments: {
-        transactionName: "Update Mark",
+        transactionName: "Update Mark Wall Move",
         documentFingerprint: "sample-doc-fingerprint",
         expectedGeneration: 7,
         operations,
@@ -96,7 +135,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     const apply = (await client.callTool({
       name: "revit.apply_change_set",
       arguments: {
-        transactionName: "Update Mark",
+        transactionName: "Update Mark Wall Move",
         documentFingerprint: preview.structuredContent?.data?.documentFingerprint,
         baseGeneration: preview.structuredContent?.data?.baseGeneration,
         changeSetHash: preview.structuredContent?.data?.changeSetHash,
@@ -111,7 +150,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 1);
+    assert.equal(apply.structuredContent?.data?.changedCount, 3);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

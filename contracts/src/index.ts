@@ -166,7 +166,7 @@ export interface QueryResult {
 }
 
 export type ChangeRiskLevel = "low" | "medium" | "high";
-export type ChangeOperationType = "set_parameter" | "create_level";
+export type ChangeOperationType = "set_parameter" | "create_level" | "create_wall" | "move_element";
 export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
@@ -189,7 +189,28 @@ export interface CreateLevelChangeOperation extends ChangeOperationBase {
   elevation: UnitValue;
 }
 
-export type ChangeOperation = SetParameterChangeOperation | CreateLevelChangeOperation;
+export interface CreateWallChangeOperation extends ChangeOperationBase {
+  type: "create_wall";
+  levelId: ElementId;
+  start: Point3;
+  end: Point3;
+  wallTypeId?: ElementId;
+  height?: UnitValue;
+  structural?: boolean;
+  flip?: boolean;
+}
+
+export interface MoveElementChangeOperation extends ChangeOperationBase {
+  type: "move_element";
+  elementId: ElementId;
+  translation: Point3;
+}
+
+export type ChangeOperation =
+  | SetParameterChangeOperation
+  | CreateLevelChangeOperation
+  | CreateWallChangeOperation
+  | MoveElementChangeOperation;
 
 export interface ChangeSetSafetyFields {
   documentFingerprint?: string;

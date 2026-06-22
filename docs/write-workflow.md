@@ -7,10 +7,12 @@ Write operations use a preview/apply contract.
 3. Inspect every returned change. Do not apply blocked previews.
 4. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, and `confirm: true`.
 
-Supported operations:
+End-to-end supported operations:
 
 - `set_parameter`: set a writable instance parameter by element ID and parameter name.
 - `create_level`: create a level by name and elevation.
+- `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
+- `move_element`: move one non-pinned model element by `elementId` and a `translation` vector.
 
 Example preview payload:
 
@@ -51,6 +53,11 @@ Example apply payload:
 ```
 
 The add-in recomputes the preview hash before applying. If the model, transaction name, or operation list no longer match, apply fails.
+
+Production readiness:
+
+- The write path is suitable for local development and staged packaging, not a signed production release.
+- Production release still needs automated live Revit smoke coverage, signed artifacts, and broader failure-mode validation.
 
 Diagnostics:
 
