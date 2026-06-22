@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces",
     "build:addin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-addin.ps1",
     "test": "npm run test --workspaces --if-present",
+    "test:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-package-contract.ps1",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "install:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/install-windows.ps1",
     "doctor:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor.ps1",

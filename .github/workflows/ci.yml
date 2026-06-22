@@ -23,6 +23,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: node scripts/validate-repo.mjs
+      - name: Release package contract
+        shell: pwsh
+        run: npm run test:release:windows
       - name: Build .NET bridge contracts
         shell: pwsh
         run: dotnet build addin\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj -c Release

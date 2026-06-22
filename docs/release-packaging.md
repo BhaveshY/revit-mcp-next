@@ -31,6 +31,14 @@ The package is written under `artifacts\release\revit-mcp-next-<version>-windows
 - `release-manifest.json` with file inventory, build metadata, and signing status.
 - `CHECKSUMS.sha256` for installer-side integrity verification.
 
+Hosted CI also runs a release package contract test:
+
+```powershell
+npm run test:release:windows
+```
+
+That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
+
 ## Signing Status
 
 The default packaging command produces unsigned staged artifacts. No certificate is committed or assumed.

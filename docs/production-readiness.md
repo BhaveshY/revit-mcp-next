@@ -12,6 +12,7 @@ Use this audit to separate evidence that already exists from blockers that still
 - CI attempts the Revit add-in build only when Revit 2024 API DLLs are present on the runner.
 - `npm run package:windows:dry-run` validates package inputs after the broker/contracts/add-in build outputs exist.
 - `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`; `-Sign` can request Authenticode signing before manifest, checksum, and zip capture when a certificate is supplied.
+- `npm run test:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates unsigned package creation, zip creation, package install into temp profile paths, doctor output, support bundle redaction, and checksum-tamper rejection without requiring Revit API DLLs on the runner.
 - `npm run doctor:windows` validates the installed launcher, staged broker files, add-in DLLs, Revit manifest, packaged production dependencies, local pipe auth token shape, and add-in DLL signature status.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, and redacted auth configuration.
 - `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.query`, plus preview/apply flows for `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
@@ -22,7 +23,7 @@ Use this audit to separate evidence that already exists from blockers that still
 
 - Signed artifacts from an available release certificate, plus archived verification evidence before any signed-release claim.
 - Successful release-candidate live smoke evidence from a self-hosted Revit runner, plus packaged-build validation when the workflow is used as release evidence.
-- End-to-end live validation evidence that ties installer behavior, broker/add-in pipe auth, `revit.status`, read tools, and preview/apply write flows to a specific packaged build.
+- End-to-end live validation evidence that ties installer behavior, broker/add-in pipe auth, `revit.status`, read tools, and preview/apply write flows to a specific packaged build. Hosted package-contract CI covers package mechanics only; it does not prove Revit can load a release DLL.
 - Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.
 - Release evidence capture that ties a package, checksums, support diagnostics, and live smoke result to the same build.

@@ -7,6 +7,7 @@ param(
     [switch] $RequireTrustedSignatures,
     [int[]] $RevitYears = @(2024),
     [string] $OutputRoot = "",
+    [string] $AddinOutputRoot = "",
     [string] $Version = "",
     [string] $SigningCertificateThumbprint = "$env:REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT",
     [string] $SigningCertificatePath = "$env:REVIT_MCP_NEXT_SIGN_CERT_PATH",
@@ -292,9 +293,13 @@ $brokerPackage = Resolve-RequiredFile (Join-Path $repoRoot "broker\package.json"
 $contractsPackage = Resolve-RequiredFile (Join-Path $repoRoot "contracts\package.json") "Contracts package metadata is missing."
 $addinTemplate = Resolve-RequiredFile (Join-Path $repoRoot "addin\RevitMcpNext.Addin\RevitMcpNext.addin.template") "Add-in manifest template is missing."
 
-$addinOut = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Release\net48"
-if (-not (Test-Path -LiteralPath $addinOut -PathType Container)) {
-    $addinOut = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Debug\net48"
+if ([string]::IsNullOrWhiteSpace($AddinOutputRoot)) {
+    $addinOut = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Release\net48"
+    if (-not (Test-Path -LiteralPath $addinOut -PathType Container)) {
+        $addinOut = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Debug\net48"
+    }
+} else {
+    $addinOut = Resolve-RequiredDirectory $AddinOutputRoot "Configured add-in output root was not found."
 }
 
 $addinDll = Resolve-RequiredFile (Join-Path $addinOut "RevitMcpNext.Addin.dll") "Add-in is not built. Build it with npm run build:addin."
