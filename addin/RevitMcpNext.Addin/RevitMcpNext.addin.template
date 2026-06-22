@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Revit MCP Next</Name>
+    <Assembly>{{ASSEMBLY_PATH}}</Assembly>
+    <AddInId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</AddInId>
+    <FullClassName>RevitMcpNext.Addin.RevitMcpApplication</FullClassName>
+    <VendorId>BHVY</VendorId>
+    <VendorDescription>BhaveshY Revit MCP Next</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+

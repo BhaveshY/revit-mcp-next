@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+    <AssemblyName>RevitMcpNext.Addin</AssemblyName>
+    <RootNamespace>RevitMcpNext.Addin</RootNamespace>
+    <RevitApiPath Condition="'$(RevitApiPath)' == ''">$(ProgramFiles)\Autodesk\Revit 2024</RevitApiPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitApiPath)\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj" />
+  </ItemGroup>
+</Project>
+

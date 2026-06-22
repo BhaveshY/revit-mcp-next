@@ -1,0 +1,19 @@
+{
+  "name": "revit-mcp-next-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Clean-room, token-efficient Revit MCP bridge for Claude Code and Codex.",
+  "workspaces": [
+    "contracts",
+    "broker"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "license": "MIT"
+}
