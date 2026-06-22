@@ -11,19 +11,41 @@ Use this audit to separate evidence that already exists from blockers that still
 - CI builds the .NET bridge contracts.
 - CI attempts the Revit add-in build only when Revit 2024 API DLLs are present on the runner.
 - `npm run package:windows:dry-run` validates package inputs after the broker/contracts/add-in build outputs exist.
-- `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`.
-- `npm run doctor:windows` validates the installed launcher, staged broker files, add-in DLLs, Revit manifest, packaged production dependencies, and local pipe auth token shape.
+- `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`; `-Sign` can request Authenticode signing before manifest, checksum, and zip capture when a certificate is supplied.
+- `npm run doctor:windows` validates the installed launcher, staged broker files, add-in DLLs, Revit manifest, packaged production dependencies, local pipe auth token shape, and add-in DLL signature status.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, and redacted auth configuration.
 - `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.query`, `create_wall` preview/apply, and `move_element` preview/apply.
+- `npm run sign:windows` provides optional Authenticode signing and verification for `.dll` and `.ps1` package targets. No release certificate is assumed by this repository.
+- `.github/workflows/live-revit-smoke.yml` defines a manual self-hosted Windows/Revit smoke workflow. It builds and installs the current checkout, can optionally launch Revit, runs doctor and live smoke, collects a support bundle, and uploads `artifacts/live-revit-smoke`.
 
 ## Remaining Blockers
 
-- Signed release artifacts and a repeatable release signing process.
-- Automated live Revit smoke on a dedicated runner that can provision/install the current build, load Revit, open a disposable model, run `npm run smoke:revit`, and archive logs/support bundles.
+- Signed artifacts from an available release certificate, plus archived verification evidence before any signed-release claim.
+- Successful release-candidate live smoke evidence from a self-hosted Revit runner, plus packaged-build validation when the workflow is used as release evidence.
 - End-to-end live validation evidence that ties installer behavior, broker/add-in pipe auth, `revit.status`, read tools, and preview/apply write flows to a specific packaged build.
 - Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.
 - Release evidence capture that ties a package, checksums, support diagnostics, and live smoke result to the same build.
+
+## Release Hardening Slice
+
+The next production hardening slice should be documented as release-gated until the implementation and evidence exist. Do not describe artifacts as signed unless a certificate was configured for that build and signature verification output was archived.
+
+Acceptance criteria for this slice:
+
+- Packaging can optionally apply Authenticode signatures before final manifest, checksum, and zip capture when a release certificate is supplied.
+- Unsigned local or dry-run packages remain clearly labeled as unsigned staged artifacts.
+- Signing happens before final checksum and zip evidence is captured, or the release process regenerates those files after signing.
+- Release evidence captures package metadata, checksums, signing status, validation output, install diagnostics, support bundle output, and live-smoke output for one build.
+- A manual self-hosted Revit live-smoke workflow is run for release candidates and its artifacts are archived with the release evidence.
+
+Recommended release evidence:
+
+- `release-manifest.json`, including package version, commit, dirty status, Revit years, and file inventory.
+- `CHECKSUMS.sha256` plus a separately recorded SHA-256 hash of the package `.zip`.
+- Command logs for `node scripts\validate-repo.mjs`, packaging, install, doctor, support bundle, and live smoke.
+- Authenticode signer identity, certificate thumbprint, timestamp information, and verification output when signing is enabled.
+- A clear skip reason for any unavailable evidence, such as no signing certificate or no Revit host.
 
 ## Live Smoke Documentation
 
@@ -54,3 +76,68 @@ Current non-coverage:
 - It does not validate signed release artifacts.
 - It does not produce a packaged release evidence bundle by itself.
 - It does not cover cancellation, destructive operations, or Revit versions other than the active installed version.
+
+## Manual Self-Hosted Revit Smoke
+
+Use this workflow for release candidates on a Windows self-hosted machine with Revit installed and an interactive desktop session. The current smoke command requires an already running Revit instance and an active disposable project.
+
+### GitHub Actions Dispatch
+
+The `Live Revit Smoke` workflow is manually dispatched and requires a runner labeled `self-hosted`, `Windows`, and `revit`. Configure the Revit API path, Revit executable path, and a disposable model path in the workflow inputs when the workflow launches Revit.
+
+The workflow has two safe modes:
+
+- `skip_install=false`: the workflow builds and installs the current checkout. Revit must be closed before the install step, and `launch_revit=true` requires `revit_model_path`.
+- `skip_install=true`: the workflow skips build/install and smokes the already installed add-in in an already running Revit session with an active disposable project document.
+
+The workflow:
+
+- Verifies `RevitAPI.dll`, `RevitAPIUI.dll`, and `Revit.exe` on the runner.
+- Builds the current checkout with Node 24 and the configured Revit API path.
+- Installs the current checkout with `npm run install:windows`.
+- Refuses to install over a running Revit process unless `skip_install=true`.
+- Uses an existing Revit process or launches Revit with the configured disposable model path.
+- Runs `npm run doctor:windows` and `npm run smoke:revit`.
+- Collects a redacted support bundle and uploads `artifacts/live-revit-smoke`.
+
+This workflow validates a live Revit host and current checkout install path. For packaged release evidence, keep the workflow artifact with the package manifest, checksums, signing status, and any separate package-install validation.
+
+### Local Equivalent
+
+1. Build and validate the candidate:
+
+```powershell
+npm install
+npm run build
+npm run build:addin
+node scripts\validate-repo.mjs
+```
+
+2. Create the staged package:
+
+```powershell
+npm run package:windows
+```
+
+3. Install from the unpacked staged package:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File artifacts\release\revit-mcp-next-<version>-windows\installer\install-windows.ps1
+```
+
+4. Start Revit manually on the same machine, load the add-in, and open a disposable project document. Do not use a production model.
+
+5. Run install diagnostics and the live smoke:
+
+```powershell
+npm run doctor:windows
+npm run smoke:revit
+```
+
+6. Capture support diagnostics after the smoke, especially after any failure:
+
+```powershell
+npm run support:bundle
+```
+
+Archive the command logs, staged package metadata, support bundle, add-in logs under `%LOCALAPPDATA%\RevitMcpNext\logs`, and signing verification output when signing is enabled.

@@ -2,9 +2,16 @@ param(
     [switch] $DryRun,
     [switch] $SkipDependencyInstall,
     [switch] $NoZip,
+    [switch] $Sign,
+    [switch] $RequireSigned,
+    [switch] $RequireTrustedSignatures,
     [int[]] $RevitYears = @(2024),
     [string] $OutputRoot = "",
-    [string] $Version = ""
+    [string] $Version = "",
+    [string] $SigningCertificateThumbprint = "$env:REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT",
+    [string] $SigningCertificatePath = "$env:REVIT_MCP_NEXT_SIGN_CERT_PATH",
+    [string] $SigningCertificatePasswordEnv = "REVIT_MCP_NEXT_SIGN_CERT_PASSWORD",
+    [string] $TimestampServer = "$env:REVIT_MCP_NEXT_TIMESTAMP_URL"
 )
 
 $ErrorActionPreference = "Stop"
@@ -175,6 +182,91 @@ function Get-PackageFileEntries($Root, [string[]] $ExcludeRelativePaths) {
     return $entries
 }
 
+function Get-SignatureEntries($Root) {
+    $entries = New-Object System.Collections.Generic.List[object]
+    $files = Get-ChildItem -LiteralPath $Root -Recurse -File |
+        Where-Object { $_.Extension -in @(".dll", ".ps1") } |
+        Sort-Object FullName
+
+    foreach ($file in $files) {
+        $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+        $relativePath = ((Get-RelativePath $Root $file.FullName) -replace "\\", "/")
+        $statusMessage = $signature.StatusMessage
+        if (-not [string]::IsNullOrWhiteSpace($statusMessage)) {
+            $statusMessage = $statusMessage.Replace($file.FullName, $relativePath)
+        }
+
+        $signerSubject = $null
+        $issuer = $null
+        $thumbprint = $null
+        if ($signature.SignerCertificate) {
+            $signerSubject = $signature.SignerCertificate.Subject
+            $issuer = $signature.SignerCertificate.Issuer
+            $thumbprint = $signature.SignerCertificate.Thumbprint
+        }
+
+        $entries.Add([ordered] @{
+            path = $relativePath
+            status = $signature.Status.ToString()
+            statusMessage = $statusMessage
+            signerSubject = $signerSubject
+            issuer = $issuer
+            thumbprint = $thumbprint
+        })
+    }
+
+    return $entries
+}
+
+function Invoke-PackageSigning($StageRoot) {
+    if (-not $Sign) {
+        return
+    }
+
+    $signScript = Resolve-RequiredFile (Join-Path $repoRoot "scripts\sign-release.ps1") "Signing script is missing."
+    $arguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $signScript,
+        "-PackageRoot", $StageRoot,
+        "-CertificatePasswordEnv", $SigningCertificatePasswordEnv
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+        $arguments += @("-CertificateThumbprint", $SigningCertificateThumbprint)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SigningCertificatePath)) {
+        $arguments += @("-CertificatePath", $SigningCertificatePath)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TimestampServer)) {
+        $arguments += @("-TimestampServer", $TimestampServer)
+    }
+    if ($RequireSigned) {
+        $arguments += "-RequireSigned"
+    }
+    if ($RequireTrustedSignatures) {
+        $arguments += "-RequireTrusted"
+    }
+
+    Write-Step "Signing package Authenticode targets."
+    & powershell @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Package signing failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Assert-SignatureEntries($Entries) {
+    foreach ($entry in $Entries) {
+        if ($RequireTrustedSignatures -and $entry.status -ne "Valid") {
+            throw "Signature for $($entry.path) is $($entry.status), expected Valid."
+        }
+
+        if ($RequireSigned -and $entry.status -eq "NotSigned") {
+            throw "Signature is missing for $($entry.path)."
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot "artifacts\release"
@@ -245,6 +337,9 @@ Copy-File (Join-Path $repoRoot "package-lock.json") (Join-Path $stageRoot "packa
 Install-ProductionDependencies (Join-Path $payloadRoot "broker") $payloadRoot
 
 if ($DryRun) {
+    if ($Sign) {
+        Write-Step "Would sign Authenticode targets under $stageRoot"
+    }
     Write-Step "Would write release-manifest.json and CHECKSUMS.sha256"
     if (-not $NoZip) {
         Write-Step "Would create package zip: $zipPath"
@@ -253,9 +348,13 @@ if ($DryRun) {
     return
 }
 
+Invoke-PackageSigning $stageRoot
+
 $gitCommit = Get-GitValue @("rev-parse", "HEAD")
 $gitStatus = Get-GitValue @("status", "--short")
 $fileEntries = Get-PackageFileEntries $stageRoot @("release-manifest.json", "CHECKSUMS.sha256")
+$signatureEntries = Get-SignatureEntries $stageRoot
+Assert-SignatureEntries $signatureEntries
 $manifest = [ordered] @{
     package = [ordered] @{
         name = "revit-mcp-next"
@@ -267,6 +366,13 @@ $manifest = [ordered] @{
         gitCommit = $gitCommit
         gitDirty = -not [string]::IsNullOrWhiteSpace($gitStatus)
         nodeModulesBundled = (Test-Path -LiteralPath (Join-Path $payloadRoot "broker\node_modules") -PathType Container)
+    }
+    signing = [ordered] @{
+        requested = [bool] $Sign
+        requireSigned = [bool] $RequireSigned
+        requireTrusted = [bool] $RequireTrustedSignatures
+        timestampServer = $TimestampServer
+        targets = $signatureEntries
     }
     contents = $fileEntries
 }

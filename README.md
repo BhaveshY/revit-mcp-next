@@ -103,7 +103,8 @@ See [production-readiness.md](docs/production-readiness.md) for the current evid
 
 Remaining blockers:
 
-- Signed release artifacts and a repeatable signing/release process.
-- Automated live Revit smoke on a dedicated runner, including installer, broker/add-in pipe auth, read tools, and preview/apply flows.
+- Signed release artifacts from an available release certificate, plus archived signing verification evidence.
+- Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, and preview/apply flows.
+- Release evidence capture that ties checksums, package metadata, signing verification when enabled, diagnostics, and live-smoke output to one build.
 - Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.

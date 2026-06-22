@@ -73,6 +73,29 @@ function Test-ManifestAssemblyPath($ManifestPath, $ExpectedAssemblyPath) {
     }
 }
 
+function Test-AuthenticodeFile($Path, $Label) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+
+    try {
+        $signature = Get-AuthenticodeSignature -LiteralPath $Path
+        if ($signature.Status -eq "Valid") {
+            $subject = ""
+            if ($signature.SignerCertificate) {
+                $subject = " ($($signature.SignerCertificate.Subject))"
+            }
+            Write-Host "[ok] $Label is Authenticode signed$subject"
+        } elseif ($signature.Status -eq "NotSigned") {
+            Write-Host "[warn] $Label is not Authenticode signed"
+        } else {
+            Write-Host "[warn] $Label signature status is $($signature.Status): $($signature.StatusMessage)"
+        }
+    } catch {
+        Write-Host "[info] $Label signature could not be inspected: $($_.Exception.Message)"
+    }
+}
+
 function Read-AuthTokenConfig($Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return ""
@@ -188,6 +211,8 @@ Test-OptionalFile $contractsPdb "Revit contracts PDB"
 Test-OptionalFile $receipt "install receipt"
 Test-OptionalFile $releaseManifest "release manifest"
 Test-ManifestAssemblyPath $manifest $addinDll
+Test-AuthenticodeFile $addinDll "Revit add-in DLL"
+Test-AuthenticodeFile $contractsDll "Revit contracts DLL"
 
 if ($authConfigOk) {
     $authToken = Read-AuthTokenConfig $authConfig

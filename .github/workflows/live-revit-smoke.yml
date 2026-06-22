@@ -1,0 +1,294 @@
+name: Live Revit Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      revit_year:
+        description: Revit year to install the add-in manifest for.
+        required: true
+        default: "2024"
+      revit_api_path:
+        description: Directory containing RevitAPI.dll on the self-hosted runner.
+        required: true
+        default: C:\Program Files\Autodesk\Revit 2024
+      revit_exe_path:
+        description: Revit.exe path used for preflight and optional launch.
+        required: true
+        default: C:\Program Files\Autodesk\Revit 2024\Revit.exe
+      launch_revit:
+        description: Launch Revit if no Revit process is already running.
+        required: true
+        type: boolean
+        default: false
+      revit_model_path:
+        description: Optional local RVT path to pass when launching Revit. Use a disposable model.
+        required: false
+        default: ""
+      document_fingerprint:
+        description: Optional active document fingerprint expected by smoke:revit.
+        required: false
+        default: ""
+      install_root:
+        description: Optional install root. Empty uses %LOCALAPPDATA%\RevitMcpNext.
+        required: false
+        default: ""
+      skip_install:
+        description: Skip build/install and smoke the already installed add-in in an existing Revit session.
+        required: true
+        type: boolean
+        default: false
+      startup_wait_seconds:
+        description: Seconds to wait after launching Revit before the smoke.
+        required: true
+        default: "90"
+      collect_support_bundle:
+        description: Collect the redacted support bundle after the run.
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-revit-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Live Revit smoke
+    runs-on: [self-hosted, Windows, revit]
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: powershell
+    env:
+      EVIDENCE_DIR: artifacts\live-revit-smoke
+      REVIT_YEAR: ${{ inputs.revit_year }}
+      REVIT_API_PATH: ${{ inputs.revit_api_path }}
+      REVIT_EXE_PATH: ${{ inputs.revit_exe_path }}
+      REVIT_MODEL_PATH: ${{ inputs.revit_model_path }}
+      INSTALL_ROOT_INPUT: ${{ inputs.install_root }}
+      DOCUMENT_FINGERPRINT: ${{ inputs.document_fingerprint }}
+      STARTUP_WAIT_SECONDS: ${{ inputs.startup_wait_seconds }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Prepare evidence directory
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
+
+          if ([string]::IsNullOrWhiteSpace($env:INSTALL_ROOT_INPUT)) {
+            if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+              throw "LOCALAPPDATA is not set; provide the install_root workflow input."
+            }
+            $installRoot = Join-Path $env:LOCALAPPDATA "RevitMcpNext"
+          } else {
+            $installRoot = [Environment]::ExpandEnvironmentVariables($env:INSTALL_ROOT_INPUT)
+          }
+
+          $installRoot = [System.IO.Path]::GetFullPath($installRoot)
+          $launcherPath = Join-Path $installRoot "launch-revit-mcp-next.cmd"
+
+          "INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LAUNCHER_PATH=$launcherPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $summary = [ordered] @{
+            revitYear = $env:REVIT_YEAR
+            revitApiPath = $env:REVIT_API_PATH
+            revitExePath = $env:REVIT_EXE_PATH
+            installRoot = $installRoot
+            launchRevit = "${{ inputs.launch_revit }}"
+            skipInstall = "${{ inputs.skip_install }}"
+            runnerName = $env:RUNNER_NAME
+            runnerOs = $env:RUNNER_OS
+          }
+          $summary | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $env:EVIDENCE_DIR "run-inputs.json") -Encoding UTF8
+
+      - name: Preflight Revit runner
+        run: |
+          $ErrorActionPreference = "Stop"
+          $apiDll = Join-Path $env:REVIT_API_PATH "RevitAPI.dll"
+          $apiUiDll = Join-Path $env:REVIT_API_PATH "RevitAPIUI.dll"
+          $preflight = [ordered] @{
+            revitApiDll = $apiDll
+            revitApiDllExists = Test-Path -LiteralPath $apiDll -PathType Leaf
+            revitApiUiDll = $apiUiDll
+            revitApiUiDllExists = Test-Path -LiteralPath $apiUiDll -PathType Leaf
+            revitExePath = $env:REVIT_EXE_PATH
+            revitExeExists = Test-Path -LiteralPath $env:REVIT_EXE_PATH -PathType Leaf
+          }
+          $preflight | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $env:EVIDENCE_DIR "preflight.json") -Encoding UTF8
+
+          if (-not $preflight.revitApiDllExists) {
+            throw "RevitAPI.dll was not found at $apiDll. Use a self-hosted Windows runner with Revit installed."
+          }
+          if (-not $preflight.revitApiUiDllExists) {
+            throw "RevitAPIUI.dll was not found at $apiUiDll. Use a self-hosted Windows runner with Revit installed."
+          }
+          if (-not $preflight.revitExeExists) {
+            throw "Revit.exe was not found at $env:REVIT_EXE_PATH. Configure revit_exe_path for this runner."
+          }
+
+          Write-Host "Revit API path verified: $env:REVIT_API_PATH"
+          Write-Host "Revit executable verified: $env:REVIT_EXE_PATH"
+
+      - name: Install dependencies
+        if: ${{ !inputs.skip_install }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:EVIDENCE_DIR "npm-ci.log"
+          & npm.cmd ci 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm ci failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Build current repo
+        if: ${{ !inputs.skip_install }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $buildLog = Join-Path $env:EVIDENCE_DIR "npm-build.log"
+          & npm.cmd run build 2>&1 | Tee-Object -FilePath $buildLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run build failed with exit code $LASTEXITCODE."
+          }
+
+          $addinLog = Join-Path $env:EVIDENCE_DIR "build-addin.log"
+          & npm.cmd run build:addin -- -RevitApiPath $env:REVIT_API_PATH 2>&1 | Tee-Object -FilePath $addinLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run build:addin failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Install current repo
+        if: ${{ !inputs.skip_install }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $existing = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($existing) {
+            throw "Revit is already running as process id $($existing.Id). Close Revit before installing the current checkout, or rerun with skip_install=true to smoke the already installed add-in."
+          }
+
+          $log = Join-Path $env:EVIDENCE_DIR "install-windows.log"
+          & npm.cmd run install:windows -- -RevitYears $env:REVIT_YEAR -InstallRoot $env:INSTALL_ROOT 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run install:windows failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Ensure Revit is running
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:EVIDENCE_DIR "revit-process.log"
+
+          function Write-RunLog {
+            param([string] $Message)
+            $Message | Tee-Object -FilePath $log -Append
+          }
+
+          $existing = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($existing) {
+            Write-RunLog "Revit is already running as process id $($existing.Id). The workflow will not restart it."
+            Write-RunLog "Confirm the active Revit session has loaded the current add-in and has a disposable project document open."
+            exit 0
+          }
+
+          if ("${{ inputs.launch_revit }}" -ne "true") {
+            throw "Revit is not running. Open Revit with an active disposable project, or dispatch with launch_revit=true."
+          }
+
+          $argumentList = @()
+          if (-not [string]::IsNullOrWhiteSpace($env:REVIT_MODEL_PATH)) {
+            if (-not (Test-Path -LiteralPath $env:REVIT_MODEL_PATH -PathType Leaf)) {
+              throw "Configured revit_model_path was not found: $env:REVIT_MODEL_PATH"
+            }
+            $argumentList += "`"$env:REVIT_MODEL_PATH`""
+            Write-RunLog "Launching Revit with the configured model path."
+          } else {
+            throw "launch_revit=true requires revit_model_path so the smoke has an active disposable project document."
+          }
+
+          if ($argumentList.Count -gt 0) {
+            Start-Process -FilePath $env:REVIT_EXE_PATH -ArgumentList $argumentList
+          } else {
+            Start-Process -FilePath $env:REVIT_EXE_PATH
+          }
+
+          $startupWait = 90
+          if (-not [string]::IsNullOrWhiteSpace($env:STARTUP_WAIT_SECONDS)) {
+            $startupWait = [int] $env:STARTUP_WAIT_SECONDS
+          }
+          if ($startupWait -lt 0 -or $startupWait -gt 900) {
+            throw "startup_wait_seconds must be between 0 and 900."
+          }
+
+          $deadline = (Get-Date).AddSeconds([Math]::Max($startupWait, 30))
+          do {
+            Start-Sleep -Seconds 5
+            $started = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
+          } while (-not $started -and (Get-Date) -lt $deadline)
+
+          if (-not $started) {
+            throw "Revit did not start before the wait deadline."
+          }
+
+          Write-RunLog "Revit started as process id $($started.Id). Waiting $startupWait seconds before diagnostics."
+          if ($startupWait -gt 0) {
+            Start-Sleep -Seconds $startupWait
+          }
+
+      - name: Run doctor
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:EVIDENCE_DIR "doctor-windows.log"
+          & npm.cmd run doctor:windows -- -InstallRoot $env:INSTALL_ROOT -RevitYear $env:REVIT_YEAR 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run doctor:windows failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Run live Revit smoke
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:EVIDENCE_DIR "smoke-revit.log"
+          $smokeArgs = @("run", "smoke:revit", "--", "-LauncherPath", $env:LAUNCHER_PATH)
+          if (-not [string]::IsNullOrWhiteSpace($env:DOCUMENT_FINGERPRINT)) {
+            $smokeArgs += @("-DocumentFingerprint", $env:DOCUMENT_FINGERPRINT)
+          }
+
+          & npm.cmd @smokeArgs 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run smoke:revit failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Collect support bundle
+        if: ${{ always() && inputs.collect_support_bundle }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $log = Join-Path $env:EVIDENCE_DIR "support-bundle.log"
+          $supportRoot = Join-Path $env:EVIDENCE_DIR "support"
+          & npm.cmd run support:bundle -- -RevitYears $env:REVIT_YEAR -InstallRoot $env:INSTALL_ROOT -OutputRoot $supportRoot 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Support bundle collection failed with exit code $LASTEXITCODE. Continuing so existing logs can be uploaded."
+          }
+
+      - name: Upload smoke evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-revit-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/live-revit-smoke/**
+          if-no-files-found: warn
+          retention-days: 14
