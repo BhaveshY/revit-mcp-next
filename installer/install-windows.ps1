@@ -117,6 +117,20 @@ function Read-JsonFile($Path) {
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Get-Sha256Hash($Path) {
+    $stream = [System.IO.File]::OpenRead((Get-FullPath $Path))
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Test-PackageChecksums($Root) {
     $checksumFile = Resolve-RequiredFile (Join-Path $Root "CHECKSUMS.sha256") "Package checksum file is missing."
     Write-Step "Verifying package checksums"
@@ -143,7 +157,7 @@ function Test-PackageChecksums($Root) {
             throw "Checksum target is missing: $relativePath"
         }
 
-        $actual = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actual = Get-Sha256Hash $filePath
         if ($actual -ne $expected) {
             throw "Checksum mismatch for $relativePath. Expected $expected, got $actual."
         }

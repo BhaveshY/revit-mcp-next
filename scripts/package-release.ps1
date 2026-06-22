@@ -51,6 +51,20 @@ function Get-RelativePath($Root, $Path) {
     return [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($pathUri).ToString())
 }
 
+function Get-Sha256Hash($Path) {
+    $stream = [System.IO.File]::OpenRead((Get-FullPath $Path))
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Resolve-RequiredFile($Path, $Message) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Message Missing: $Path"
@@ -172,7 +186,7 @@ function Get-PackageFileEntries($Root, [string[]] $ExcludeRelativePaths) {
             continue
         }
 
-        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hash = Get-Sha256Hash $file.FullName
         $entries.Add([ordered] @{
             path = $relativePath
             sha256 = $hash

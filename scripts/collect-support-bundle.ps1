@@ -44,6 +44,20 @@ function Get-RelativePath($Root, $Path) {
     return [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($pathUri).ToString())
 }
 
+function Get-Sha256Hash($Path) {
+    $stream = [System.IO.File]::OpenRead((Get-FullPath $Path))
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Read-AuthTokenConfig($Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return ""
@@ -179,7 +193,7 @@ function Get-FileInventoryEntry($Path, $Root) {
         path = $relativePath
         size = $file.Length
         lastWriteTimeUtc = $file.LastWriteTimeUtc.ToString("o")
-        sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        sha256 = Get-Sha256Hash $file.FullName
     }
 }
 
