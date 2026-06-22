@@ -14,15 +14,21 @@ namespace RevitMcpNext.Addin.Ipc
 {
     internal sealed class NamedPipeHost : IDisposable
     {
+        private const int DefaultPipeBufferSize = 0;
+
         private readonly string _pipeName;
         private readonly RevitRequestQueue _requestQueue;
+        private readonly PipeAuthOptions _authOptions;
+        private readonly PipeSecurity _pipeSecurity;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private Task _acceptLoop;
 
-        public NamedPipeHost(string pipeName, RevitRequestQueue requestQueue)
+        public NamedPipeHost(string pipeName, RevitRequestQueue requestQueue, PipeAuthOptions authOptions = null)
         {
             _pipeName = pipeName;
             _requestQueue = requestQueue;
+            _authOptions = authOptions ?? PipeAuthOptions.FromEnvironment();
+            _pipeSecurity = PipeSecurityFactory.CreateCurrentUserOnly();
         }
 
         public void Start()
@@ -50,12 +56,7 @@ namespace RevitMcpNext.Addin.Ipc
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    var server = new NamedPipeServerStream(
-                        _pipeName,
-                        PipeDirection.InOut,
-                        maxNumberOfServerInstances: 4,
-                        PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous);
+                    var server = CreateServerStream();
 
                     await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
                     _ = Task.Run(async () =>
@@ -84,8 +85,17 @@ namespace RevitMcpNext.Addin.Ipc
             BridgeResponseEnvelope response;
             try
             {
-                BridgeRequestEnvelope request = ParseRequest(requestJson);
-                if (!string.Equals(request.ProtocolVersion, BridgeProtocol.Version, StringComparison.Ordinal))
+                ParsedBridgeRequest parsedRequest = ParseRequest(requestJson);
+                BridgeRequestEnvelope request = parsedRequest.Request;
+                if (!_authOptions.IsAuthorized(parsedRequest.AuthToken))
+                {
+                    response = Failure(
+                        request,
+                        "AUTHENTICATION_FAILED",
+                        "Bridge request authentication failed.",
+                        "Set REVIT_MCP_NEXT_AUTH_TOKEN for the broker to the same value configured for the Revit add-in.");
+                }
+                else if (!string.Equals(request.ProtocolVersion, BridgeProtocol.Version, StringComparison.Ordinal))
                 {
                     response = Failure(
                         request,
@@ -116,7 +126,20 @@ namespace RevitMcpNext.Addin.Ipc
             await FramedPipeTransport.WriteFrameAsync(stream, responseJson, cancellationToken).ConfigureAwait(false);
         }
 
-        private static BridgeRequestEnvelope ParseRequest(string requestJson)
+        private NamedPipeServerStream CreateServerStream()
+        {
+            return new NamedPipeServerStream(
+                _pipeName,
+                PipeDirection.InOut,
+                maxNumberOfServerInstances: 4,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous,
+                DefaultPipeBufferSize,
+                DefaultPipeBufferSize,
+                _pipeSecurity);
+        }
+
+        private static ParsedBridgeRequest ParseRequest(string requestJson)
         {
             object parsed = CreateSerializer().DeserializeObject(requestJson);
             var root = parsed as Dictionary<string, object>;
@@ -130,18 +153,21 @@ namespace RevitMcpNext.Addin.Ipc
             if (string.IsNullOrWhiteSpace(requestId)) throw new InvalidDataException("Bridge request is missing requestId.");
             if (string.IsNullOrWhiteSpace(operation)) throw new InvalidDataException("Bridge request is missing operation.");
 
-            return new BridgeRequestEnvelope
-            {
-                ProtocolVersion = GetString(root, "protocolVersion") ?? BridgeProtocol.Version,
-                RequestId = requestId,
-                SessionId = GetString(root, "sessionId") ?? string.Empty,
-                Operation = operation,
-                OperationKind = GetString(root, "operationKind") ?? "read",
-                TimeoutMs = GetInt(root, "timeoutMs") ?? 30000,
-                DocumentFingerprint = GetString(root, "documentFingerprint"),
-                ExpectedGeneration = GetLong(root, "expectedGeneration"),
-                Payload = GetDictionary(root, "payload") ?? new Dictionary<string, object>()
-            };
+            return new ParsedBridgeRequest(
+                new BridgeRequestEnvelope
+                {
+                    ProtocolVersion = GetString(root, "protocolVersion") ?? BridgeProtocol.Version,
+                    RequestId = requestId,
+                    SessionId = GetString(root, "sessionId") ?? string.Empty,
+                    AuthToken = GetString(root, "authToken"),
+                    Operation = operation,
+                    OperationKind = GetString(root, "operationKind") ?? "read",
+                    TimeoutMs = GetInt(root, "timeoutMs") ?? 30000,
+                    DocumentFingerprint = GetString(root, "documentFingerprint"),
+                    ExpectedGeneration = GetLong(root, "expectedGeneration"),
+                    Payload = GetDictionary(root, "payload") ?? new Dictionary<string, object>()
+                },
+                GetString(root, "authToken"));
         }
 
         private static string SerializeResponse(BridgeResponseEnvelope response)
@@ -265,6 +291,18 @@ namespace RevitMcpNext.Addin.Ipc
             if (metrics?.ReturnedCount != null) body["returnedCount"] = metrics.ReturnedCount.Value;
             if (metrics?.TotalCount != null) body["totalCount"] = metrics.TotalCount.Value;
             return body;
+        }
+
+        private sealed class ParsedBridgeRequest
+        {
+            public ParsedBridgeRequest(BridgeRequestEnvelope request, string authToken)
+            {
+                Request = request;
+                AuthToken = authToken;
+            }
+
+            public BridgeRequestEnvelope Request { get; }
+            public string AuthToken { get; }
         }
     }
 }

@@ -202,6 +202,119 @@ function Copy-OptionalFile($Source, $Destination) {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+function New-AuthToken {
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
+
+    return [Convert]::ToBase64String($bytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")
+}
+
+function Test-AuthTokenShape($Token) {
+    return -not [string]::IsNullOrWhiteSpace($Token) -and $Token -match "^[A-Za-z0-9_-]{43,}$"
+}
+
+function Read-AuthTokenConfig($Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ""
+    }
+
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line -match '^\s*REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*"?([^"\s]+)"?\s*$') {
+            return $Matches[1]
+        }
+    }
+
+    return ""
+}
+
+function Write-AuthTokenConfig($Path, $Token) {
+    $content = @(
+        "# Revit MCP Next local auth config",
+        "AUTH_CONFIG_VERSION=1",
+        "REVIT_MCP_NEXT_AUTH_TOKEN=$Token",
+        "CREATED_AT_UTC=$((Get-Date).ToUniversalTime().ToString("o"))"
+    )
+
+    Set-Content -LiteralPath $Path -Value $content -Encoding ASCII
+}
+
+function Set-PrivatePathAcl($Path, [switch] $Container) {
+    try {
+        $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $systemSid = New-Object System.Security.Principal.SecurityIdentifier ([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+        $administratorsSid = New-Object System.Security.Principal.SecurityIdentifier ([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+        $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::None
+        if ($Container) {
+            $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+            $acl = New-Object System.Security.AccessControl.DirectorySecurity
+        } else {
+            $acl = New-Object System.Security.AccessControl.FileSecurity
+        }
+
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @($currentUserSid, $systemSid, $administratorsSid)) {
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $sid,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                $inheritanceFlags,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+            )
+            $acl.AddAccessRule($rule) | Out-Null
+        }
+
+        Set-Acl -LiteralPath $Path -AclObject $acl
+        return $true
+    } catch {
+        Write-Step "Warning: unable to restrict ACL for $Path. $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Ensure-AuthTokenConfig($Path) {
+    Assert-InstallChild $Path
+    $configDir = Split-Path -Parent $Path
+    Assert-InstallChild $configDir
+
+    if ($DryRun) {
+        Write-Step "Would ensure per-install auth token config: $Path"
+        return [ordered] @{
+            path = $Path
+            token = ""
+            created = $false
+            aclRestricted = $false
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+
+    $token = Read-AuthTokenConfig $Path
+    $created = $false
+    if (-not (Test-AuthTokenShape $token)) {
+        $token = New-AuthToken
+        Write-AuthTokenConfig $Path $token
+        $created = $true
+        Write-Step "Generated per-install auth token config."
+    } else {
+        Write-Step "Using existing per-install auth token config."
+    }
+
+    $dirAclRestricted = Set-PrivatePathAcl $configDir -Container
+    $fileAclRestricted = Set-PrivatePathAcl $Path
+
+    return [ordered] @{
+        path = $Path
+        token = $token
+        created = $created
+        aclRestricted = ($dirAclRestricted -and $fileAclRestricted)
+    }
+}
+
 function Get-ReleaseVersion($SourceMode, $PackageRootPath, $RepoRootPath) {
     if ($SourceMode -eq "package") {
         $manifestPath = Join-Path $PackageRootPath "release-manifest.json"
@@ -356,11 +469,19 @@ if (-not [string]::IsNullOrWhiteSpace($packagedNodeModules)) {
 }
 
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
+$authConfig = Join-Path $InstallRoot "config\auth.env"
+$authConfigState = Ensure-AuthTokenConfig $authConfig
 $launcherContent = @"
 @echo off
 setlocal
 set "REVIT_MCP_NEXT_PIPE=revit-mcp-next"
 set "REVIT_MCP_NEXT_VERSION=$releaseVersion"
+set "REVIT_MCP_NEXT_AUTH_CONFIG=$authConfig"
+for /f "usebackq tokens=1,* delims==" %%A in ("%REVIT_MCP_NEXT_AUTH_CONFIG%") do if /i "%%A"=="REVIT_MCP_NEXT_AUTH_TOKEN" set "REVIT_MCP_NEXT_AUTH_TOKEN=%%B"
+if not defined REVIT_MCP_NEXT_AUTH_TOKEN (
+  echo Revit MCP Next auth token config is missing or invalid at %REVIT_MCP_NEXT_AUTH_CONFIG%. 1>&2
+  exit /b 126
+)
 "$nodeExe" "$installedBrokerEntry"
 exit /b %ERRORLEVEL%
 "@
@@ -369,6 +490,7 @@ if ($DryRun) {
     Write-Step "Would write launcher: $launcher"
 } else {
     Set-Content -LiteralPath $launcher -Value $launcherContent -Encoding ASCII
+    Set-PrivatePathAcl $launcher | Out-Null
 }
 
 foreach ($year in $RevitYears) {
@@ -400,6 +522,11 @@ $installReceipt = [ordered] @{
     packagedNodeModules = -not [string]::IsNullOrWhiteSpace($packagedNodeModules)
     checksumVerification = ($sourceMode -ne "package" -or -not $SkipChecksumVerification)
     nodePath = $nodeExe
+    authConfig = [ordered] @{
+        path = $authConfig
+        created = $authConfigState.created
+        aclRestricted = $authConfigState.aclRestricted
+    }
 }
 
 $receiptPath = Join-Path $InstallRoot "install-receipt.json"

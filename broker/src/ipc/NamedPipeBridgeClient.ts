@@ -20,15 +20,18 @@ export interface NamedPipeBridgeClientOptions {
   pipeName: string;
   sessionId: string;
   defaultTimeoutMs: number;
+  authToken?: string;
 }
 
 export class NamedPipeBridgeClient implements RevitBridgeClient {
   private readonly pipePath: string;
+  private readonly authToken?: string;
 
   constructor(private readonly options: NamedPipeBridgeClientOptions) {
     this.pipePath = options.pipeName.startsWith("\\\\")
       ? options.pipeName
       : `\\\\.\\pipe\\${options.pipeName}`;
+    this.authToken = resolveAuthToken(options);
   }
 
   status(
@@ -118,7 +121,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       }, timeoutMs);
 
       socket.once("connect", () => {
-        const body = Buffer.from(JSON.stringify(request), "utf8");
+        const body = Buffer.from(JSON.stringify(this.prepareRequest(request)), "utf8");
         const header = Buffer.allocUnsafe(4);
         header.writeUInt32BE(body.byteLength, 0);
         socket.write(Buffer.concat([header, body]));
@@ -152,6 +155,21 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       });
     });
   }
+
+  private prepareRequest<TPayload>(request: BridgeRequest<TPayload>): BridgeRequest<TPayload> {
+    if (!this.authToken) return request;
+    return {
+      ...request,
+      authToken: this.authToken,
+    };
+  }
+}
+
+function resolveAuthToken(options: NamedPipeBridgeClientOptions): string | undefined {
+  const value = Object.prototype.hasOwnProperty.call(options, "authToken")
+    ? options.authToken
+    : process.env.REVIT_MCP_NEXT_AUTH_TOKEN;
+  return value && value.length > 0 ? value : undefined;
 }
 
 function errorResponse<T>(

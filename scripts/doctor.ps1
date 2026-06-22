@@ -73,6 +73,85 @@ function Test-ManifestAssemblyPath($ManifestPath, $ExpectedAssemblyPath) {
     }
 }
 
+function Read-AuthTokenConfig($Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ""
+    }
+
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line -match '^\s*REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*"?([^"\s]+)"?\s*$') {
+            return $Matches[1]
+        }
+    }
+
+    return ""
+}
+
+function Test-AuthTokenShape($Token) {
+    return -not [string]::IsNullOrWhiteSpace($Token) -and $Token -match "^[A-Za-z0-9_-]{43,}$"
+}
+
+function Test-RuleGrantsRead($Rule) {
+    $rights = $Rule.FileSystemRights
+    foreach ($right in @(
+        [System.Security.AccessControl.FileSystemRights]::ReadData,
+        [System.Security.AccessControl.FileSystemRights]::Read,
+        [System.Security.AccessControl.FileSystemRights]::ReadAndExecute,
+        [System.Security.AccessControl.FileSystemRights]::Modify,
+        [System.Security.AccessControl.FileSystemRights]::FullControl
+    )) {
+        if (($rights -band $right) -eq $right) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-AuthConfigAcl($Path) {
+    try {
+        $acl = Get-Acl -LiteralPath $Path
+        $warnings = New-Object System.Collections.Generic.List[string]
+        if (-not $acl.AreAccessRulesProtected) {
+            $warnings.Add("auth token config inherits ACLs") | Out-Null
+        }
+
+        $broadSids = @(
+            "S-1-1-0",       # Everyone
+            "S-1-5-11",      # Authenticated Users
+            "S-1-5-32-545"   # Builtin Users
+        )
+
+        foreach ($rule in $acl.Access) {
+            if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) {
+                continue
+            }
+
+            if (-not (Test-RuleGrantsRead $rule)) {
+                continue
+            }
+
+            try {
+                $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+            } catch {
+                $sid = ""
+            }
+
+            if ($broadSids -contains $sid) {
+                $warnings.Add("auth token config grants read access to $($rule.IdentityReference.Value)") | Out-Null
+            }
+        }
+
+        if ($warnings.Count -eq 0) {
+            Write-Host "[ok] auth token config ACL is restricted"
+        } else {
+            $warnings | ForEach-Object { Write-Host "[warn] $_" }
+        }
+    } catch {
+        Write-Host "[info] auth token config ACL could not be inspected: $($_.Exception.Message)"
+    }
+}
+
 Write-Host "[revit-mcp-next doctor] Install root: $InstallRoot"
 
 $node = Get-Command node.exe -ErrorAction SilentlyContinue
@@ -84,6 +163,7 @@ if ($node) {
 }
 
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
+$authConfig = Join-Path $InstallRoot "config\auth.env"
 $brokerEntry = Join-Path $InstallRoot "broker\dist\src\index.js"
 $brokerServer = Join-Path $InstallRoot "broker\dist\src\server.js"
 $addinDll = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll"
@@ -96,6 +176,7 @@ $receipt = Join-Path $InstallRoot "install-receipt.json"
 $releaseManifest = Join-Path $InstallRoot "release-manifest.json"
 
 $launcherOk = Test-RequiredFile $launcher "MCP launcher"
+$authConfigOk = Test-RequiredFile $authConfig "auth token config"
 Test-RequiredFile $brokerEntry "broker entry" | Out-Null
 Test-RequiredFile $brokerServer "broker server module" | Out-Null
 Test-RequiredFile $addinDll "Revit add-in DLL" | Out-Null
@@ -108,6 +189,18 @@ Test-OptionalFile $receipt "install receipt"
 Test-OptionalFile $releaseManifest "release manifest"
 Test-ManifestAssemblyPath $manifest $addinDll
 
+if ($authConfigOk) {
+    $authToken = Read-AuthTokenConfig $authConfig
+    if (Test-AuthTokenShape $authToken) {
+        Write-Host "[ok] auth token config contains a strong token (redacted)"
+    } else {
+        Write-Host "[missing] auth token config is missing a strong token"
+        $failures.Add("auth token config is missing a strong token: $authConfig")
+    }
+
+    Test-AuthConfigAcl $authConfig
+}
+
 if ($launcherOk) {
     $launcherText = Get-Content -LiteralPath $launcher -Raw
     if ($launcherText.Contains($brokerEntry)) {
@@ -115,6 +208,17 @@ if ($launcherOk) {
     } else {
         Write-Host "[missing] MCP launcher does not point at staged broker entry"
         $failures.Add("MCP launcher target mismatch: $launcher")
+    }
+
+    if ($launcherText.Contains("REVIT_MCP_NEXT_AUTH_TOKEN")) {
+        Write-Host "[ok] MCP launcher exports auth token from local config"
+    } else {
+        Write-Host "[missing] MCP launcher does not export REVIT_MCP_NEXT_AUTH_TOKEN"
+        $failures.Add("MCP launcher auth token setup missing: $launcher")
+    }
+
+    if ($launcherText -match 'REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*[A-Za-z0-9_-]{20,}') {
+        Write-Host "[warn] MCP launcher appears to contain an inline auth token; reinstall to use the config-backed launcher"
     }
 }
 

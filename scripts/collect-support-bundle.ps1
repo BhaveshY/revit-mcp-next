@@ -12,6 +12,18 @@ function Write-Step($Message) {
     Write-Host "[revit-mcp-next support] $Message"
 }
 
+$script:SensitiveRedactionValues = New-Object System.Collections.Generic.List[string]
+
+function Add-SensitiveRedactionValue($Value) {
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value.Length -lt 8) {
+        return
+    }
+
+    if (-not $script:SensitiveRedactionValues.Contains($Value)) {
+        $script:SensitiveRedactionValues.Add($Value) | Out-Null
+    }
+}
+
 function Get-FullPath($Path) {
     return [System.IO.Path]::GetFullPath($Path)
 }
@@ -32,6 +44,20 @@ function Get-RelativePath($Root, $Path) {
     return [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($pathUri).ToString())
 }
 
+function Read-AuthTokenConfig($Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ""
+    }
+
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line -match '^\s*REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*"?([^"\s]+)"?\s*$') {
+            return $Matches[1]
+        }
+    }
+
+    return ""
+}
+
 function Redact-Text($Text) {
     $result = [string] $Text
 
@@ -47,8 +73,14 @@ function Redact-Text($Text) {
         }
     }
 
-    $secretPattern = "(?i)\b(api[-_ ]?key|token|secret|password|passwd|pwd|client_secret|access_token|refresh_token)\b\s*[:=]\s*[""']?[^""'\r\n,;]+"
-    $result = [regex]::Replace($result, $secretPattern, '$1=<redacted>')
+    foreach ($value in $script:SensitiveRedactionValues) {
+        $result = $result.Replace($value, "<redacted-auth-token>")
+    }
+
+    $secretKeyPattern = "[A-Za-z0-9_.-]*(?:api[-_ ]?key|token|secret|password|passwd|pwd|client_secret|access_token|refresh_token)[A-Za-z0-9_.-]*"
+    $result = [regex]::Replace($result, "(?i)([""']?$secretKeyPattern[""']?\s*[:=]\s*)""[^""\r\n]*""", '$1"<redacted>"')
+    $result = [regex]::Replace($result, "(?i)([""']?$secretKeyPattern[""']?\s*[:=]\s*)'[^'\r\n]*'", "`$1'<redacted>'")
+    $result = [regex]::Replace($result, "(?i)([""']?$secretKeyPattern[""']?\s*[:=]\s*)[^""'\r\n,;]+", '$1<redacted>')
     $result = [regex]::Replace($result, "[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}", "<redacted-jwt>")
     $result = [regex]::Replace($result, "-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----", "<redacted-private-key>")
 
@@ -156,6 +188,9 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoOrPackageRoot "artifacts\support"
 }
 
+$authConfig = Join-Path $InstallRoot "config\auth.env"
+Add-SensitiveRedactionValue (Read-AuthTokenConfig $authConfig)
+
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $stageRoot = Join-Path (Get-FullPath $OutputRoot) "revit-mcp-next-support-$timestamp"
 $zipPath = "$stageRoot.zip"
@@ -199,6 +234,7 @@ foreach ($year in $RevitYears) {
 
 $configFiles = @(
     @{ Source = (Join-Path $InstallRoot "launch-revit-mcp-next.cmd"); Destination = "config\launch-revit-mcp-next.cmd" },
+    @{ Source = $authConfig; Destination = "config\auth.env" },
     @{ Source = (Join-Path $InstallRoot "install-receipt.json"); Destination = "config\install-receipt.json" },
     @{ Source = (Join-Path $InstallRoot "release-manifest.json"); Destination = "config\release-manifest.json" },
     @{ Source = (Join-Path $InstallRoot "release-CHECKSUMS.sha256"); Destination = "config\release-CHECKSUMS.sha256" },
@@ -250,7 +286,7 @@ Write-JsonFile (Join-Path $stageRoot "file-inventory.json") $inventory
 
 $bundleManifest = [ordered] @{
     createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    redaction = "Text files are redacted for common secret key names, JWT-shaped tokens, private keys, and local profile paths. Environment variables are not collected."
+    redaction = "Text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, and local profile paths. Environment variables are not collected."
     maxLogBytes = $MaxLogBytes
     installRoot = $InstallRoot
     revitYears = $RevitYears

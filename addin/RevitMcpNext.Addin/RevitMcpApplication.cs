@@ -29,11 +29,15 @@ namespace RevitMcpNext.Addin
 
                 _queue.AttachExternalEvent(_externalEvent);
 
+                string pipeName = PipeNameProvider.GetDefaultPipeName();
+                PipeAuthOptions authOptions = PipeAuthOptions.FromEnvironment();
                 _pipeHost = new NamedPipeHost(
-                    pipeName: PipeNameProvider.GetDefaultPipeName(),
-                    requestQueue: _queue);
+                    pipeName: pipeName,
+                    requestQueue: _queue,
+                    authOptions: authOptions);
                 _pipeHost.Start();
-                DiagnosticsLogger.Info("Revit MCP Next add-in started on pipe " + PipeNameProvider.GetDefaultPipeName() + ".");
+                DiagnosticsLogger.Info(
+                    "Revit MCP Next add-in started on pipe " + pipeName + ". Pipe ACL is restricted to the current Windows user. Auth token required=" + authOptions.IsRequired + ".");
 
                 return Result.Succeeded;
             }

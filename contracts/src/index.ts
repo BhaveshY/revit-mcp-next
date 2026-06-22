@@ -45,6 +45,7 @@ export interface BridgeRequest<TPayload = unknown> {
   protocolVersion: ProtocolVersion;
   requestId: string;
   sessionId: string;
+  authToken?: string;
   operation: string;
   operationKind: OperationKind;
   timeoutMs: number;

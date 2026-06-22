@@ -13,6 +13,7 @@ namespace RevitMcpNext.Contracts
         public string ProtocolVersion { get; set; } = BridgeProtocol.Version;
         public string RequestId { get; set; } = string.Empty;
         public string SessionId { get; set; } = string.Empty;
+        public string? AuthToken { get; set; }
         public string Operation { get; set; } = string.Empty;
         public string OperationKind { get; set; } = "read";
         public int TimeoutMs { get; set; } = 30000;

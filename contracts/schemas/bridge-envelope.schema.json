@@ -8,6 +8,7 @@
     "protocolVersion": { "const": "2026-06-22" },
     "requestId": { "type": "string", "minLength": 1 },
     "sessionId": { "type": "string", "minLength": 1 },
+    "authToken": { "type": "string", "minLength": 1 },
     "operation": { "type": "string", "minLength": 1 },
     "operationKind": { "enum": ["read", "preview", "write", "destructive", "debug"] },
     "timeoutMs": { "type": "integer", "minimum": 1 },
@@ -17,4 +18,3 @@
   },
   "additionalProperties": false
 }
-

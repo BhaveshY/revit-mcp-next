@@ -36,7 +36,7 @@ Working local productionization slice:
 - `contracts/`: shared protocol and tool-result TypeScript types plus JSON schema.
 - `broker/`: MCP stdio server with bounded read/write tools, output schemas, structured errors, and bridge tests.
 - `addin/`: Revit 2024 add-in with named-pipe IPC, cancellation-aware `ExternalEvent` queue, read handlers, and preview/apply write handlers.
-- `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, and creates a Claude/Codex launcher.
+- `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates a Claude/Codex launcher.
 - `scripts/package-release.ps1`: staged Windows release package with payload checksums and optional bundled production dependencies.
 - `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
 
@@ -71,6 +71,8 @@ Collect a redacted support bundle:
 npm run support:bundle
 ```
 
+Windows installs generate a local 256-bit auth token in `%LOCALAPPDATA%\RevitMcpNext\config\auth.env` and restrict the file ACL to the installing user, Administrators, and SYSTEM when Windows allows it. The generated launcher reads that config and exports `REVIT_MCP_NEXT_AUTH_TOKEN` for the broker process. Doctor and support bundle output report token presence/shape only; support bundles redact the token value.
+
 ## MVP Tool Surface
 
 - `revit.status`
@@ -83,4 +85,4 @@ npm run support:bundle
 
 Write tools are intentionally bounded. `revit.preview_change_set` validates `set_parameter` and `create_level` operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
 
-Production hardening still in progress: signed release artifacts, live Revit integration smoke on a Revit runner, stronger named-pipe authentication, and broader write operation coverage.
+Production hardening still in progress: signed release artifacts, live Revit integration smoke on a Revit runner, broker/add-in enforcement of the provisioned pipe auth token, and broader write operation coverage.

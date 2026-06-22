@@ -38,6 +38,8 @@ utf8_json_payload
 
 The broker and add-in exchange the canonical camelCase bridge envelope over this framing. The add-in preserves request IDs, validates protocol version, and returns compact structured data or structured bridge errors.
 
+Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The generated MCP launcher reads that file and exports `REVIT_MCP_NEXT_AUTH_TOKEN` before starting the broker. Runtime broker/add-in enforcement should consume that token without logging it.
+
 ## Safety Boundaries
 
 - All writes must go through preview/apply.

@@ -49,10 +49,12 @@ Useful installer switches:
 - `-SkipDependencyInstall`: do not run npm if packaged dependencies are absent.
 - `-SkipChecksumVerification`: bypass package checksum verification only for local debugging.
 
+Each install generates or reuses a local pipe auth token at `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The token is generated on the target machine, is not included in release packages, and is loaded by the generated `launch-revit-mcp-next.cmd` as `REVIT_MCP_NEXT_AUTH_TOKEN`. The installer attempts to restrict the auth config and launcher ACLs to the installing user, Administrators, and SYSTEM.
+
 Support bundle:
 
 ```powershell
 npm run support:bundle
 ```
 
-The support bundle is written under `artifacts\support`. It collects doctor output, add-in logs, launcher/config metadata, install receipts, file hashes, and environment basics. It does not collect environment variables, and text files are redacted for common secret key names, JWT-shaped tokens, private keys, and local profile paths.
+The support bundle is written under `artifacts\support`. It collects doctor output, add-in logs, launcher/config metadata, the redacted auth config, install receipts, file hashes, and environment basics. It does not collect environment variables, and text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, and local profile paths.

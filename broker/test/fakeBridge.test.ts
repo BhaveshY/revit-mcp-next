@@ -35,6 +35,7 @@ test("request builder stamps current protocol and operation kind", () => {
   assert.equal(request.operation, "status");
   assert.equal(request.operationKind, "read");
   assert.equal(request.timeoutMs, 5000);
+  assert.equal(request.authToken, undefined);
 });
 
 test("fake bridge previews and applies a bounded change set", async () => {
