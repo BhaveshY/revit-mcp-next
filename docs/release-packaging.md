@@ -2,6 +2,8 @@
 
 Release packaging is Windows-first and stages an offline-ish package for a built repo.
 
+Packaging output is a staged package artifact, not a signed production release. Track remaining release blockers in [production-readiness.md](production-readiness.md).
+
 Prerequisites:
 
 - Node 24.x and npm.

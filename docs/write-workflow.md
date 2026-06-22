@@ -57,10 +57,11 @@ The add-in recomputes the preview hash before applying. If the model, transactio
 Production readiness:
 
 - The write path is suitable for local development and staged packaging, not a signed production release.
-- Production release still needs automated live Revit smoke coverage, signed artifacts, and broader failure-mode validation.
+- Production release still needs automated live Revit smoke coverage, signed artifacts, and broader failure-mode validation. Track the current blocker list in [production-readiness.md](production-readiness.md).
 
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it creates and moves a wall through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

@@ -50,10 +50,13 @@ npm test
 node scripts\validate-repo.mjs
 npm run install:windows
 npm run doctor:windows
+npm run smoke:revit
 npm run package:windows:dry-run
 ```
 
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
+
+`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document by creating and moving a smoke-test wall. Use a disposable model.
 
 ## Packaging And Support
 
@@ -96,9 +99,11 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 
 This repository is ready for local development and staged Windows packaging, but production release hardening is still in progress.
 
+See [production-readiness.md](docs/production-readiness.md) for the current evidence and blocker audit.
+
 Remaining blockers:
 
 - Signed release artifacts and a repeatable signing/release process.
-- Live Revit integration smoke on a Revit runner, including installer, broker/add-in pipe auth, and preview/apply flows.
+- Automated live Revit smoke on a dedicated runner, including installer, broker/add-in pipe auth, read tools, and preview/apply flows.
 - Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.
