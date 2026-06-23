@@ -59,6 +59,9 @@ async function main() {
   console.log(`Move Y: ${options.moveYMm} mm`);
   console.log(`Transaction prefix: ${options.transactionPrefix}`);
   console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
+  if (options.statusOnly) {
+    console.log("Mode: status-only");
+  }
   if (options.documentFingerprint) {
     console.log(`Document fingerprint: ${options.documentFingerprint}`);
   }
@@ -105,6 +108,11 @@ async function main() {
     console.log(
       `Status OK: ${activeDocument.title ?? "(untitled)"} at generation ${startingGeneration ?? "(unknown)"}`
     );
+
+    if (options.statusOnly) {
+      console.log("Status-only smoke passed.");
+      return;
+    }
 
     const documentGuard = compactObject({
       documentFingerprint,
@@ -488,6 +496,7 @@ function parseArgs(args) {
     transactionPrefix: DEFAULT_TRANSACTION_PREFIX,
     launcherPath: undefined,
     requireTypeChange: false,
+    statusOnly: false,
     help: false,
   };
 
@@ -531,6 +540,9 @@ function parseArgs(args) {
         break;
       case "--skip-type-change":
         options.requireTypeChange = false;
+        break;
+      case "--status-only":
+        options.statusOnly = true;
         break;
       default:
         throw new Error(`Unknown argument: ${arg}\nRun with --help for usage.`);
@@ -992,6 +1004,7 @@ Options:
   --launcher <path>               Alias for --launcher-path.
   --require-type-change           Fail when no alternate valid wall type is available for change_element_type.
   --skip-type-change              Allow type-change coverage to be skipped when no alternate type exists. Default.
+  --status-only                   Only verify tool discovery, revit.status, and active document readiness.
   -h, --help                      Show this help.
 `);
 }

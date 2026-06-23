@@ -7,7 +7,8 @@ param(
     [double]$WallHeightMm = 3000,
     [string]$TransactionPrefix = "Revit MCP Next smoke",
     [string]$LauncherPath,
-    [switch]$RequireTypeChange
+    [switch]$RequireTypeChange,
+    [switch]$StatusOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +80,10 @@ if ($RequireTypeChange) {
     $nodeArgs += @("--require-type-change")
 }
 
+if ($StatusOnly) {
+    $nodeArgs += @("--status-only")
+}
+
 if (-not [string]::IsNullOrWhiteSpace($DocumentFingerprint)) {
     $nodeArgs += @("--document-fingerprint", $DocumentFingerprint)
 }
@@ -92,4 +97,8 @@ if ($exitCode -ne 0) {
     exit $exitCode
 }
 
-Write-Host "Live Revit smoke completed successfully."
+if ($StatusOnly) {
+    Write-Host "Live Revit status probe completed successfully."
+} else {
+    Write-Host "Live Revit smoke completed successfully."
+}

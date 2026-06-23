@@ -13,7 +13,8 @@ param(
     [string] $InstallRoot = "",
     [string] $OutputRoot = "",
     [string] $PackageRoot = "",
-    [int] $StartupWaitSeconds = 120
+    [int] $StartupWaitSeconds = 120,
+    [int] $BridgeReadyTimeoutSeconds = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,6 +41,8 @@ Options:
   -OutputRoot <path>         Evidence root. Default: C:\tmp\revit-mcp-next-smoke when writable.
   -PackageRoot <path>        Existing staged package root when using -SkipBuild.
   -StartupWaitSeconds <n>    Wait after Revit starts before doctor/smoke. Default: 120.
+  -BridgeReadyTimeoutSeconds <n>
+                              Poll revit.status until Revit is reachable. Default: 300. Use 0 to skip.
   -SkipBuild                 Reuse an existing staged package under the run root.
   -SkipInstall               Smoke an already installed add-in.
   -NoLaunch                  Require Revit to already be running.
@@ -232,6 +235,67 @@ function Find-PackageRoot {
     return Resolve-RequiredDirectory $expected "Expected package root was not created."
 }
 
+function Invoke-BridgeReadinessProbe {
+    param(
+        [string] $LogPath,
+        [string] $Launcher,
+        [int] $TimeoutSeconds
+    )
+
+    if ($TimeoutSeconds -eq 0) {
+        Write-Step "Skipping Revit bridge readiness probe."
+        return
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
+    $probeArgs = @("scripts\live-smoke-revit.mjs", "--launcher-path", $Launcher, "--status-only")
+    $display = "$node $($probeArgs -join ' ')"
+    "Command: $display" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+    Write-Step "Waiting up to $TimeoutSeconds seconds for the Revit bridge to become ready."
+
+    if ($DryRun) {
+        "DRY RUN: $display" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        return
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $attempt = 0
+    do {
+        $attempt += 1
+        $now = Get-Date
+        $header = "----- readiness attempt $attempt at $($now.ToString("o")) -----"
+        $header | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        Write-Step "Probe Revit bridge readiness (attempt $attempt)."
+
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $node @probeArgs 2>&1 | Tee-Object -FilePath $LogPath -Append
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
+        if ($exitCode -eq 0) {
+            Write-Step "Revit bridge is ready."
+            return
+        }
+
+        $runningProbe = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $runningProbe) {
+            throw "Revit exited before the bridge became ready. See $LogPath"
+        }
+
+        if ((Get-Date) -ge $deadline) {
+            break
+        }
+
+        Start-Sleep -Seconds 10
+    } while ($true)
+
+    throw "Revit bridge did not become ready within $TimeoutSeconds seconds. See $LogPath"
+}
+
 if ($Help) {
     Show-Help
     exit 0
@@ -239,6 +303,9 @@ if ($Help) {
 
 if ($StartupWaitSeconds -lt 0 -or $StartupWaitSeconds -gt 900) {
     throw "-StartupWaitSeconds must be between 0 and 900."
+}
+if ($BridgeReadyTimeoutSeconds -lt 0 -or $BridgeReadyTimeoutSeconds -gt 1800) {
+    throw "-BridgeReadyTimeoutSeconds must be between 0 and 1800."
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -305,6 +372,7 @@ $runInputs = [ordered] @{
     noLaunch = [bool] $NoLaunch
     noEvidence = [bool] $NoEvidence
     requireTypeChange = [bool] $RequireTypeChange
+    bridgeReadyTimeoutSeconds = $BridgeReadyTimeoutSeconds
     dryRun = [bool] $DryRun
 }
 $runInputs | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidenceDir "run-inputs.json") -Encoding UTF8
@@ -399,6 +467,7 @@ if (-not $running) {
 }
 
 Invoke-Logged "Run install doctor" (Join-Path $logsDir "doctor-windows.log") $npm @("run", "doctor:windows", "--", "-InstallRoot", $installRootFull, "-RevitYear", "$RevitYear")
+Invoke-BridgeReadinessProbe (Join-Path $evidenceDir "bridge-readiness.log") $launcherPath $BridgeReadyTimeoutSeconds
 
 $smokeArgs = @("run", "smoke:revit", "--", "-LauncherPath", $launcherPath)
 if ($RequireTypeChange) {
