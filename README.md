@@ -68,6 +68,14 @@ npm run test:evidence:release:windows
 
 Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`, and Revit's `Always Load` / `Immer laden` trust state is not reliable enough to be part of the smoke workflow. The default local smoke command signs with a trusted local dev certificate so Revit should not show that modal. Pass `-SkipLocalDevSigning` only when intentionally testing unsigned packages. Production releases still need a real release certificate and archived signature verification evidence.
 
+Inspect or remove the local dev signing certificate after disposable-machine testing:
+
+```powershell
+npm run dev-cert:windows -- -StatusOnly
+npm run dev-cert:windows -- -Remove -DryRun
+npm run dev-cert:windows -- -Remove
+```
+
 Release-candidate smoke runs should use a disposable model with at least two compatible wall types and require type-change coverage:
 
 ```powershell

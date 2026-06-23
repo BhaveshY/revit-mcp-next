@@ -66,6 +66,16 @@ Use `-RequireTrustedSignatures` only on a release machine where the certificate 
 
 For disposable local Revit smoke machines, `npm run smoke:release-local` creates or reuses a CurrentUser self-signed code-signing certificate, trusts it for the current user, and passes `-Sign -RequireSigned -RequireTrustedSignatures -NoTimestamp` into packaging. This is a local prompt-removal mechanism only; do not treat that self-signed certificate as a production release identity. Use `-SkipLocalDevSigning` only when intentionally testing unsigned packages and Revit's unsigned add-in prompt behavior.
 
+Audit and clean up the local dev certificate after testing:
+
+```powershell
+npm run dev-cert:windows -- -StatusOnly
+npm run dev-cert:windows -- -Remove -DryRun
+npm run dev-cert:windows -- -Remove
+```
+
+The cleanup command only targets the Revit MCP Next local dev certificate subject in CurrentUser `My`, `Root`, and `TrustedPublisher`. Pass `-Thumbprint <thumbprint>` to narrow cleanup to one certificate.
+
 When signing with a local or offline certificate without a timestamp service, pass `-NoTimestamp`:
 
 ```powershell

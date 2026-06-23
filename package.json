@@ -23,7 +23,8 @@
     "evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-release-evidence.ps1",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "package:windows:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -DryRun",
-    "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1"
+    "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1",
+    "dev-cert:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-dev-signing-certificate.ps1"
   },
   "engines": {
     "node": ">=24 <25"

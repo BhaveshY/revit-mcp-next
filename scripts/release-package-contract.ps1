@@ -100,6 +100,24 @@ function Assert-DevSigningDryRuns($RepoRoot, $SyntheticAddinRoot, $RunRoot) {
         throw "Dev signing certificate dry run used unexpected store: $($devCertState.store)"
     }
 
+    $statusOutput = Invoke-RepoScriptCapture $devCertScript @("-StatusOnly", "-Json")
+    $statusState = $statusOutput | ConvertFrom-Json
+    if ($statusState.statusOnly -ne $true) {
+        throw "Dev signing certificate status mode did not report statusOnly=true."
+    }
+    if (-not $statusState.stores -or $statusState.stores.Count -ne 3) {
+        throw "Dev signing certificate status mode did not inspect the expected CurrentUser stores."
+    }
+
+    $removeOutput = Invoke-RepoScriptCapture $devCertScript @("-Remove", "-DryRun", "-Json")
+    $removeState = $removeOutput | ConvertFrom-Json
+    if ($removeState.dryRun -ne $true) {
+        throw "Dev signing certificate remove dry run did not report dryRun=true."
+    }
+    if ($null -eq $removeState.removed) {
+        throw "Dev signing certificate remove dry run did not report removed entries."
+    }
+
     $packageScript = Join-Path $RepoRoot "scripts\package-release.ps1"
     $dryRunOutputRoot = Join-Path $RunRoot "signed-dry-run"
     $packageOutput = Invoke-RepoScriptCapture $packageScript @(

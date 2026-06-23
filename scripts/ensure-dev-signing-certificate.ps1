@@ -1,7 +1,10 @@
 param(
     [string] $Subject = "CN=Revit MCP Next Local Dev Code Signing",
+    [string] $Thumbprint = "",
     [int] $ValidYears = 3,
     [switch] $Trust,
+    [switch] $StatusOnly,
+    [switch] $Remove,
     [switch] $Json,
     [switch] $DryRun
 )
@@ -29,16 +32,88 @@ function Test-CodeSigningCertificate($Certificate) {
     return $false
 }
 
+function Normalize-Thumbprint($Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ""
+    }
+
+    return $Value.Replace(" ", "").ToUpperInvariant()
+}
+
+function Test-CertificateMatches($Certificate) {
+    if ($Certificate.Subject -ne $Subject) {
+        return $false
+    }
+
+    $normalizedThumbprint = Normalize-Thumbprint $Thumbprint
+    if (-not [string]::IsNullOrWhiteSpace($normalizedThumbprint) -and $Certificate.Thumbprint -ine $normalizedThumbprint) {
+        return $false
+    }
+
+    return $true
+}
+
 function Find-DevCertificate {
     $minimumExpiry = (Get-Date).AddDays(30)
     return Get-ChildItem -Path "Cert:\CurrentUser\My" -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.Subject -eq $Subject -and
+            (Test-CertificateMatches $_) -and
             $_.NotAfter -gt $minimumExpiry -and
             (Test-CodeSigningCertificate $_)
         } |
         Sort-Object NotAfter -Descending |
         Select-Object -First 1
+}
+
+function Get-MatchingStoreCertificates($StoreName) {
+    $storePath = "Cert:\CurrentUser\$StoreName"
+    return @(Get-ChildItem -Path $storePath -ErrorAction SilentlyContinue |
+        Where-Object { Test-CertificateMatches $_ } |
+        Sort-Object Thumbprint -Unique)
+}
+
+function Get-StoreInventory {
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($storeName in @("My", "Root", "TrustedPublisher")) {
+        $certificates = New-Object System.Collections.Generic.List[object]
+        foreach ($certificate in (Get-MatchingStoreCertificates $storeName)) {
+            $certificates.Add([ordered] @{
+                thumbprint = $certificate.Thumbprint
+                subject = $certificate.Subject
+                issuer = $certificate.Issuer
+                notBefore = $certificate.NotBefore.ToUniversalTime().ToString("o")
+                notAfter = $certificate.NotAfter.ToUniversalTime().ToString("o")
+                hasPrivateKey = [bool] $certificate.HasPrivateKey
+                codeSigning = [bool] (Test-CodeSigningCertificate $certificate)
+            }) | Out-Null
+        }
+
+        $entries.Add([ordered] @{
+            store = "Cert:\CurrentUser\$storeName"
+            count = $certificates.Count
+            certificates = $certificates
+        }) | Out-Null
+    }
+
+    return $entries
+}
+
+function Remove-MatchingStoreCertificates($StoreName) {
+    $removed = New-Object System.Collections.Generic.List[object]
+    foreach ($certificate in (Get-MatchingStoreCertificates $StoreName)) {
+        $removed.Add([ordered] @{
+            store = "Cert:\CurrentUser\$StoreName"
+            thumbprint = $certificate.Thumbprint
+            subject = $certificate.Subject
+            dryRun = [bool] $DryRun
+        }) | Out-Null
+
+        if (-not $DryRun) {
+            Remove-Item -LiteralPath $certificate.PSPath -Force
+        }
+    }
+
+    return $removed
 }
 
 function New-DevCertificate {
@@ -102,6 +177,56 @@ function Add-CertificateToStore($Certificate, $StoreName) {
 if ($ValidYears -lt 1 -or $ValidYears -gt 10) {
     throw "-ValidYears must be between 1 and 10."
 }
+if ($Remove -and $Trust) {
+    throw "-Remove cannot be combined with -Trust."
+}
+
+if ($StatusOnly) {
+    $result = [ordered] @{
+        subject = $Subject
+        thumbprintFilter = Normalize-Thumbprint $Thumbprint
+        statusOnly = $true
+        stores = Get-StoreInventory
+        dryRun = [bool] $DryRun
+    }
+
+    if ($Json) {
+        $result | ConvertTo-Json -Depth 8 -Compress
+    } else {
+        Write-Step "Status only for $Subject"
+        foreach ($store in $result.stores) {
+            Write-Step "$($store.store): $($store.count) matching certificate(s)"
+        }
+    }
+    return
+}
+
+if ($Remove) {
+    $removed = New-Object System.Collections.Generic.List[object]
+    foreach ($storeName in @("TrustedPublisher", "Root", "My")) {
+        foreach ($entry in (Remove-MatchingStoreCertificates $storeName)) {
+            $removed.Add($entry) | Out-Null
+        }
+    }
+
+    $result = [ordered] @{
+        subject = $Subject
+        thumbprintFilter = Normalize-Thumbprint $Thumbprint
+        removed = $removed
+        dryRun = [bool] $DryRun
+    }
+
+    if ($Json) {
+        $result | ConvertTo-Json -Depth 8 -Compress
+    } else {
+        if ($DryRun) {
+            Write-Step "Dry run: would remove $($removed.Count) matching certificate store entries."
+        } else {
+            Write-Step "Removed $($removed.Count) matching certificate store entries."
+        }
+    }
+    return
+}
 
 $created = $false
 $certificate = Find-DevCertificate
@@ -141,6 +266,7 @@ $result = [ordered] @{
     }
     notAfter = if ($certificate) { $certificate.NotAfter.ToUniversalTime().ToString("o") } else { $null }
     store = "Cert:\CurrentUser\My"
+    stores = Get-StoreInventory
     dryRun = [bool] $DryRun
 }
 
