@@ -22,11 +22,16 @@ npm run install:windows
 3. Reload pyRevit. Open Revit with the Revit MCP Next add-in loaded and an
    active project document.
 
-The example command imports the in-process helper from the installed path:
+The example commands import the in-process helper from the installed path:
 
 ```text
 %LOCALAPPDATA%\RevitMcpNext\integrations\python\revit_mcp_next_inprocess.py
 ```
+
+Included commands:
+
+- `Diagnostics.panel\Status.pushbutton`: calls `status` through the in-process bridge.
+- `Examples.panel\Create Level.pushbutton`: builds a `create_level` change set, previews it, checks that the preview is ready, then applies the exact preview token.
 
 ## Safety
 

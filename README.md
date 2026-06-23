@@ -41,7 +41,7 @@ Local productionization slice, not yet a signed production release:
 - `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
 - `scripts/collect-release-evidence.ps1`: release evidence bundle that ties one package, checksums, signing status, validation logs, support diagnostics, and live-smoke evidence or skip reasons together.
 - `integrations/python`: stdlib MCP client for external Python plus an in-process helper for pyRevit and Dynamo; packaged installs stage both under `%LOCALAPPDATA%\RevitMcpNext\integrations`.
-- `integrations/pyrevit` and `integrations/dynamo`: example scripts/nodes that call the installed MCP launcher rather than bypassing broker auth and preview/apply policy.
+- `integrations/pyrevit` and `integrations/dynamo`: in-process status and preview/apply examples for Revit-hosted automation without deadlocking on an external event.
 
 ## First Local Commands
 
@@ -101,7 +101,7 @@ Windows installs generate a local 256-bit auth token in `%LOCALAPPDATA%\RevitMcp
 
 ## pyRevit, Dynamo, And Python
 
-pyRevit and Dynamo run inside Revit, so their examples use `integrations/python/revit_mcp_next_inprocess.py`. That helper calls the add-in's in-process bridge and avoids blocking Revit while waiting for an `ExternalEvent`.
+pyRevit and Dynamo run inside Revit, so their examples use `integrations/python/revit_mcp_next_inprocess.py`. That helper calls the add-in's in-process bridge and avoids blocking Revit while waiting for an `ExternalEvent`. It exposes `status`, `execute_operation`, `preview_change_set`, `apply_change_set`, and `apply_preview` for compact hosted scripts.
 
 Plain Python processes outside Revit can use `integrations/python/revit_mcp_next_client.py`. It starts the installed MCP launcher and calls normal MCP tools over stdio.
 
@@ -110,7 +110,9 @@ The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.j
 Examples:
 
 - pyRevit extension: `integrations/pyrevit/revit_mcp_next.extension`
+- pyRevit safe write command: `integrations/pyrevit/revit_mcp_next.extension/Revit MCP Next.tab/Examples.panel/Create Level.pushbutton/script.py`
 - Dynamo status node: `integrations/dynamo/status_node.py`
+- Dynamo safe write node: `integrations/dynamo/create_level_node.py`
 
 After install, examples can import the helpers from `%LOCALAPPDATA%\RevitMcpNext\integrations\python`.
 

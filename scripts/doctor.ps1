@@ -197,7 +197,9 @@ $contractsPdb = Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.pdb"
 $pythonClient = Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py"
 $pythonInProcessHelper = Join-Path $InstallRoot "integrations\python\revit_mcp_next_inprocess.py"
 $pyRevitStatusCommand = Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py"
+$pyRevitCreateLevelCommand = Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Examples.panel\Create Level.pushbutton\script.py"
 $dynamoStatusNode = Join-Path $InstallRoot "integrations\dynamo\status_node.py"
+$dynamoCreateLevelNode = Join-Path $InstallRoot "integrations\dynamo\create_level_node.py"
 $manifest = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext.addin"
 $logs = Join-Path $InstallRoot "logs"
 $receipt = Join-Path $InstallRoot "install-receipt.json"
@@ -213,7 +215,9 @@ Test-RequiredFile $contractsDll "Revit contracts DLL" | Out-Null
 Test-RequiredFile $pythonClient "Python MCP integration client" | Out-Null
 Test-RequiredFile $pythonInProcessHelper "Python in-process integration helper" | Out-Null
 Test-RequiredFile $pyRevitStatusCommand "pyRevit status command example" | Out-Null
+Test-RequiredFile $pyRevitCreateLevelCommand "pyRevit preview/apply create-level example" | Out-Null
 Test-RequiredFile $dynamoStatusNode "Dynamo status node example" | Out-Null
+Test-RequiredFile $dynamoCreateLevelNode "Dynamo preview/apply create-level node example" | Out-Null
 Test-RequiredFile $manifest "Revit add-in manifest" | Out-Null
 Test-RequiredDirectory (Join-Path $InstallRoot "broker\node_modules") "broker production node_modules" | Out-Null
 Test-OptionalFile $addinPdb "Revit add-in PDB"
