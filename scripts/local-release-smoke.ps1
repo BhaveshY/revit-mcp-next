@@ -32,6 +32,10 @@ Builds a staged release candidate, installs it into a run-local install root,
 copies a disposable RVT model, launches Revit when needed, runs doctor/live
 smoke/support/evidence, and writes all artifacts under a short local work root.
 
+Unsigned local add-in builds can pause Revit on its security prompt. For a
+disposable smoke run, choose "Always Load" / "Immer laden". Production releases
+should use Authenticode-signed add-in DLLs instead.
+
 Options:
   -RevitYear <year>          Revit major year. Default: 2024.
   -RevitApiPath <path>       Directory containing RevitAPI.dll. Default: Program Files Autodesk Revit <year>.
@@ -252,6 +256,7 @@ function Invoke-BridgeReadinessProbe {
     $display = "$node $($probeArgs -join ' ')"
     "Command: $display" | Set-Content -LiteralPath $LogPath -Encoding UTF8
     Write-Step "Waiting up to $TimeoutSeconds seconds for the Revit bridge to become ready."
+    Write-Step "If Revit shows an unsigned add-in security prompt, choose Always Load / Immer laden for this disposable smoke run."
 
     if ($DryRun) {
         "DRY RUN: $display" | Add-Content -LiteralPath $LogPath -Encoding UTF8
@@ -293,7 +298,7 @@ function Invoke-BridgeReadinessProbe {
         Start-Sleep -Seconds 10
     } while ($true)
 
-    throw "Revit bridge did not become ready within $TimeoutSeconds seconds. See $LogPath"
+    throw "Revit bridge did not become ready within $TimeoutSeconds seconds. If Revit is waiting on an unsigned add-in security prompt, choose Always Load / Immer laden or sign the add-in DLLs. See $LogPath"
 }
 
 if ($Help) {
