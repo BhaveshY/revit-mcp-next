@@ -55,6 +55,7 @@ npm run test:integrations:python
 npm run install:windows
 npm run doctor:windows
 npm run smoke:revit
+npm run smoke:release-local
 npm run package:windows:dry-run
 npm run test:evidence:release:windows
 ```
@@ -62,6 +63,7 @@ npm run test:evidence:release:windows
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
 
 `npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document by creating and moving a smoke-test wall. Use a disposable model.
+`npm run smoke:release-local` is the one-command disposable-machine path: it builds, packages, installs to a run-local root, copies a sample RVT, launches Revit when needed, runs doctor/live smoke/support collection, and attempts release evidence collection. It defaults to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
 
 Release-candidate smoke runs should use a disposable model with at least two compatible wall types and require type-change coverage:
 

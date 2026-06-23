@@ -21,6 +21,7 @@ Use this audit to separate evidence that already exists from blockers that still
 - `revit.catalog` provides compact, paginated discovery for element types, family symbols, title blocks, and view family types, including Revit-compatible type IDs for a target element.
 - Read parity with the fork now covers compact current-view metadata, current-view elements, selected elements, model statistics, and material quantities through `revit.get_current_view`, `revit.get_current_view_elements`, `revit.get_selection`, `revit.analyze_model`, and `revit.get_material_quantities`.
 - `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, the read/analysis tools above, `revit.get_levels`, `revit.catalog`, `revit.query`, plus preview/apply flows for `create_grid`, `create_floor`, `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`. When an alternate compatible wall type exists, it also applies `change_element_type`; release-candidate runs can require this with `-RequireTypeChange`.
+- `npm run smoke:release-local` orchestrates a local disposable-machine release smoke: build, package, install, copy a sample RVT, launch Revit when needed, run doctor, run live smoke, collect support bundle, and collect release evidence into a short local work root. It defaults to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
 - Packaged installs include pyRevit and Dynamo examples plus external-stdio and in-process Python helpers under `integrations`. The installer writes token-safe `config\client-discovery.json` for clients.
 - `npm run sign:windows` provides optional Authenticode signing and verification for `.dll` and `.ps1` package targets. No release certificate is assumed by this repository.
 - `.github/workflows/live-revit-smoke.yml` defines a manual self-hosted Windows/Revit smoke workflow. It builds a staged package, installs from that package, can optionally launch Revit, runs doctor and live smoke, collects a support bundle, attempts release-evidence bundle collection, and uploads smoke/package/evidence artifacts.
@@ -79,9 +80,9 @@ Current coverage:
 
 Current non-coverage:
 
-- It does not launch Revit or create a project document.
+- `npm run smoke:revit` does not launch Revit or create a project document. Use `npm run smoke:release-local` on disposable test machines when a local orchestrated run is desired.
 - It does not validate signed release artifacts.
-- It does not collect a packaged release evidence bundle by itself; run `npm run evidence:release:windows` with the smoke artifact after the smoke.
+- `npm run smoke:revit` does not collect a packaged release evidence bundle by itself; `npm run smoke:release-local` does.
 - It does not cover cancellation, destructive operations, or Revit versions other than the active installed version.
 
 ## Manual Self-Hosted Revit Smoke
@@ -162,3 +163,11 @@ npm run evidence:release:windows -- `
 ```
 
 Archive the release evidence bundle with the staged package. Include signing verification output when signing is enabled; otherwise keep the explicit signing skip reason in the evidence manifest.
+
+For a disposable local machine, the manual sequence above can be replaced with:
+
+```powershell
+npm run smoke:release-local -- -RevitYear 2024
+```
+
+The script writes a run directory under `C:\tmp\revit-mcp-next-smoke` when writable, otherwise beside the repo, uses a run-local install root, copies the default Dynamo sample RVT before launching Revit, and collects logs/support/evidence for the candidate. Pass `-OutputRoot` to place artifacts elsewhere, `-ModelPath` to use a different disposable model, `-PackageRoot` with `-SkipBuild` to smoke an existing staged package, or `-NoLaunch` to require an already running Revit session.

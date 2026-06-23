@@ -18,6 +18,7 @@
     "install:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/install-windows.ps1",
     "doctor:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor.ps1",
     "smoke:revit": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-smoke-revit.ps1",
+    "smoke:release-local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local-release-smoke.ps1",
     "sign:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-release.ps1",
     "evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-release-evidence.ps1",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
