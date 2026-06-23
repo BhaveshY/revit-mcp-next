@@ -56,6 +56,18 @@ function Invoke-RepoScript([string] $Path, [string[]] $Arguments) {
     }
 }
 
+function Invoke-RepoScriptCapture([string] $Path, [string[]] $Arguments) {
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = ($output | Out-String)
+    if ($exitCode -ne 0) {
+        Write-Host $text
+        throw "$Path failed with exit code $exitCode."
+    }
+
+    return $text
+}
+
 function Assert-FileExists($Path, $Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Label was not created: $Path"
@@ -72,6 +84,47 @@ function New-SyntheticAddinOutput($Root) {
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
     Set-Content -LiteralPath (Join-Path $Root "RevitMcpNext.Addin.dll") -Value "synthetic add-in placeholder for package contract" -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $Root "RevitMcpNext.Contracts.dll") -Value "synthetic contracts placeholder for package contract" -Encoding ASCII
+}
+
+function Assert-DevSigningDryRuns($RepoRoot, $SyntheticAddinRoot, $RunRoot) {
+    $devCertScript = Join-Path $RepoRoot "scripts\ensure-dev-signing-certificate.ps1"
+    $devCertOutput = Invoke-RepoScriptCapture $devCertScript @("-DryRun", "-Trust", "-Json")
+    $devCertState = $devCertOutput | ConvertFrom-Json
+    if ($devCertState.dryRun -ne $true) {
+        throw "Dev signing certificate dry run did not report dryRun=true."
+    }
+    if ($devCertState.trusted.requested -ne $true) {
+        throw "Dev signing certificate dry run did not request CurrentUser trust."
+    }
+    if ([string] $devCertState.store -ne "Cert:\CurrentUser\My") {
+        throw "Dev signing certificate dry run used unexpected store: $($devCertState.store)"
+    }
+
+    $packageScript = Join-Path $RepoRoot "scripts\package-release.ps1"
+    $dryRunOutputRoot = Join-Path $RunRoot "signed-dry-run"
+    $packageOutput = Invoke-RepoScriptCapture $packageScript @(
+        "-OutputRoot", $dryRunOutputRoot,
+        "-AddinOutputRoot", $SyntheticAddinRoot,
+        "-DryRun",
+        "-Sign",
+        "-RequireSigned",
+        "-RequireTrustedSignatures",
+        "-SigningCertificateThumbprint", "0000000000000000000000000000000000000000",
+        "-NoTimestamp"
+    )
+    if (-not $packageOutput.Contains("Would sign Authenticode targets under")) {
+        throw "Signed package dry run did not plan Authenticode signing."
+    }
+
+    $signScript = Join-Path $RepoRoot "scripts\sign-release.ps1"
+    $signOutput = Invoke-RepoScriptCapture $signScript @(
+        "-Path", (Join-Path $SyntheticAddinRoot "RevitMcpNext.Addin.dll"),
+        "-DryRun",
+        "-NoTimestamp"
+    )
+    if (-not $signOutput.Contains("Would sign:")) {
+        throw "Signer dry run did not accept -NoTimestamp."
+    }
 }
 
 function Assert-NoRawTokenInSupportBundle($SupportRoot, $Token) {
@@ -150,6 +203,7 @@ try {
 
     Write-Step "Run root: $runRoot"
     New-SyntheticAddinOutput $syntheticAddinRoot
+    Assert-DevSigningDryRuns $repoRoot $syntheticAddinRoot $runRoot
 
     $packageScript = Join-Path $repoRoot "scripts\package-release.ps1"
     Invoke-RepoScript $packageScript @(

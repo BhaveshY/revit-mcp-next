@@ -36,6 +36,14 @@ function Test-RequiredDirectory($Path, $Label) {
     return $false
 }
 
+function Add-TrailingSeparator($Path) {
+    if ($Path.EndsWith("\") -or $Path.EndsWith("/")) {
+        return $Path
+    }
+
+    return "$Path\"
+}
+
 function Test-NodeVersion($NodeCommand) {
     $versionText = (& $NodeCommand.Source --version)
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($versionText)) {
@@ -65,11 +73,47 @@ function Test-ManifestAssemblyPath($ManifestPath, $ExpectedAssemblyPath) {
     }
 
     $manifestText = Get-Content -LiteralPath $ManifestPath -Raw
-    if ($manifestText.Contains($ExpectedAssemblyPath)) {
-        Write-Host "[ok] Revit manifest points at staged add-in DLL"
+    $acceptedPaths = New-Object System.Collections.Generic.List[string]
+    $acceptedPaths.Add($ExpectedAssemblyPath) | Out-Null
+
+    $manifestDir = Split-Path -Parent $ManifestPath
+    $manifestDirFull = Add-TrailingSeparator ([System.IO.Path]::GetFullPath($manifestDir))
+    $expectedFull = [System.IO.Path]::GetFullPath($ExpectedAssemblyPath)
+    if ($expectedFull.StartsWith($manifestDirFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $rootUri = New-Object System.Uri($manifestDirFull)
+        $pathUri = New-Object System.Uri($expectedFull)
+        $relativePath = [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($pathUri).ToString())
+        $acceptedPaths.Add($relativePath.Replace("\", "/")) | Out-Null
+        $acceptedPaths.Add($relativePath.Replace("/", "\")) | Out-Null
+    }
+
+    foreach ($acceptedPath in $acceptedPaths) {
+        if ($manifestText.Contains($acceptedPath)) {
+            Write-Host "[ok] Revit manifest points at staged add-in DLL"
+            return
+        }
+    }
+
+    Write-Host "[missing] Revit manifest does not point at staged add-in DLL"
+    $failures.Add("Revit manifest target mismatch: $ManifestPath")
+}
+
+function Test-ManifestIdentity($ManifestPath, $ExpectedId) {
+    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+        return
+    }
+
+    $manifestText = Get-Content -LiteralPath $ManifestPath -Raw
+    if ($manifestText.Contains("<AddInId>$ExpectedId</AddInId>")) {
+        Write-Host "[ok] Revit manifest uses AddInId for add-in identity"
+        return
+    }
+
+    if ($manifestText.Contains("<ClientId>$ExpectedId</ClientId>")) {
+        Write-Host "[ok] Revit manifest uses legacy ClientId for add-in identity"
     } else {
-        Write-Host "[missing] Revit manifest does not point at staged add-in DLL"
-        $failures.Add("Revit manifest target mismatch: $ManifestPath")
+        Write-Host "[missing] Revit manifest does not contain the expected add-in identity"
+        $failures.Add("Revit manifest identity missing: $ManifestPath")
     }
 }
 
@@ -225,6 +269,7 @@ Test-OptionalFile $contractsPdb "Revit contracts PDB"
 Test-OptionalFile $receipt "install receipt"
 Test-OptionalFile $releaseManifest "release manifest"
 Test-ManifestAssemblyPath $manifest $addinDll
+Test-ManifestIdentity $manifest "6F78E70D-BE13-4E0B-9B11-9E28F876AF71"
 Test-AuthenticodeFile $addinDll "Revit add-in DLL"
 Test-AuthenticodeFile $contractsDll "Revit contracts DLL"
 

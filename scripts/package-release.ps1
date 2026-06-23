@@ -12,7 +12,8 @@ param(
     [string] $SigningCertificateThumbprint = "$env:REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT",
     [string] $SigningCertificatePath = "$env:REVIT_MCP_NEXT_SIGN_CERT_PATH",
     [string] $SigningCertificatePasswordEnv = "REVIT_MCP_NEXT_SIGN_CERT_PASSWORD",
-    [string] $TimestampServer = "$env:REVIT_MCP_NEXT_TIMESTAMP_URL"
+    [string] $TimestampServer = "$env:REVIT_MCP_NEXT_TIMESTAMP_URL",
+    [switch] $NoTimestamp
 )
 
 $ErrorActionPreference = "Stop"
@@ -265,8 +266,11 @@ function Invoke-PackageSigning($StageRoot) {
     if (-not [string]::IsNullOrWhiteSpace($SigningCertificatePath)) {
         $arguments += @("-CertificatePath", $SigningCertificatePath)
     }
-    if (-not [string]::IsNullOrWhiteSpace($TimestampServer)) {
+    if (-not $NoTimestamp -and -not [string]::IsNullOrWhiteSpace($TimestampServer)) {
         $arguments += @("-TimestampServer", $TimestampServer)
+    }
+    if ($NoTimestamp) {
+        $arguments += "-NoTimestamp"
     }
     if ($RequireSigned) {
         $arguments += "-RequireSigned"
@@ -297,6 +301,12 @@ function Assert-SignatureEntries($Entries) {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot "artifacts\release"
+}
+$effectiveTimestampServer = $TimestampServer
+if ($NoTimestamp) {
+    $effectiveTimestampServer = ""
+} elseif ($Sign -and [string]::IsNullOrWhiteSpace($effectiveTimestampServer)) {
+    $effectiveTimestampServer = "http://timestamp.digicert.com"
 }
 
 $rootPackage = Read-JsonFile (Join-Path $repoRoot "package.json")
@@ -404,7 +414,7 @@ $manifest = [ordered] @{
         requested = [bool] $Sign
         requireSigned = [bool] $RequireSigned
         requireTrusted = [bool] $RequireTrustedSignatures
-        timestampServer = $TimestampServer
+        timestampServer = $effectiveTimestampServer
         targets = $signatureEntries
     }
     contents = $fileEntries

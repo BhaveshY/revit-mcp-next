@@ -64,6 +64,14 @@ npm run package:windows -- -Sign -RequireSigned
 
 Use `-RequireTrustedSignatures` only on a release machine where the certificate chain is expected to validate. Signing can also use `REVIT_MCP_NEXT_SIGN_CERT_PATH` plus `REVIT_MCP_NEXT_SIGN_CERT_PASSWORD`, or the matching PowerShell parameters.
 
+For disposable local Revit smoke machines, `npm run smoke:release-local` creates or reuses a CurrentUser self-signed code-signing certificate, trusts it for the current user, and passes `-Sign -RequireSigned -RequireTrustedSignatures -NoTimestamp` into packaging. This is a local prompt-removal mechanism only; do not treat that self-signed certificate as a production release identity. Use `-SkipLocalDevSigning` only when intentionally testing unsigned packages and Revit's unsigned add-in prompt behavior.
+
+When signing with a local or offline certificate without a timestamp service, pass `-NoTimestamp`:
+
+```powershell
+npm run package:windows -- -Sign -RequireSigned -SigningCertificateThumbprint "<thumbprint>" -NoTimestamp
+```
+
 Inspect the package plan without signing:
 
 ```powershell

@@ -13,6 +13,8 @@ param(
     [string] $InstallRoot = "",
     [string] $OutputRoot = "",
     [string] $PackageRoot = "",
+    [string] $SigningCertificateThumbprint = "$env:REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT",
+    [switch] $SkipLocalDevSigning,
     [int] $StartupWaitSeconds = 120,
     [int] $BridgeReadyTimeoutSeconds = 300
 )
@@ -28,22 +30,27 @@ function Show-Help {
 Usage:
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\local-release-smoke.ps1 [options]
 
-Builds a staged release candidate, installs it into a stable per-year install root,
-copies a disposable RVT model, launches Revit when needed, runs doctor/live
-smoke/support/evidence, and writes all artifacts under a short local work root.
+Builds a staged release candidate, installs it into a stable per-year Revit
+Addins install root, copies a disposable RVT model, launches Revit when needed,
+runs doctor/live smoke/support/evidence, and writes all artifacts under a short
+local work root.
 
-Unsigned local add-in builds can pause Revit on its security prompt. For a
-disposable smoke run, choose "Always Load" / "Immer laden". Production releases
-should use Authenticode-signed add-in DLLs instead.
+By default, local smoke builds create or reuse a CurrentUser self-signed
+code-signing certificate, trust it for the current user, sign the package before
+checksums, and verify trusted signatures. This avoids Revit's unsigned add-in
+security prompt on disposable test machines.
 
 Options:
   -RevitYear <year>          Revit major year. Default: 2024.
   -RevitApiPath <path>       Directory containing RevitAPI.dll. Default: Program Files Autodesk Revit <year>.
   -RevitExePath <path>       Revit.exe path. Default: Program Files Autodesk Revit <year>\Revit.exe.
   -ModelPath <path>          Disposable RVT to copy before launch. Default: Dynamo sample RVT for the year.
-  -InstallRoot <path>        Install root. Default: output root\install\<year>.
+  -InstallRoot <path>        Install root. Default: %APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext.
   -OutputRoot <path>         Evidence root. Default: C:\tmp\revit-mcp-next-smoke when writable.
   -PackageRoot <path>        Existing staged package root when using -SkipBuild.
+  -SigningCertificateThumbprint <thumbprint>
+                              Existing code-signing certificate thumbprint. Default: env REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT, otherwise a local dev cert is created.
+  -SkipLocalDevSigning       Package unsigned local smoke artifacts. Revit may show its unsigned add-in prompt.
   -StartupWaitSeconds <n>    Wait after Revit starts before doctor/smoke. Default: 120.
   -BridgeReadyTimeoutSeconds <n>
                               Poll revit.status until Revit is reachable. Default: 300. Use 0 to skip.
@@ -114,6 +121,51 @@ function Resolve-NpmCommand {
     }
 
     return $npm.Source
+}
+
+function Resolve-LocalSigningCertificate {
+    param(
+        [string] $RepoRoot,
+        [string] $ConfiguredThumbprint
+    )
+
+    if ($SkipLocalDevSigning -or $SkipBuild) {
+        return ""
+    }
+
+    $normalizedThumbprint = ""
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredThumbprint)) {
+        $normalizedThumbprint = $ConfiguredThumbprint.Replace(" ", "")
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
+        Write-Step "Using configured signing certificate thumbprint for local smoke package."
+        return $normalizedThumbprint
+    }
+
+    if ($DryRun) {
+        Write-Step "Would create or reuse a trusted CurrentUser local dev signing certificate."
+        return "DRY-RUN-LOCAL-DEV-SIGNING-CERT"
+    }
+
+    $devCertScript = Resolve-RequiredFile (Join-Path $RepoRoot "scripts\ensure-dev-signing-certificate.ps1") "Local dev signing certificate helper was not found."
+    Write-Step "Ensuring trusted CurrentUser local dev signing certificate."
+    $jsonText = & powershell -NoProfile -ExecutionPolicy Bypass -File $devCertScript -Trust -Json
+    if ($LASTEXITCODE -ne 0) {
+        throw "Local dev signing certificate setup failed with exit code $LASTEXITCODE."
+    }
+
+    $state = ($jsonText | Out-String) | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace([string] $state.thumbprint)) {
+        throw "Local dev signing certificate helper did not return a thumbprint."
+    }
+
+    if (-not [bool] $state.trusted.rootPresent -or -not [bool] $state.trusted.trustedPublisherPresent) {
+        throw "Local dev signing certificate was not trusted in CurrentUser Root and TrustedPublisher stores."
+    }
+
+    Write-Step "Using local dev signing certificate: $($state.thumbprint)"
+    return [string] $state.thumbprint
 }
 
 function Test-DirectoryWritable {
@@ -256,7 +308,7 @@ function Invoke-BridgeReadinessProbe {
     $display = "$node $($probeArgs -join ' ')"
     "Command: $display" | Set-Content -LiteralPath $LogPath -Encoding UTF8
     Write-Step "Waiting up to $TimeoutSeconds seconds for the Revit bridge to become ready."
-    Write-Step "If Revit shows an unsigned add-in security prompt, choose Always Load / Immer laden for this disposable smoke run."
+    Write-Step "If Revit shows an unsigned add-in security prompt, this package was unsigned or the signing certificate was not trusted."
 
     if ($DryRun) {
         "DRY RUN: $display" | Add-Content -LiteralPath $LogPath -Encoding UTF8
@@ -320,7 +372,7 @@ function Invoke-BridgeReadinessProbe {
         Start-Sleep -Seconds 10
     } while ($true)
 
-    throw "Revit bridge did not become ready within $TimeoutSeconds seconds. If Revit is waiting on an unsigned add-in security prompt, choose Always Load / Immer laden or sign the add-in DLLs. See $LogPath"
+    throw "Revit bridge did not become ready within $TimeoutSeconds seconds. If Revit is waiting on an unsigned add-in security prompt, rerun without -SkipLocalDevSigning or verify the signing certificate trust. See $LogPath"
 }
 
 if ($Help) {
@@ -340,6 +392,8 @@ Set-Location $repoRoot
 
 $node = Resolve-NodeCommand
 $npm = Resolve-NpmCommand
+$localSigningCertificateThumbprint = Resolve-LocalSigningCertificate $repoRoot $SigningCertificateThumbprint
+$localDevSigningEnabled = -not [string]::IsNullOrWhiteSpace($localSigningCertificateThumbprint)
 $revitApi = Resolve-RevitApiPath $RevitYear $RevitApiPath
 $revitExe = Resolve-RevitExePath $RevitYear $RevitExePath
 $apiDll = Resolve-RequiredFile (Join-Path $revitApi "RevitAPI.dll") "RevitAPI.dll was not found."
@@ -367,11 +421,19 @@ $releaseEvidenceRoot = Join-Path $runRoot "rel-evidence"
 
 $defaultInstallRoot = [string]::IsNullOrWhiteSpace($InstallRoot)
 if ($defaultInstallRoot) {
-    $InstallRoot = Join-Path $outputRootFull "install\$RevitYear"
+    if ([string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        throw "APPDATA is not set; pass -InstallRoot explicitly."
+    }
+
+    $InstallRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext"
 }
 $installRootFull = Get-FullPath $InstallRoot
 $launcherPath = Join-Path $installRootFull "launch-revit-mcp-next.cmd"
 $disposableModel = Join-Path $runRoot ("disposable-model\revit-mcp-next-smoke-$timestamp.rvt")
+$runSigningCertificateThumbprint = $null
+if ($localDevSigningEnabled) {
+    $runSigningCertificateThumbprint = $localSigningCertificateThumbprint
+}
 
 Assert-PathChild $outputRootFull $runRoot "local smoke run root"
 Assert-PathChild $runRoot $evidenceDir "evidence directory"
@@ -379,7 +441,8 @@ Assert-PathChild $runRoot $packageOutputRoot "package output root"
 if ($installRootFull.StartsWith((Add-TrailingSeparator $runRoot), [System.StringComparison]::OrdinalIgnoreCase)) {
     Assert-PathChild $runRoot $installRootFull "install root"
 } elseif ($defaultInstallRoot) {
-    Assert-PathChild $outputRootFull $installRootFull "install root"
+    $defaultInstallParent = Get-FullPath (Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear")
+    Assert-PathChild $defaultInstallParent $installRootFull "install root"
 }
 
 New-Item -ItemType Directory -Force -Path $evidenceDir, $logsDir | Out-Null
@@ -403,6 +466,8 @@ $runInputs = [ordered] @{
     noLaunch = [bool] $NoLaunch
     noEvidence = [bool] $NoEvidence
     requireTypeChange = [bool] $RequireTypeChange
+    localDevSigningEnabled = [bool] $localDevSigningEnabled
+    signingCertificateThumbprint = $runSigningCertificateThumbprint
     bridgeReadyTimeoutSeconds = $BridgeReadyTimeoutSeconds
     dryRun = [bool] $DryRun
 }
@@ -435,7 +500,19 @@ if (-not $SkipBuild) {
     Invoke-Logged "Build broker/contracts" (Join-Path $logsDir "npm-build.log") $npm @("run", "build")
     Invoke-Logged "Build Revit add-in" (Join-Path $logsDir "build-addin.log") $npm @("run", "build:addin", "--", "-RevitApiPath", $revitApi)
     Invoke-Logged "Validate repository" (Join-Path $logsDir "validate-repo.log") $node @("scripts\validate-repo.mjs")
-    Invoke-Logged "Package release candidate" (Join-Path $logsDir "package-release.log") $npm @("run", "package:windows", "--", "-OutputRoot", $packageOutputRoot, "-RevitYears", "$RevitYear")
+    $packageArgs = @("run", "package:windows", "--", "-OutputRoot", $packageOutputRoot, "-RevitYears", "$RevitYear")
+    if ($localDevSigningEnabled) {
+        $packageArgs += @(
+            "-Sign",
+            "-RequireSigned",
+            "-RequireTrustedSignatures",
+            "-SigningCertificateThumbprint",
+            $localSigningCertificateThumbprint,
+            "-NoTimestamp"
+        )
+    }
+
+    Invoke-Logged "Package release candidate" (Join-Path $logsDir "package-release.log") $npm $packageArgs
 }
 
 if (-not $DryRun -and -not $SkipBuild -and [string]::IsNullOrWhiteSpace($PackageRoot)) {
@@ -519,13 +596,32 @@ if (-not $NoEvidence) {
         }
     }
 
+    $signingRequestedForEvidence = $false
+    $releaseManifestPath = Join-Path $packageRoot "release-manifest.json"
+    if (-not $DryRun -and (Test-Path -LiteralPath $releaseManifestPath -PathType Leaf)) {
+        $releaseManifest = Read-JsonFile $releaseManifestPath
+        $signingRequestedForEvidence = [bool] $releaseManifest.signing.requested
+    } elseif ($localDevSigningEnabled) {
+        $signingRequestedForEvidence = $true
+    }
+
     $evidenceArgs = @(
         "run", "evidence:release:windows", "--",
         "-PackageRoot", $packageRoot,
         "-OutputRoot", $releaseEvidenceRoot,
-        "-SigningSkipReason", "No release certificate configured for this local release smoke.",
         "-LiveSmokeEvidencePath", $evidenceDir
     )
+    if ($signingRequestedForEvidence) {
+        $packageLogPath = Join-Path $logsDir "package-release.log"
+        if (-not $DryRun -and -not (Test-Path -LiteralPath $packageLogPath -PathType Leaf)) {
+            throw "Signing was requested, but package signing log was not found: $packageLogPath"
+        }
+
+        $evidenceArgs += @("-SigningLogPath", $packageLogPath)
+    } else {
+        $evidenceArgs += @("-SigningSkipReason", "No release certificate configured for this local release smoke.")
+    }
+
     foreach ($optionalLog in @(
         @{ Name = "-ValidateRepoLogPath"; Path = (Join-Path $logsDir "validate-repo.log") },
         @{ Name = "-PackageLogPath"; Path = (Join-Path $logsDir "package-release.log") },

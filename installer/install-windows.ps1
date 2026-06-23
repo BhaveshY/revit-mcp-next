@@ -30,6 +30,24 @@ function Add-TrailingSeparator($Path) {
     return "$Path\"
 }
 
+function Get-RelativePath($Root, $Path) {
+    $rootFull = Add-TrailingSeparator (Get-FullPath $Root)
+    $pathFull = Get-FullPath $Path
+    $rootUri = New-Object System.Uri($rootFull)
+    $pathUri = New-Object System.Uri($pathFull)
+    return [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($pathUri).ToString())
+}
+
+function Get-ManifestAssemblyPath($AddinDir, $AssemblyPath) {
+    $addinDirFull = Add-TrailingSeparator (Get-FullPath $AddinDir)
+    $assemblyFull = Get-FullPath $AssemblyPath
+    if ($assemblyFull.StartsWith($addinDirFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return (Get-RelativePath $addinDir $assemblyFull).Replace("\", "/")
+    }
+
+    return $assemblyFull
+}
+
 function Assert-PathChild($Root, $Path, $Label) {
     $rootFull = Get-FullPath $Root
     $pathFull = Get-FullPath $Path
@@ -568,7 +586,8 @@ foreach ($year in $RevitYears) {
     $addinDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year"
     $addinPath = Join-Path $addinDir "RevitMcpNext.addin"
     $assemblyPath = Join-Path $installedAddin "RevitMcpNext.Addin.dll"
-    $manifest = (Get-Content -LiteralPath $addinTemplate -Raw).Replace("{{ASSEMBLY_PATH}}", $assemblyPath)
+    $manifestAssemblyPath = Get-ManifestAssemblyPath $addinDir $assemblyPath
+    $manifest = (Get-Content -LiteralPath $addinTemplate -Raw).Replace("{{ASSEMBLY_PATH}}", $manifestAssemblyPath)
 
     if ($DryRun) {
         Write-Step "Would install add-in manifest for Revit $year at $addinPath"

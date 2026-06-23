@@ -5,6 +5,7 @@ param(
     [string] $CertificatePath = "$env:REVIT_MCP_NEXT_SIGN_CERT_PATH",
     [string] $CertificatePasswordEnv = "REVIT_MCP_NEXT_SIGN_CERT_PASSWORD",
     [string] $TimestampServer = "$env:REVIT_MCP_NEXT_TIMESTAMP_URL",
+    [switch] $NoTimestamp,
     [switch] $VerifyOnly,
     [switch] $RequireSigned,
     [switch] $RequireTrusted,
@@ -125,7 +126,9 @@ if ($uniqueTargets.Count -eq 0) {
     throw "No signing targets were found."
 }
 
-if ([string]::IsNullOrWhiteSpace($TimestampServer)) {
+if ($NoTimestamp) {
+    $TimestampServer = ""
+} elseif ([string]::IsNullOrWhiteSpace($TimestampServer)) {
     $TimestampServer = "http://timestamp.digicert.com"
 }
 
@@ -150,7 +153,16 @@ if ($DryRun) {
 $certificate = Resolve-Certificate
 Write-Step "Signing $($uniqueTargets.Count) Authenticode target(s)."
 foreach ($target in $uniqueTargets) {
-    $signature = Set-AuthenticodeSignature -LiteralPath $target -Certificate $certificate -TimestampServer $TimestampServer -HashAlgorithm SHA256
+    $signArguments = @{
+        LiteralPath = $target
+        Certificate = $certificate
+        HashAlgorithm = "SHA256"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TimestampServer)) {
+        $signArguments["TimestampServer"] = $TimestampServer
+    }
+
+    $signature = Set-AuthenticodeSignature @signArguments
     if ($signature.Status -eq "UnknownError" -or $signature.Status -eq "HashMismatch" -or $signature.Status -eq "NotSigned") {
         throw "Failed to sign $target. Status: $($signature.Status) $($signature.StatusMessage)"
     }
