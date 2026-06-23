@@ -6,7 +6,8 @@ param(
     [double]$MoveYMm = 250,
     [double]$WallHeightMm = 3000,
     [string]$TransactionPrefix = "Revit MCP Next smoke",
-    [string]$LauncherPath
+    [string]$LauncherPath,
+    [switch]$RequireTypeChange
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,6 +74,10 @@ $nodeArgs = @(
     "--transaction-prefix", $TransactionPrefix,
     "--launcher-path", $LauncherPath
 )
+
+if ($RequireTypeChange) {
+    $nodeArgs += @("--require-type-change")
+}
 
 if (-not [string]::IsNullOrWhiteSpace($DocumentFingerprint)) {
     $nodeArgs += @("--document-fingerprint", $DocumentFingerprint)

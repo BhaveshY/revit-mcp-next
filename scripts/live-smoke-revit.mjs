@@ -53,6 +53,7 @@ async function main() {
   console.log(`Wall height: ${options.wallHeightMm} mm`);
   console.log(`Move Y: ${options.moveYMm} mm`);
   console.log(`Transaction prefix: ${options.transactionPrefix}`);
+  console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
   if (options.documentFingerprint) {
     console.log(`Document fingerprint: ${options.documentFingerprint}`);
   }
@@ -223,7 +224,53 @@ async function main() {
     const queriedWall = await queryWallById(client, wallId);
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
 
-    const moveGeneration = numericOrUndefined(createApply.generation);
+    const compatibleWallTypes = await catalog(client, {
+      kind: "elementTypes",
+      filter: { forElementId: wallId },
+      preset: "typeChange",
+      limit: 200,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(compatibleWallTypes, "elementTypes");
+    assert(
+      compatibleWallTypes.target?.elementId === String(wallId),
+      "revit.catalog typeChange result did not identify the smoke wall target."
+    );
+    const alternateWallType = compatibleWallTypes.items.find(
+      (item) => item.validForTarget !== false && item.isCurrentType !== true && typeof item.id === "string" && item.id.length > 0
+    );
+
+    let changeTypeApply = undefined;
+    if (alternateWallType) {
+      const changeTypeGeneration = numericOrUndefined(createApply.generation);
+      const changeTypeOperation = {
+        id: "change-smoke-wall-type",
+        type: "change_element_type",
+        elementId: wallId,
+        typeId: alternateWallType.id,
+      };
+      const changeTypeTransaction = makeTransactionName(options.transactionPrefix, "change wall type", runId);
+      const changeTypeChangeSet = compactObject({
+        documentFingerprint,
+        expectedGeneration: changeTypeGeneration,
+        transactionName: changeTypeTransaction,
+        operations: [changeTypeOperation],
+      });
+      const changeTypePreview = await previewChangeSet(client, changeTypeChangeSet, "change_element_type");
+      changeTypeApply = await applyChangeSet(client, changeTypeChangeSet, changeTypePreview, "change_element_type");
+      console.log(`Change wall type OK: element ${wallId} -> type ${alternateWallType.id}`);
+    } else if (options.requireTypeChange) {
+      throw new Error(
+        [
+          "revit.catalog did not return an alternate valid wall type for the smoke wall.",
+          "Use a disposable release-smoke model with at least two compatible wall types, or omit --require-type-change for local smoke.",
+        ].join("\n")
+      );
+    } else {
+      console.log("Change wall type skipped: no alternate compatible wall type was available in this project.");
+    }
+
+    const moveGeneration = numericOrUndefined(changeTypeApply?.generation ?? createApply.generation);
     const moveOperation = {
       id: "move-smoke-wall",
       type: "move_element",
@@ -317,6 +364,24 @@ async function main() {
     console.log(`Pin wall OK: element ${copiedWallId} pinned`);
 
     const unpinGeneration = numericOrUndefined(pinApply.generation);
+    await previewBlockedChangeSet(
+      client,
+      compactObject({
+        documentFingerprint,
+        expectedGeneration: unpinGeneration,
+        transactionName: makeTransactionName(options.transactionPrefix, "move pinned wall preview", runId),
+        operations: [
+          {
+            id: "move-pinned-smoke-wall-preview",
+            type: "move_element",
+            elementId: copiedWallId,
+            translation: pointMm(0, options.moveYMm, 0),
+          },
+        ],
+      }),
+      "move pinned wall"
+    );
+
     const unpinOperation = {
       id: "unpin-smoke-wall",
       type: "set_element_pinned",
@@ -333,6 +398,13 @@ async function main() {
     });
 
     const unpinPreview = await previewChangeSet(client, unpinChangeSet, "set_element_pinned");
+    await expectToolFailure(
+      client,
+      "revit.apply_change_set",
+      makeApplyPayload(unpinChangeSet, unpinPreview, { changeSetHash: "sha256:bad-live-smoke-hash" }),
+      "apply with mismatched changeSetHash",
+      "CHANGE_SET_HASH_MISMATCH"
+    );
     const unpinApply = await applyChangeSet(client, unpinChangeSet, unpinPreview, "set_element_pinned");
     assertPinnedState(findChange(unpinApply, "set_element_pinned"), false);
     console.log(`Unpin wall OK: element ${copiedWallId} unpinned`);
@@ -357,6 +429,7 @@ function parseArgs(args) {
     wallHeightMm: DEFAULT_WALL_HEIGHT_MM,
     transactionPrefix: DEFAULT_TRANSACTION_PREFIX,
     launcherPath: undefined,
+    requireTypeChange: false,
     help: false,
   };
 
@@ -394,6 +467,12 @@ function parseArgs(args) {
       case "--launcher-path":
         options.launcherPath = readValue(args, ++index, inlineValue, name);
         if (inlineValue !== undefined) index--;
+        break;
+      case "--require-type-change":
+        options.requireTypeChange = true;
+        break;
+      case "--skip-type-change":
+        options.requireTypeChange = false;
         break;
       default:
         throw new Error(`Unknown argument: ${arg}\nRun with --help for usage.`);
@@ -578,15 +657,7 @@ async function previewBlockedChangeSet(client, changeSet, operationName) {
 }
 
 async function applyChangeSet(client, changeSet, preview, operationName) {
-  const applyPayload = compactObject({
-    ...changeSet,
-    previewId: preview.previewId,
-    confirm: true,
-    changeSetHash: preview.changeSetHash,
-    baseGeneration: preview.baseGeneration,
-    expiresAt: preview.expiresAt,
-  });
-  delete applyPayload.expectedGeneration;
+  const applyPayload = makeApplyPayload(changeSet, preview);
 
   const apply = await callRequiredTool(client, "revit.apply_change_set", applyPayload);
   assert(apply.applied === true, `${operationName} apply did not report applied=true.`);
@@ -594,6 +665,34 @@ async function applyChangeSet(client, changeSet, preview, operationName) {
   assert(Array.isArray(apply.changes), `${operationName} apply did not return changes.`);
   console.log(`Apply OK: ${operationName} (${apply.changedCount} change)`);
   return apply;
+}
+
+function makeApplyPayload(changeSet, preview, overrides = {}) {
+  const applyPayload = compactObject({
+    ...changeSet,
+    previewId: preview.previewId,
+    confirm: true,
+    changeSetHash: preview.changeSetHash,
+    baseGeneration: preview.baseGeneration,
+    expiresAt: preview.expiresAt,
+    ...overrides,
+  });
+  delete applyPayload.expectedGeneration;
+  return applyPayload;
+}
+
+async function expectToolFailure(client, name, args, operationName, expectedText) {
+  const result = await client.callTool({ name, arguments: args });
+  assert(result.isError === true, `${operationName} unexpectedly succeeded.`);
+  const failure = formatToolFailure(name, result);
+  if (expectedText) {
+    assert(
+      failure.includes(expectedText),
+      `${operationName} failed, but did not include ${expectedText}.\n${failure}`
+    );
+  }
+  console.log(`Expected failure OK: ${operationName}`);
+  return result;
 }
 
 async function queryWallById(client, wallId) {
@@ -813,11 +912,16 @@ Runs a live Revit MCP smoke against the active Revit project:
   6. preview/apply create_floor
   7. preview/apply create_wall
   8. revit.query for created elements
-  9. preview/apply move_element
-  10. assert the wall Y location changed by --move-y-mm
-  11. preview/apply rotate_element
-  12. preview/apply copy_element
-  13. preview/apply set_element_pinned true, then false
+  9. revit.catalog for compatible wall type changes
+  10. preview/apply change_element_type when an alternate valid type exists
+  11. preview/apply move_element
+  12. assert the wall Y location changed by --move-y-mm
+  13. preview/apply rotate_element
+  14. preview/apply copy_element
+  15. preview/apply set_element_pinned true
+  16. blocked preview for moving a pinned element
+  17. rejected apply for mismatched changeSetHash
+  18. preview/apply set_element_pinned false
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
@@ -827,6 +931,8 @@ Options:
   --transaction-prefix <text>     Prefix for Revit transaction names. Default: "${DEFAULT_TRANSACTION_PREFIX}"
   --launcher-path <path>          MCP launcher path. Default: %LOCALAPPDATA%\\RevitMcpNext\\launch-revit-mcp-next.cmd
   --launcher <path>               Alias for --launcher-path.
+  --require-type-change           Fail when no alternate valid wall type is available for change_element_type.
+  --skip-type-change              Allow type-change coverage to be skipped when no alternate type exists. Default.
   -h, --help                      Show this help.
 `);
 }

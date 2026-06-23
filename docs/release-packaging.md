@@ -28,6 +28,7 @@ The package is written under `artifacts\release\revit-mcp-next-<version>-windows
 - `payload\broker`, `payload\contracts`, and `payload\addin` runtime files.
 - Packaged broker production `node_modules` unless `-SkipDependencyInstall` is used.
 - `installer\install-windows.ps1`, `scripts\doctor.ps1`, and `scripts\collect-support-bundle.ps1`.
+- `integrations\python`, `integrations\pyrevit`, and `integrations\dynamo` examples for external Revit automation clients.
 - `release-manifest.json` with file inventory, build metadata, and signing status.
 - `CHECKSUMS.sha256` for installer-side integrity verification.
 
@@ -38,6 +39,8 @@ npm run test:release:windows
 ```
 
 That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
+
+`npm test` also runs `npm run test:integrations:python`, which syntax-checks the pyRevit/Dynamo Python examples and exercises the shared Python MCP client against a fake stdio MCP server.
 
 Hosted CI also runs the release evidence contract:
 
@@ -106,6 +109,8 @@ Useful installer switches:
 - `-SkipChecksumVerification`: bypass package checksum verification only for local debugging.
 
 Each install generates or reuses a local pipe auth token at `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The token is generated on the target machine, is not included in release packages, and is loaded by the generated `launch-revit-mcp-next.cmd` as `REVIT_MCP_NEXT_AUTH_TOKEN`. The installer attempts to restrict the auth config and launcher ACLs to the installing user, Administrators, and SYSTEM.
+
+The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.json`. It includes install paths, launcher path, schema path, integration helper paths, tool names, catalog kinds, and write-operation names. It does not include the auth token.
 
 Support bundle:
 

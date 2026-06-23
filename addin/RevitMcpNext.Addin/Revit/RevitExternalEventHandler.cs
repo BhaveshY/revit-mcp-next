@@ -57,6 +57,11 @@ namespace RevitMcpNext.Addin.Revit
             return "Revit MCP Next External Event Handler";
         }
 
+        internal BridgeResponseEnvelope HandleDirect(UIApplication app, BridgeRequestEnvelope request)
+        {
+            return Handle(app, request);
+        }
+
         private long GetActiveDocumentGeneration(UIApplication app)
         {
             Document activeDocument = app.ActiveUIDocument?.Document;

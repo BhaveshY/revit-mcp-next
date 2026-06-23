@@ -12,7 +12,8 @@ coverage/
 bin/
 obj/
 artifacts/
+__pycache__/
+*.pyc
 *.nupkg
 *.zip
 *.addin.user
-

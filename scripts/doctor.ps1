@@ -187,12 +187,17 @@ if ($node) {
 
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
 $authConfig = Join-Path $InstallRoot "config\auth.env"
+$clientDiscovery = Join-Path $InstallRoot "config\client-discovery.json"
 $brokerEntry = Join-Path $InstallRoot "broker\dist\src\index.js"
 $brokerServer = Join-Path $InstallRoot "broker\dist\src\server.js"
 $addinDll = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll"
 $contractsDll = Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.dll"
 $addinPdb = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.pdb"
 $contractsPdb = Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.pdb"
+$pythonClient = Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py"
+$pythonInProcessHelper = Join-Path $InstallRoot "integrations\python\revit_mcp_next_inprocess.py"
+$pyRevitStatusCommand = Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py"
+$dynamoStatusNode = Join-Path $InstallRoot "integrations\dynamo\status_node.py"
 $manifest = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext.addin"
 $logs = Join-Path $InstallRoot "logs"
 $receipt = Join-Path $InstallRoot "install-receipt.json"
@@ -200,10 +205,15 @@ $releaseManifest = Join-Path $InstallRoot "release-manifest.json"
 
 $launcherOk = Test-RequiredFile $launcher "MCP launcher"
 $authConfigOk = Test-RequiredFile $authConfig "auth token config"
+Test-RequiredFile $clientDiscovery "client discovery config" | Out-Null
 Test-RequiredFile $brokerEntry "broker entry" | Out-Null
 Test-RequiredFile $brokerServer "broker server module" | Out-Null
 Test-RequiredFile $addinDll "Revit add-in DLL" | Out-Null
 Test-RequiredFile $contractsDll "Revit contracts DLL" | Out-Null
+Test-RequiredFile $pythonClient "Python MCP integration client" | Out-Null
+Test-RequiredFile $pythonInProcessHelper "Python in-process integration helper" | Out-Null
+Test-RequiredFile $pyRevitStatusCommand "pyRevit status command example" | Out-Null
+Test-RequiredFile $dynamoStatusNode "Dynamo status node example" | Out-Null
 Test-RequiredFile $manifest "Revit add-in manifest" | Out-Null
 Test-RequiredDirectory (Join-Path $InstallRoot "broker\node_modules") "broker production node_modules" | Out-Null
 Test-OptionalFile $addinPdb "Revit add-in PDB"

@@ -249,6 +249,7 @@ foreach ($year in $RevitYears) {
 $configFiles = @(
     @{ Source = (Join-Path $InstallRoot "launch-revit-mcp-next.cmd"); Destination = "config\launch-revit-mcp-next.cmd" },
     @{ Source = $authConfig; Destination = "config\auth.env" },
+    @{ Source = (Join-Path $InstallRoot "config\client-discovery.json"); Destination = "config\client-discovery.json" },
     @{ Source = (Join-Path $InstallRoot "install-receipt.json"); Destination = "config\install-receipt.json" },
     @{ Source = (Join-Path $InstallRoot "release-manifest.json"); Destination = "config\release-manifest.json" },
     @{ Source = (Join-Path $InstallRoot "release-CHECKSUMS.sha256"); Destination = "config\release-CHECKSUMS.sha256" },
@@ -284,6 +285,10 @@ $inventoryTargets.Add((Join-Path $InstallRoot "broker\dist\src\index.js")) | Out
 $inventoryTargets.Add((Join-Path $InstallRoot "broker\dist\src\server.js")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.dll")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_inprocess.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\dynamo\status_node.py")) | Out-Null
 foreach ($year in $RevitYears) {
     $inventoryTargets.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year\RevitMcpNext.addin")) | Out-Null
 }

@@ -393,6 +393,7 @@ if ($sourceMode -eq "package") {
     $addinPdb = Join-Path $payloadRoot "addin\RevitMcpNext.Addin.pdb"
     $contractsPdb = Join-Path $payloadRoot "addin\RevitMcpNext.Contracts.pdb"
     $packagedNodeModulesCandidate = Join-Path $payloadRoot "broker\node_modules"
+    $integrationsCandidate = Join-Path $resolvedPackageRoot "integrations"
 } else {
     $brokerDist = Resolve-RequiredDirectory (Join-Path $repoRoot "broker\dist") "Broker is not built. Run npm install and npm run build first."
     $brokerRuntimeDist = Resolve-RequiredDirectory (Join-Path $brokerDist "src") "Broker runtime output is missing."
@@ -413,6 +414,7 @@ if ($sourceMode -eq "package") {
     $addinPdb = Join-Path $addinOut "RevitMcpNext.Addin.pdb"
     $contractsPdb = Join-Path $addinOut "RevitMcpNext.Contracts.pdb"
     $packagedNodeModulesCandidate = ""
+    $integrationsCandidate = Join-Path $repoRoot "integrations"
 }
 
 $brokerEntrySource | Out-Null
@@ -420,6 +422,7 @@ $brokerEntrySource | Out-Null
 $installedBroker = Join-Path $InstallRoot "broker"
 $installedContracts = Join-Path $InstallRoot "contracts"
 $installedAddin = Join-Path $InstallRoot "addin"
+$installedIntegrations = Join-Path $InstallRoot "integrations"
 $installedBrokerDist = Join-Path $installedBroker "dist"
 $installedBrokerEntry = Join-Path $installedBroker "dist\src\index.js"
 
@@ -447,6 +450,7 @@ Copy-File $addinDll (Join-Path $installedAddin "RevitMcpNext.Addin.dll")
 Copy-File $contractsDll (Join-Path $installedAddin "RevitMcpNext.Contracts.dll")
 Copy-OptionalFile $addinPdb (Join-Path $installedAddin "RevitMcpNext.Addin.pdb")
 Copy-OptionalFile $contractsPdb (Join-Path $installedAddin "RevitMcpNext.Contracts.pdb")
+Sync-Directory $integrationsCandidate $installedIntegrations
 
 if ($sourceMode -eq "package") {
     Copy-OptionalFile (Join-Path $resolvedPackageRoot "release-manifest.json") (Join-Path $InstallRoot "release-manifest.json")
@@ -484,6 +488,7 @@ if (-not [string]::IsNullOrWhiteSpace($packagedNodeModules)) {
 
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
 $authConfig = Join-Path $InstallRoot "config\auth.env"
+$clientDiscovery = Join-Path $InstallRoot "config\client-discovery.json"
 $authConfigState = Ensure-AuthTokenConfig $authConfig
 $launcherContent = @"
 @echo off
@@ -505,6 +510,53 @@ if ($DryRun) {
 } else {
     Set-Content -LiteralPath $launcher -Value $launcherContent -Encoding ASCII
     Set-PrivatePathAcl $launcher | Out-Null
+}
+
+$clientDiscoveryContent = [ordered] @{
+    schemaVersion = 1
+    product = "revit-mcp-next"
+    version = $releaseVersion
+    installRoot = (Get-FullPath $InstallRoot)
+    protocolVersion = "2026-06-22"
+    pipeName = "revit-mcp-next"
+    launcherPath = (Get-FullPath $launcher)
+    authConfigPath = (Get-FullPath $authConfig)
+    brokerEntryPath = (Get-FullPath $installedBrokerEntry)
+    addinAssemblyPath = (Get-FullPath (Join-Path $installedAddin "RevitMcpNext.Addin.dll"))
+    integrationsPath = (Get-FullPath $installedIntegrations)
+    pythonClientPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_client.py"))
+    pythonInProcessHelperPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_inprocess.py"))
+    contractSchemasPath = (Get-FullPath (Join-Path $installedContracts "schemas"))
+    tools = @(
+        "revit.status",
+        "revit.list_documents",
+        "revit.get_levels",
+        "revit.catalog",
+        "revit.query",
+        "revit.preview_change_set",
+        "revit.apply_change_set",
+        "revit.cancel_request"
+    )
+    catalogKinds = @("elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes")
+    writeOperations = @(
+        "set_parameter",
+        "create_level",
+        "create_wall",
+        "create_grid",
+        "create_floor",
+        "move_element",
+        "rotate_element",
+        "copy_element",
+        "change_element_type",
+        "set_element_pinned"
+    )
+}
+
+if ($DryRun) {
+    Write-Step "Would write client discovery config: $clientDiscovery"
+} else {
+    Set-Content -LiteralPath $clientDiscovery -Value ($clientDiscoveryContent | ConvertTo-Json -Depth 6) -Encoding UTF8
+    Set-PrivatePathAcl $clientDiscovery | Out-Null
 }
 
 foreach ($year in $RevitYears) {
@@ -541,6 +593,7 @@ $installReceipt = [ordered] @{
         created = $authConfigState.created
         aclRestricted = $authConfigState.aclRestricted
     }
+    clientDiscovery = $clientDiscovery
 }
 
 $receiptPath = Join-Path $InstallRoot "install-receipt.json"

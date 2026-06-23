@@ -17,6 +17,8 @@ Use `revit.catalog` instead of guessing type IDs:
 - `change_element_type.typeId`: `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"` so the returned IDs come from Revit's compatible type list.
 - Future placement and sheets: `revit.catalog` also supports `kind: "familySymbols"`, `kind: "titleBlocks"`, and `kind: "viewFamilyTypes"`.
 
+pyRevit and Dynamo scripts should use the in-process helper under `integrations/python` so they do not deadlock while waiting on an `ExternalEvent`. Plain external Python processes can use the stdio MCP client in the same folder. Do not call the named pipe directly from pyRevit or Dynamo.
+
 End-to-end supported operations:
 
 - `set_parameter`: set a writable instance parameter by element ID and parameter name.
@@ -73,11 +75,11 @@ The add-in recomputes the preview hash before applying. If the model, transactio
 Production readiness:
 
 - The write path is suitable for local development and staged packaging, not a signed production release.
-- Production release still needs automated live Revit smoke coverage, signed artifacts, and broader failure-mode validation. Track the current blocker list in [production-readiness.md](production-readiness.md).
+- Production release still needs signed artifacts, release-candidate live Revit smoke evidence, and broader real-model failure-mode validation. Track the current blocker list in [production-readiness.md](production-readiness.md).
 
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
-- Run `npm run smoke:revit` only against a disposable active Revit project; it creates a grid, floor, and walls, then moves, rotates, copies, pins, and unpins elements through preview/apply.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it creates a grid, floor, and walls, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

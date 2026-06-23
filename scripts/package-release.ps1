@@ -361,6 +361,7 @@ Copy-File $addinTemplate (Join-Path $payloadRoot "addin\RevitMcpNext.addin.templ
 Copy-DirectoryContents (Join-Path $repoRoot "installer") (Join-Path $stageRoot "installer")
 Copy-DirectoryContents (Join-Path $repoRoot "scripts") (Join-Path $stageRoot "scripts")
 Copy-DirectoryContents (Join-Path $repoRoot "docs") (Join-Path $stageRoot "docs")
+Copy-DirectoryContents (Join-Path $repoRoot "integrations") (Join-Path $stageRoot "integrations")
 Copy-File (Join-Path $repoRoot "README.md") (Join-Path $stageRoot "README.md")
 Copy-File (Join-Path $repoRoot "package.json") (Join-Path $stageRoot "package.json")
 Copy-File (Join-Path $repoRoot "package-lock.json") (Join-Path $stageRoot "package-lock.json")
@@ -397,6 +398,7 @@ $manifest = [ordered] @{
         gitCommit = $gitCommit
         gitDirty = -not [string]::IsNullOrWhiteSpace($gitStatus)
         nodeModulesBundled = (Test-Path -LiteralPath (Join-Path $payloadRoot "broker\node_modules") -PathType Container)
+        integrationsIncluded = (Test-Path -LiteralPath (Join-Path $stageRoot "integrations\python\revit_mcp_next_client.py") -PathType Leaf)
     }
     signing = [ordered] @{
         requested = [bool] $Sign

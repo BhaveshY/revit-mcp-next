@@ -171,6 +171,13 @@ try {
     if ($manifest.package.nodeModulesBundled -ne $true) {
         throw "Release contract expected packaged broker production node_modules."
     }
+    if ($manifest.package.integrationsIncluded -ne $true) {
+        throw "Release contract expected packaged pyRevit/Dynamo integrations."
+    }
+    Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_client.py") "packaged Python integration client"
+    Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_inprocess.py") "packaged Python in-process integration helper"
+    Assert-FileExists (Join-Path $packageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py") "packaged pyRevit status command"
+    Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\status_node.py") "packaged Dynamo status node"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
     Invoke-RepoScript $installerScript @(
@@ -178,6 +185,11 @@ try {
         "-InstallRoot", $installRoot,
         "-RevitYears", "2024"
     )
+    Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_client.py") "installed Python integration client"
+    Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_inprocess.py") "installed Python in-process integration helper"
+    Assert-FileExists (Join-Path $installRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py") "installed pyRevit status command"
+    Assert-FileExists (Join-Path $installRoot "integrations\dynamo\status_node.py") "installed Dynamo status node"
+    Assert-FileExists (Join-Path $installRoot "config\client-discovery.json") "installed client discovery config"
 
     $doctorScript = Join-Path $packageRoot "scripts\doctor.ps1"
     Invoke-RepoScript $doctorScript @(

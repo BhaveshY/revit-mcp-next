@@ -15,19 +15,21 @@ Use this audit to separate evidence that already exists from blockers that still
 - `npm run test:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates unsigned package creation, zip creation, package install into temp profile paths, doctor output, support bundle redaction, and checksum-tamper rejection without requiring Revit API DLLs on the runner.
 - `npm run evidence:release:windows` creates a release evidence bundle for one staged package. It records package metadata, package zip SHA-256, signing status, named validation logs, support-bundle evidence, live-smoke evidence, explicit skip reasons, and an inventory of copied evidence files.
 - `npm run test:evidence:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates release evidence generation, explicit missing-evidence gates, package hash capture, copied package metadata, support/live-smoke evidence capture, validation log capture, and token redaction.
+- `npm run test:integrations:python` syntax-checks pyRevit/Dynamo examples and validates the shared stdlib Python MCP client against a fake stdio MCP server.
 - `npm run doctor:windows` validates the installed launcher, staged broker files, add-in DLLs, Revit manifest, packaged production dependencies, local pipe auth token shape, and add-in DLL signature status.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, and redacted auth configuration.
 - `revit.catalog` provides compact, paginated discovery for element types, family symbols, title blocks, and view family types, including Revit-compatible type IDs for a target element.
-- `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.catalog`, `revit.query`, plus preview/apply flows for `create_grid`, `create_floor`, `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
+- `npm run smoke:revit` runs a live MCP smoke through the installed launcher against the active Revit project. It checks `revit.status`, `revit.get_levels`, `revit.catalog`, `revit.query`, plus preview/apply flows for `create_grid`, `create_floor`, `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`. When an alternate compatible wall type exists, it also applies `change_element_type`; release-candidate runs can require this with `-RequireTypeChange`.
+- Packaged installs include pyRevit and Dynamo examples plus external-stdio and in-process Python helpers under `integrations`. The installer writes token-safe `config\client-discovery.json` for clients.
 - `npm run sign:windows` provides optional Authenticode signing and verification for `.dll` and `.ps1` package targets. No release certificate is assumed by this repository.
-- `.github/workflows/live-revit-smoke.yml` defines a manual self-hosted Windows/Revit smoke workflow. It builds and installs the current checkout, can optionally launch Revit, runs doctor and live smoke, collects a support bundle, and uploads `artifacts/live-revit-smoke`.
+- `.github/workflows/live-revit-smoke.yml` defines a manual self-hosted Windows/Revit smoke workflow. It builds a staged package, installs from that package, can optionally launch Revit, runs doctor and live smoke, collects a support bundle, attempts release-evidence bundle collection, and uploads smoke/package/evidence artifacts.
 
 ## Remaining Blockers
 
 - Signed artifacts from an available release certificate, plus archived verification evidence before any signed-release claim.
-- Successful release-candidate live smoke evidence from a self-hosted Revit runner, plus packaged-build validation when the workflow is used as release evidence.
+- Successful release-candidate live smoke evidence from a self-hosted Revit runner.
 - End-to-end live validation evidence that ties installer behavior, broker/add-in pipe auth, `revit.status`, read tools, and preview/apply write flows to a specific packaged build. Hosted package-contract CI covers package mechanics only; it does not prove Revit can load a release DLL.
-- Broader write-operation coverage and failure-mode validation before calling the mutation surface production-complete.
+- More real-model write-operation and failure-mode evidence before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target.
 - Archived release evidence bundle for each release candidate, generated from that exact package, signing state, validation logs, support bundle, and live-smoke output.
 
@@ -59,7 +61,7 @@ Run the local live smoke after installing the staged build, opening Revit, loadi
 npm run smoke:revit
 ```
 
-The smoke mutates the active project. It creates a grid, floor, and straight wall on the first building-story level, queries created elements back, moves the wall on the Y axis, verifies the reported movement, rotates the wall, copies it by an offset, then pins and unpins the copied wall.
+The smoke mutates the active project. It creates a grid, floor, and straight wall on the first building-story level, queries created elements back, optionally changes the wall type, moves the wall on the Y axis, verifies the reported movement, rotates the wall, copies it by an offset, then pins and unpins the copied wall. It also checks blocked duplicate-grid and pinned-move previews plus a rejected apply with a mismatched `changeSetHash`.
 
 Useful direct wrapper form:
 
@@ -71,7 +73,7 @@ Current coverage:
 
 - Exact command: `npm run smoke:revit`.
 - Required state: Windows, Node 24, installed Revit MCP Next launcher, Revit running with the add-in loaded, and an active disposable project document.
-- Smoke scope: installed launcher, broker/add-in pipe auth via the launcher, `revit.status`, `revit.get_levels`, `revit.catalog`, `revit.query`, `create_grid`, `create_floor`, `create_wall`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
+- Smoke scope: installed launcher, broker/add-in pipe auth via the launcher, `revit.status`, `revit.get_levels`, `revit.catalog`, `revit.query`, `create_grid`, `create_floor`, `create_wall`, optional or required `change_element_type`, `move_element`, `rotate_element`, `copy_element`, and `set_element_pinned`.
 - Pass/fail artifacts: console output plus add-in logs under `%LOCALAPPDATA%\RevitMcpNext\logs`; use `npm run support:bundle` after a failure.
 
 Current non-coverage:
@@ -79,7 +81,7 @@ Current non-coverage:
 - It does not launch Revit or create a project document.
 - It does not validate signed release artifacts.
 - It does not collect a packaged release evidence bundle by itself; run `npm run evidence:release:windows` with the smoke artifact after the smoke.
-- It does not cover cancellation, `change_element_type`, destructive operations, or Revit versions other than the active installed version.
+- It does not cover cancellation, destructive operations, or Revit versions other than the active installed version.
 
 ## Manual Self-Hosted Revit Smoke
 
@@ -91,20 +93,21 @@ The `Live Revit Smoke` workflow is manually dispatched and requires a runner lab
 
 The workflow has two safe modes:
 
-- `skip_install=false`: the workflow builds and installs the current checkout. Revit must be closed before the install step, and `launch_revit=true` requires `revit_model_path`.
+- `skip_install=false`: the workflow builds a staged package and installs from that package. Revit must be closed before the install step, and `launch_revit=true` requires `revit_model_path`.
 - `skip_install=true`: the workflow skips build/install and smokes the already installed add-in in an already running Revit session with an active disposable project document.
 
 The workflow:
 
 - Verifies `RevitAPI.dll`, `RevitAPIUI.dll`, and `Revit.exe` on the runner.
 - Builds the current checkout with Node 24 and the configured Revit API path.
-- Installs the current checkout with `npm run install:windows`.
+- Creates a staged package under `artifacts\release-candidate` and installs from that package.
 - Refuses to install over a running Revit process unless `skip_install=true`.
 - Uses an existing Revit process or launches Revit with the configured disposable model path.
-- Runs `npm run doctor:windows` and `npm run smoke:revit`.
+- Runs `npm run doctor:windows` and `npm run smoke:revit`; by default the workflow requires `change_element_type` coverage through a disposable model with at least two compatible wall types.
 - Collects a redacted support bundle and uploads `artifacts/live-revit-smoke`.
+- Attempts `npm run evidence:release:windows` for the staged package and uploads `artifacts/release-evidence`.
 
-This workflow validates a live Revit host and current checkout install path. For packaged release evidence, keep the workflow artifact with the package manifest, checksums, signing status, and any separate package-install validation.
+This workflow validates a live Revit host and staged package install path. Keep the workflow artifact with the package manifest, checksums, signing status, support bundle, live smoke output, and release-evidence bundle.
 
 ### Local Equivalent
 

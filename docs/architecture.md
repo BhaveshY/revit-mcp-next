@@ -47,4 +47,12 @@ Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\Revi
 - Writes use one explicit named transaction or a transaction group.
 - No arbitrary code execution in normal mode.
 - Large results are paginated or exposed as MCP resources.
-- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, and `move_element`.
+- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, and `set_element_pinned`.
+
+## External Automation Integrations
+
+Claude and Codex enter through the MCP broker over stdio. Plain Python processes can do the same through `integrations/python/revit_mcp_next_client.py`.
+
+pyRevit and Dynamo run inside Revit, so their examples use the add-in's public in-process bridge through `integrations/python/revit_mcp_next_inprocess.py`. That path shares the same bounded Revit dispatcher as the named-pipe route but does not queue through `ExternalEvent`, avoiding a common deadlock when a Revit-hosted script waits synchronously for work that Revit cannot process until the script returns.
+
+Do not call the add-in named pipe directly from pyRevit or Dynamo. Direct pipe use from an in-process script can deadlock and bypasses the stable integration helpers.

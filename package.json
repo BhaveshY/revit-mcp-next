@@ -10,7 +10,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "build:addin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-addin.ps1",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:integrations:python",
+    "test:integrations:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-python-integrations.ps1",
     "test:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-package-contract.ps1",
     "test:evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-evidence-contract.ps1",
     "typecheck": "npm run typecheck --workspaces --if-present",

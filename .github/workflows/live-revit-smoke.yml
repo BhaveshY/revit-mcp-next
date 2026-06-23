@@ -46,6 +46,11 @@ on:
         required: true
         type: boolean
         default: true
+      require_type_change:
+        description: Fail unless the smoke can discover and apply an alternate compatible wall type.
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -71,6 +76,7 @@ jobs:
       INSTALL_ROOT_INPUT: ${{ inputs.install_root }}
       DOCUMENT_FINGERPRINT: ${{ inputs.document_fingerprint }}
       STARTUP_WAIT_SECONDS: ${{ inputs.startup_wait_seconds }}
+      REQUIRE_TYPE_CHANGE: ${{ inputs.require_type_change }}
 
     steps:
       - name: Checkout
@@ -157,7 +163,7 @@ jobs:
             throw "npm ci failed with exit code $LASTEXITCODE."
           }
 
-      - name: Build current repo
+      - name: Build and package current repo
         if: ${{ !inputs.skip_install }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -174,7 +180,30 @@ jobs:
             throw "npm run build:addin failed with exit code $LASTEXITCODE."
           }
 
-      - name: Install current repo
+          $validateLog = Join-Path $env:EVIDENCE_DIR "validate-repo.log"
+          & node.exe scripts\validate-repo.mjs 2>&1 | Tee-Object -FilePath $validateLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "validate-repo.mjs failed with exit code $LASTEXITCODE."
+          }
+
+          $packageOutputRoot = "artifacts\release-candidate"
+          $packageLog = Join-Path $env:EVIDENCE_DIR "package-release.log"
+          & npm.cmd run package:windows -- -OutputRoot $packageOutputRoot 2>&1 | Tee-Object -FilePath $packageLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run package:windows failed with exit code $LASTEXITCODE."
+          }
+
+          $version = (Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json).version
+          $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$version-windows"
+          if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) {
+            throw "Expected package root was not created: $packageRoot"
+          }
+          $packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
+          "PACKAGE_ROOT=$packageRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Copy-Item -LiteralPath (Join-Path $packageRoot "release-manifest.json") -Destination (Join-Path $env:EVIDENCE_DIR "release-manifest.json") -Force
+          Copy-Item -LiteralPath (Join-Path $packageRoot "CHECKSUMS.sha256") -Destination (Join-Path $env:EVIDENCE_DIR "CHECKSUMS.sha256") -Force
+
+      - name: Install staged package
         if: ${{ !inputs.skip_install }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -184,9 +213,10 @@ jobs:
           }
 
           $log = Join-Path $env:EVIDENCE_DIR "install-windows.log"
-          & npm.cmd run install:windows -- -RevitYears $env:REVIT_YEAR -InstallRoot $env:INSTALL_ROOT 2>&1 | Tee-Object -FilePath $log
+          $installer = Join-Path $env:PACKAGE_ROOT "installer\install-windows.ps1"
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -PackageRoot $env:PACKAGE_ROOT -RevitYears $env:REVIT_YEAR -InstallRoot $env:INSTALL_ROOT 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
-            throw "npm run install:windows failed with exit code $LASTEXITCODE."
+            throw "package install failed with exit code $LASTEXITCODE."
           }
 
       - name: Ensure Revit is running
@@ -267,6 +297,9 @@ jobs:
           if (-not [string]::IsNullOrWhiteSpace($env:DOCUMENT_FINGERPRINT)) {
             $smokeArgs += @("-DocumentFingerprint", $env:DOCUMENT_FINGERPRINT)
           }
+          if ($env:REQUIRE_TYPE_CHANGE -eq "true") {
+            $smokeArgs += @("-RequireTypeChange")
+          }
 
           & npm.cmd @smokeArgs 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
@@ -284,11 +317,44 @@ jobs:
             Write-Warning "Support bundle collection failed with exit code $LASTEXITCODE. Continuing so existing logs can be uploaded."
           }
 
+      - name: Collect release evidence
+        if: ${{ always() && !inputs.skip_install }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          if ([string]::IsNullOrWhiteSpace($env:PACKAGE_ROOT) -or -not (Test-Path -LiteralPath $env:PACKAGE_ROOT -PathType Container)) {
+            Write-Warning "Skipping release evidence because PACKAGE_ROOT is unavailable."
+            exit 0
+          }
+
+          $supportZip = Get-ChildItem -LiteralPath (Join-Path $env:EVIDENCE_DIR "support") -Filter "*.zip" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          $evidenceArgs = @(
+            "run", "evidence:release:windows", "--",
+            "-PackageRoot", $env:PACKAGE_ROOT,
+            "-ValidateRepoLogPath", (Join-Path $env:EVIDENCE_DIR "validate-repo.log"),
+            "-PackageLogPath", (Join-Path $env:EVIDENCE_DIR "package-release.log"),
+            "-DoctorLogPath", (Join-Path $env:EVIDENCE_DIR "doctor-windows.log"),
+            "-SigningSkipReason", "No release certificate configured for this workflow run.",
+            "-LiveSmokeEvidencePath", $env:EVIDENCE_DIR
+          )
+          if ($supportZip) {
+            $evidenceArgs += @("-SupportBundlePath", $supportZip.FullName)
+          } else {
+            $evidenceArgs += @("-SupportBundleSkipReason", "Support bundle was not collected successfully for this workflow run.")
+          }
+
+          & npm.cmd @evidenceArgs 2>&1 | Tee-Object -FilePath (Join-Path $env:EVIDENCE_DIR "release-evidence.log")
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Release evidence collection failed with exit code $LASTEXITCODE. Existing smoke artifacts will still be uploaded."
+          }
+
       - name: Upload smoke evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: live-revit-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/live-revit-smoke/**
+          path: |
+            artifacts/live-revit-smoke/**
+            artifacts/release-candidate/**
+            artifacts/release-evidence/**
           if-no-files-found: warn
           retention-days: 14

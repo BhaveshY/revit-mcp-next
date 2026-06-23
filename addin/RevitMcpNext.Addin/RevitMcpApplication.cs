@@ -26,6 +26,7 @@ namespace RevitMcpNext.Addin
 
                 _handler = new RevitExternalEventHandler(_queue, new TransactionService(), _generationTracker);
                 _externalEvent = ExternalEvent.Create(_handler);
+                RevitMcpInProcessBridge.Configure(_handler);
 
                 _queue.AttachExternalEvent(_externalEvent);
 
@@ -54,6 +55,7 @@ namespace RevitMcpNext.Addin
             try
             {
                 application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+                RevitMcpInProcessBridge.Clear(_handler);
                 _pipeHost?.Dispose();
                 _queue?.CancelAll("ADDIN_SHUTDOWN", "Revit is shutting down.");
                 _externalEvent?.Dispose();
