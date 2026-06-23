@@ -115,11 +115,18 @@ After install, examples can import the helpers from `%LOCALAPPDATA%\RevitMcpNext
 - `revit.status`
 - `revit.list_documents`
 - `revit.get_levels`
+- `revit.get_current_view`
+- `revit.get_current_view_elements`
+- `revit.get_selection`
+- `revit.analyze_model`
+- `revit.get_material_quantities`
 - `revit.catalog`
 - `revit.query`
 - `revit.preview_change_set`
 - `revit.apply_change_set`
 - `revit.cancel_request`
+
+Read tools are intentionally compact and paginated where results can grow. Use `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters, `revit.analyze_model` for bounded model statistics, and `revit.get_material_quantities` for normalized material takeoffs.
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 

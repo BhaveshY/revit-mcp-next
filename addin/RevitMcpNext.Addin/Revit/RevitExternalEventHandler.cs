@@ -19,6 +19,10 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxQueryLimit = 500;
         private const int MaxCatalogLimit = 200;
+        private const int MaxStatisticsBucketLimit = 200;
+        private const int MaxStatisticsScanLimit = 100000;
+        private const int MaxMaterialLimit = 200;
+        private const int MaxMaterialScanLimit = 100000;
         private const int MaxChangeSetOperations = 50;
         private readonly RevitRequestQueue _queue;
         private readonly TransactionService _transactions;
@@ -108,6 +112,16 @@ namespace RevitMcpNext.Addin.Revit
                             return Success(request, BuildDocumentList(app), sw, generation: GetActiveDocumentGeneration(app));
                         case "get_levels":
                             return HandleGetLevels(app, request, sw);
+                        case "get_current_view":
+                            return HandleGetCurrentView(app, request, sw);
+                        case "get_current_view_elements":
+                            return HandleGetCurrentViewElements(app, request, sw);
+                        case "get_selection":
+                            return HandleGetSelection(app, request, sw);
+                        case "analyze_model":
+                            return HandleAnalyzeModel(app, request, sw);
+                        case "get_material_quantities":
+                            return HandleGetMaterialQuantities(app, request, sw);
                         case "catalog":
                             return HandleCatalog(app, request, sw);
                         case "query":
@@ -207,6 +221,386 @@ namespace RevitMcpNext.Addin.Revit
                 ["scope"] = scope,
                 ["source"] = "revit-addin"
             };
+
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetCurrentView(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_current_view.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            View view = SafeActiveView(document);
+            if (view == null)
+            {
+                return Failure(request, "NO_ACTIVE_VIEW", "The active Revit document does not expose an active view.", sw);
+            }
+
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            bool includeCropBox = GetBool(payload, "includeCropBox", false);
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["view"] = BuildViewInfo(document, view, includeCropBox),
+                ["source"] = "revit-addin"
+            };
+
+            return Success(
+                request,
+                data,
+                sw,
+                metrics: new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    ReturnedCount = 1,
+                    TotalCount = 1
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetCurrentViewElements(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_current_view_elements.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            View view = SafeActiveView(document);
+            if (view == null)
+            {
+                return Failure(request, "NO_ACTIVE_VIEW", "The active Revit document does not expose an active view.", sw);
+            }
+
+            var warnings = new List<BridgeWarning>();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
+            filter["viewId"] = ToElementIdString(view.Id);
+
+            if (GetBool(payload, "includeHidden", false))
+            {
+                warnings.Add(new BridgeWarning
+                {
+                    Code = "INCLUDE_HIDDEN_LIMITED",
+                    Message = "Revit view collectors only return elements visible to the collector; hidden element expansion is not available in this release."
+                });
+            }
+
+            return HandleScopedElementList(
+                app,
+                request,
+                sw,
+                document,
+                generation,
+                payload,
+                filter,
+                warnings,
+                "activeView",
+                view,
+                includeSelection: false);
+        }
+
+        private BridgeResponseEnvelope HandleGetSelection(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_selection.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
+            filter["selectionOnly"] = true;
+
+            return HandleScopedElementList(
+                app,
+                request,
+                sw,
+                document,
+                generation,
+                payload,
+                filter,
+                warnings,
+                "selection",
+                null,
+                includeSelection: true);
+        }
+
+        private BridgeResponseEnvelope HandleAnalyzeModel(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.analyze_model.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            int bucketLimit = Math.Min(MaxStatisticsBucketLimit, Math.Max(1, GetInt(payload, "bucketLimit") ?? 50));
+            int maxElementsScanned = Math.Min(MaxStatisticsScanLimit, Math.Max(100, GetInt(payload, "maxElementsScanned") ?? 50000));
+            bool includeCategoryBreakdown = GetBool(payload, "includeCategoryBreakdown", true);
+            bool includeClassBreakdown = GetBool(payload, "includeClassBreakdown", true);
+            bool includeLevelBreakdown = GetBool(payload, "includeLevelBreakdown", true);
+
+            var collectorSw = Stopwatch.StartNew();
+            bool truncated = false;
+            var elements = new List<Element>();
+            foreach (Element element in new FilteredElementCollector(document).WhereElementIsNotElementType())
+            {
+                if (elements.Count >= maxElementsScanned)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                elements.Add(element);
+            }
+
+            if (truncated)
+            {
+                warnings.Add(new BridgeWarning
+                {
+                    Code = "MODEL_STATISTICS_TRUNCATED",
+                    Message = "Model statistics were computed from the first " + elements.Count.ToString(CultureInfo.InvariantCulture) + " non-type elements. Increase maxElementsScanned for a deeper scan."
+                });
+            }
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["totals"] = new Dictionary<string, object>
+                {
+                    ["elements"] = elements.Count,
+                    ["modelElements"] = elements.Count(IsModelElement),
+                    ["elementTypes"] = CountCollectorElements(new FilteredElementCollector(document).WhereElementIsElementType()),
+                    ["families"] = CountCollectorElements(new FilteredElementCollector(document).OfClass(typeof(Family))),
+                    ["views"] = CountCollectorElements(new FilteredElementCollector(document).OfClass(typeof(View))),
+                    ["sheets"] = CountCollectorElements(new FilteredElementCollector(document).OfClass(typeof(ViewSheet))),
+                    ["levels"] = CountCollectorElements(new FilteredElementCollector(document).OfClass(typeof(Level))),
+                    ["materials"] = CountCollectorElements(new FilteredElementCollector(document).OfClass(typeof(Material)))
+                },
+                ["scannedElements"] = elements.Count,
+                ["bucketLimit"] = bucketLimit,
+                ["truncated"] = truncated,
+                ["source"] = "revit-addin"
+            };
+
+            if (includeCategoryBreakdown) data["byCategory"] = BuildCategoryBuckets(elements, bucketLimit);
+            if (includeClassBreakdown) data["byClass"] = BuildClassBuckets(elements, bucketLimit);
+            if (includeLevelBreakdown) data["byLevel"] = BuildLevelBuckets(document, elements, bucketLimit);
+            collectorSw.Stop();
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = elements.Count,
+                    TotalCount = truncated ? (int?)null : elements.Count
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetMaterialQuantities(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_material_quantities.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
+            IReadOnlyList<string> categoryFilters = GetStringList(payload, "categoryFilters");
+            if (categoryFilters.Count > 0 && GetStringList(filter, "categories").Count == 0)
+            {
+                filter["categories"] = categoryFilters.ToArray();
+            }
+
+            if (GetBool(payload, "selectedElementsOnly", false))
+            {
+                filter["selectionOnly"] = true;
+            }
+
+            int limit = Math.Min(MaxMaterialLimit, Math.Max(1, GetInt(payload, "limit") ?? 50));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includePaint = GetBool(payload, "includePaint", false);
+            int maxElementsScanned = Math.Min(MaxMaterialScanLimit, Math.Max(1, GetInt(payload, "maxElementsScanned") ?? 20000));
+            string materialNameContains = GetString(payload, "materialNameContains");
+
+            var collectorSw = Stopwatch.StartNew();
+            string scope;
+            IEnumerable<Element> scopedElements = CreateFilteredElements(app, document, filter, warnings, out scope);
+            var accumulators = new Dictionary<string, MaterialQuantityAccumulator>(StringComparer.OrdinalIgnoreCase);
+            int elementsScanned = 0;
+            int elementsWithMaterials = 0;
+            bool scanTruncated = false;
+
+            foreach (Element element in scopedElements)
+            {
+                if (elementsScanned >= maxElementsScanned)
+                {
+                    scanTruncated = true;
+                    break;
+                }
+
+                elementsScanned++;
+                if (AccumulateMaterialQuantities(document, element, includePaint, accumulators, warnings))
+                {
+                    elementsWithMaterials++;
+                }
+            }
+
+            if (scanTruncated)
+            {
+                warnings.Add(new BridgeWarning
+                {
+                    Code = "MATERIAL_SCAN_TRUNCATED",
+                    Message = "Material quantities were computed from the first " + elementsScanned.ToString(CultureInfo.InvariantCulture) + " scoped elements. Increase maxElementsScanned for a deeper scan."
+                });
+            }
+
+            List<MaterialQuantityAccumulator> materialized = accumulators.Values
+                .Where(item => string.IsNullOrWhiteSpace(materialNameContains) || item.MaterialName.IndexOf(materialNameContains, StringComparison.OrdinalIgnoreCase) >= 0)
+                .OrderByDescending(item => item.Volume)
+                .ThenByDescending(item => item.Area)
+                .ThenBy(item => item.MaterialName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            List<MaterialQuantityAccumulator> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["scope"] = scope,
+                ["items"] = page.Select(BuildMaterialQuantityItem).ToArray(),
+                ["elementsScanned"] = elementsScanned,
+                ["elementsWithMaterials"] = elementsWithMaterials,
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < materialized.Count || scanTruncated,
+                ["units"] = new Dictionary<string, object>
+                {
+                    ["area"] = "m2",
+                    ["volume"] = "m3"
+                },
+                ["source"] = "revit-addin"
+            };
+
+            if (includeTotalCount) data["totalCount"] = materialized.Count;
+            if (offset + page.Count < materialized.Count) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? materialized.Count : (int?)null
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleScopedElementList(
+            UIApplication app,
+            BridgeRequestEnvelope request,
+            Stopwatch sw,
+            Document document,
+            long generation,
+            Dictionary<string, object> payload,
+            Dictionary<string, object> filter,
+            List<BridgeWarning> warnings,
+            string scopeOverride,
+            View view,
+            bool includeSelection)
+        {
+            var collectorSw = Stopwatch.StartNew();
+            int limit = Math.Min(MaxQueryLimit, Math.Max(1, GetInt(payload, "limit") ?? 50));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            string preset = GetString(payload, "preset");
+            string[] fields = NormalizeFields(GetStringList(payload, "fields"), preset, warnings);
+
+            string scope;
+            IEnumerable<Element> elements = CreateFilteredElements(app, document, filter, warnings, out scope);
+            List<Element> materialized = elements.ToList();
+            int totalCount = materialized.Count;
+            List<Element> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["items"] = page.Select(element => BuildQueryItem(element, fields)).ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < totalCount,
+                ["fields"] = fields,
+                ["units"] = new Dictionary<string, object>
+                {
+                    ["elevation"] = "mm",
+                    ["length"] = "mm"
+                },
+                ["scope"] = string.IsNullOrWhiteSpace(scopeOverride) ? scope : scopeOverride,
+                ["source"] = "revit-addin"
+            };
+
+            if (view != null) data["view"] = BuildViewSummary(view);
+            if (includeSelection)
+            {
+                UIDocument uidocument = app.ActiveUIDocument;
+                bool available = uidocument != null && ReferenceEquals(uidocument.Document, document);
+                data["selection"] = new Dictionary<string, object>
+                {
+                    ["count"] = available ? uidocument.Selection.GetElementIds().Count : 0,
+                    ["available"] = available
+                };
+            }
 
             if (includeTotalCount) data["totalCount"] = totalCount;
             if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
@@ -1593,6 +1987,12 @@ namespace RevitMcpNext.Addin.Revit
             return UnitValue(squareMeters, "m2", "metric");
         }
 
+        private static Dictionary<string, object> VolumeValue(double internalVolume)
+        {
+            double cubicMeters = UnitUtils.ConvertFromInternalUnits(internalVolume, UnitTypeId.CubicMeters);
+            return UnitValue(cubicMeters, "m3", "metric");
+        }
+
         private static Dictionary<string, object> AngleValue(double radians)
         {
             return new Dictionary<string, object>
@@ -1942,6 +2342,11 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.status",
                     "revit.list_documents",
                     "revit.get_levels",
+                    "revit.get_current_view",
+                    "revit.get_current_view_elements",
+                    "revit.get_selection",
+                    "revit.analyze_model",
+                    "revit.get_material_quantities",
                     "revit.catalog",
                     "revit.query",
                     "revit.preview_change_set",
@@ -2342,6 +2747,259 @@ namespace RevitMcpNext.Addin.Revit
             return classes.Any(value => string.Equals(value, className, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static int CountCollectorElements(FilteredElementCollector collector)
+        {
+            try
+            {
+                return collector.ToElementIds().Count;
+            }
+            catch
+            {
+                return collector.ToElements().Count;
+            }
+        }
+
+        private static bool IsModelElement(Element element)
+        {
+            try
+            {
+                return element.Category != null && element.Category.CategoryType == CategoryType.Model;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static object[] BuildCategoryBuckets(IEnumerable<Element> elements, int limit)
+        {
+            return elements
+                .GroupBy(GetCategoryBucketKey, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Take(limit)
+                .Select(group =>
+                {
+                    Element sample = group.FirstOrDefault();
+                    string builtInCategory = sample == null ? string.Empty : GetBuiltInCategoryName(sample);
+                    var bucket = new Dictionary<string, object>
+                    {
+                        ["key"] = group.Key,
+                        ["name"] = sample?.Category?.Name ?? group.Key,
+                        ["count"] = group.Count()
+                    };
+                    if (!string.IsNullOrWhiteSpace(builtInCategory)) bucket["builtInCategory"] = builtInCategory;
+                    return bucket;
+                })
+                .ToArray();
+        }
+
+        private static object[] BuildClassBuckets(IEnumerable<Element> elements, int limit)
+        {
+            return elements
+                .GroupBy(element => element.GetType().Name, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Take(limit)
+                .Select(group => new Dictionary<string, object>
+                {
+                    ["key"] = group.Key,
+                    ["count"] = group.Count()
+                })
+                .ToArray();
+        }
+
+        private static object[] BuildLevelBuckets(Document document, IEnumerable<Element> elements, int limit)
+        {
+            Dictionary<string, string> levelNames = new FilteredElementCollector(document)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .ToDictionary(level => ToElementIdString(level.Id), level => level.Name, StringComparer.OrdinalIgnoreCase);
+
+            return elements
+                .Select(element => ToElementIdString(GetLevelId(element)))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .GroupBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Take(limit)
+                .Select(group => new Dictionary<string, object>
+                {
+                    ["key"] = group.Key,
+                    ["name"] = levelNames.TryGetValue(group.Key, out string name) ? name : group.Key,
+                    ["count"] = group.Count()
+                })
+                .ToArray();
+        }
+
+        private static string GetCategoryBucketKey(Element element)
+        {
+            string builtInCategory = GetBuiltInCategoryName(element);
+            if (!string.IsNullOrWhiteSpace(builtInCategory)) return builtInCategory;
+            return element.Category?.Name ?? "(none)";
+        }
+
+        private static bool AccumulateMaterialQuantities(
+            Document document,
+            Element element,
+            bool includePaint,
+            Dictionary<string, MaterialQuantityAccumulator> accumulators,
+            List<BridgeWarning> warnings)
+        {
+            bool found = AccumulateMaterialIds(document, element, usePaintMaterial: false, accumulators, warnings);
+            if (includePaint)
+            {
+                found = AccumulateMaterialIds(document, element, usePaintMaterial: true, accumulators, warnings) || found;
+            }
+
+            return found;
+        }
+
+        private static bool AccumulateMaterialIds(
+            Document document,
+            Element element,
+            bool usePaintMaterial,
+            Dictionary<string, MaterialQuantityAccumulator> accumulators,
+            List<BridgeWarning> warnings)
+        {
+            ICollection<ElementId> materialIds;
+            try
+            {
+                materialIds = element.GetMaterialIds(usePaintMaterial);
+            }
+            catch (Exception ex)
+            {
+                AddWarningOnce(
+                    warnings,
+                    "MATERIAL_IDS_UNAVAILABLE",
+                    "One or more elements did not expose material IDs: " + ex.Message);
+                return false;
+            }
+
+            if (materialIds == null || materialIds.Count == 0) return false;
+
+            bool found = false;
+            foreach (ElementId materialId in materialIds)
+            {
+                if (!IsValidElementId(materialId)) continue;
+                Material material = document.GetElement(materialId) as Material;
+                string materialIdString = ToElementIdString(materialId);
+                MaterialQuantityAccumulator accumulator;
+                if (!accumulators.TryGetValue(materialIdString, out accumulator))
+                {
+                    accumulator = new MaterialQuantityAccumulator(materialIdString, material);
+                    accumulators[materialIdString] = accumulator;
+                }
+
+                string elementIdString = ToElementIdString(element.Id);
+                accumulator.ElementIds.Add(elementIdString);
+                accumulator.IncrementCategory(element.Category?.Name ?? "(none)");
+                if (usePaintMaterial) accumulator.HasPaint = true;
+                else accumulator.HasRegular = true;
+
+                try
+                {
+                    accumulator.Area += element.GetMaterialArea(materialId, usePaintMaterial);
+                }
+                catch (Exception ex)
+                {
+                    AddWarningOnce(
+                        warnings,
+                        "MATERIAL_AREA_UNAVAILABLE",
+                        "One or more material areas could not be read: " + ex.Message);
+                }
+
+                if (!usePaintMaterial)
+                {
+                    try
+                    {
+                        accumulator.Volume += element.GetMaterialVolume(materialId);
+                    }
+                    catch (Exception ex)
+                    {
+                        AddWarningOnce(
+                            warnings,
+                            "MATERIAL_VOLUME_UNAVAILABLE",
+                            "One or more material volumes could not be read: " + ex.Message);
+                    }
+                }
+
+                found = true;
+            }
+
+            return found;
+        }
+
+        private static Dictionary<string, object> BuildMaterialQuantityItem(MaterialQuantityAccumulator item)
+        {
+            var result = new Dictionary<string, object>
+            {
+                ["materialId"] = item.MaterialId,
+                ["materialName"] = item.MaterialName,
+                ["elementCount"] = item.ElementIds.Count,
+                ["area"] = AreaValue(item.Area),
+                ["volume"] = VolumeValue(item.Volume),
+                ["source"] = item.HasRegular && item.HasPaint ? "mixed" : item.HasPaint ? "paint" : "regular",
+                ["categories"] = item.Categories
+                    .OrderByDescending(pair => pair.Value)
+                    .ThenBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(12)
+                    .Select(pair => new Dictionary<string, object>
+                    {
+                        ["name"] = pair.Key,
+                        ["count"] = pair.Value
+                    })
+                    .ToArray()
+            };
+
+            if (!string.IsNullOrWhiteSpace(item.MaterialClass)) result["materialClass"] = item.MaterialClass;
+            return result;
+        }
+
+        private static void AddWarningOnce(List<BridgeWarning> warnings, string code, string message)
+        {
+            if (warnings.Any(warning => string.Equals(warning.Code, code, StringComparison.OrdinalIgnoreCase))) return;
+            warnings.Add(new BridgeWarning
+            {
+                Code = code,
+                Message = message
+            });
+        }
+
+        private sealed class MaterialQuantityAccumulator
+        {
+            public MaterialQuantityAccumulator(string materialId, Material material)
+            {
+                MaterialId = materialId;
+                string materialName = SafeElementName(material);
+                MaterialName = string.IsNullOrWhiteSpace(materialName) ? materialId : materialName;
+                try
+                {
+                    MaterialClass = material?.MaterialClass;
+                }
+                catch
+                {
+                    MaterialClass = null;
+                }
+            }
+
+            public string MaterialId { get; }
+            public string MaterialName { get; }
+            public string MaterialClass { get; }
+            public double Area { get; set; }
+            public double Volume { get; set; }
+            public bool HasRegular { get; set; }
+            public bool HasPaint { get; set; }
+            public HashSet<string> ElementIds { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, int> Categories { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            public void IncrementCategory(string category)
+            {
+                string key = string.IsNullOrWhiteSpace(category) ? "(none)" : category;
+                Categories[key] = Categories.TryGetValue(key, out int count) ? count + 1 : 1;
+            }
+        }
+
         private static Dictionary<string, object> BuildQueryItem(Element element, IReadOnlyList<string> fields)
         {
             var item = new Dictionary<string, object>
@@ -2564,18 +3222,137 @@ namespace RevitMcpNext.Addin.Revit
             return summary;
         }
 
-        private static Dictionary<string, object> BuildViewSummary(View view)
+        private static Dictionary<string, object> BuildDocumentReference(Document document, long generation)
         {
             var summary = new Dictionary<string, object>
             {
-                ["id"] = ToElementIdString(view.Id),
-                ["name"] = view.Name,
-                ["type"] = view.ViewType.ToString(),
-                ["isGraphical"] = !view.IsTemplate && view.CanBePrinted
+                ["fingerprint"] = ComputeDocumentFingerprint(document),
+                ["title"] = document.Title,
+                ["generation"] = generation
             };
 
-            if (view.Scale > 0) summary["scale"] = view.Scale;
+            if (!string.IsNullOrWhiteSpace(document.PathName)) summary["path"] = document.PathName;
             return summary;
+        }
+
+        private static Dictionary<string, object> BuildViewSummary(View view)
+        {
+            bool canBePrinted = false;
+            try
+            {
+                canBePrinted = view.CanBePrinted;
+            }
+            catch
+            {
+                canBePrinted = false;
+            }
+
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(view.Id),
+                ["uniqueId"] = view.UniqueId,
+                ["name"] = view.Name,
+                ["type"] = view.ViewType.ToString(),
+                ["isGraphical"] = !view.IsTemplate && canBePrinted,
+                ["isTemplate"] = view.IsTemplate,
+                ["canBePrinted"] = canBePrinted
+            };
+
+            try
+            {
+                if (view.Scale > 0) summary["scale"] = view.Scale;
+            }
+            catch
+            {
+                // Some Revit view-like elements do not expose scale.
+            }
+
+            try
+            {
+                summary["detailLevel"] = view.DetailLevel.ToString();
+            }
+            catch
+            {
+                // Detail level is not available on every view type.
+            }
+
+            try
+            {
+                summary["discipline"] = view.Discipline.ToString();
+            }
+            catch
+            {
+                // Discipline is not available on every view type.
+            }
+
+            return summary;
+        }
+
+        private static Dictionary<string, object> BuildViewInfo(Document document, View view, bool includeCropBox)
+        {
+            Dictionary<string, object> info = BuildViewSummary(view);
+
+            try
+            {
+                ElementId viewTemplateId = view.ViewTemplateId;
+                if (IsValidElementId(viewTemplateId))
+                {
+                    info["viewTemplateId"] = ToElementIdString(viewTemplateId);
+                    Element viewTemplate = document.GetElement(viewTemplateId);
+                    if (viewTemplate != null) info["viewTemplateName"] = SafeElementName(viewTemplate);
+                }
+            }
+            catch
+            {
+                // View templates are unavailable for some views.
+            }
+
+            Level associatedLevel = GetAssociatedLevel(view);
+            if (associatedLevel != null)
+            {
+                info["associatedLevelId"] = ToElementIdString(associatedLevel.Id);
+                info["associatedLevelName"] = associatedLevel.Name;
+            }
+
+            try
+            {
+                info["cropBoxActive"] = view.CropBoxActive;
+            }
+            catch
+            {
+                // Crop settings are not exposed on every view type.
+            }
+
+            try
+            {
+                info["cropBoxVisible"] = view.CropBoxVisible;
+            }
+            catch
+            {
+                // Crop settings are not exposed on every view type.
+            }
+
+            if (includeCropBox)
+            {
+                try
+                {
+                    BoundingBoxXYZ cropBox = view.CropBox;
+                    if (cropBox != null)
+                    {
+                        info["cropBox"] = new Dictionary<string, object>
+                        {
+                            ["min"] = PointValue(cropBox.Min),
+                            ["max"] = PointValue(cropBox.Max)
+                        };
+                    }
+                }
+                catch
+                {
+                    // Crop boxes are unavailable for non-graphical views.
+                }
+            }
+
+            return info;
         }
 
         private static Dictionary<string, object> BuildLevelSummary(Level level)
@@ -2588,6 +3365,41 @@ namespace RevitMcpNext.Addin.Revit
                 ["elevation"] = UnitValue(UnitUtils.ConvertFromInternalUnits(level.Elevation, UnitTypeId.Millimeters), "mm", "metric"),
                 ["isBuildingStory"] = IsBuildingStory(level)
             };
+        }
+
+        private static Level GetAssociatedLevel(View view)
+        {
+            if (view == null) return null;
+
+            try
+            {
+                object value = typeof(View).GetProperty("GenLevel")?.GetValue(view, null);
+                Level level = value as Level;
+                if (level != null) return level;
+            }
+            catch
+            {
+                // Fall through to parameter-based lookup.
+            }
+
+            try
+            {
+                if (Enum.IsDefined(typeof(BuiltInParameter), "PLAN_VIEW_LEVEL"))
+                {
+                    var builtInParameter = (BuiltInParameter)Enum.Parse(typeof(BuiltInParameter), "PLAN_VIEW_LEVEL");
+                    Parameter parameter = view.get_Parameter(builtInParameter);
+                    if (parameter != null && parameter.StorageType == StorageType.ElementId)
+                    {
+                        return view.Document.GetElement(parameter.AsElementId()) as Level;
+                    }
+                }
+            }
+            catch
+            {
+                // Some view types do not have an associated level.
+            }
+
+            return null;
         }
 
         private static Dictionary<string, object> UnitValue(double value, string unit, string system)
@@ -2905,6 +3717,13 @@ namespace RevitMcpNext.Addin.Revit
         private static Dictionary<string, object> GetDictionary(Dictionary<string, object> root, string key)
         {
             return root != null && root.TryGetValue(key, out object value) ? value as Dictionary<string, object> : null;
+        }
+
+        private static Dictionary<string, object> CloneDictionary(Dictionary<string, object> source)
+        {
+            return source == null
+                ? new Dictionary<string, object>()
+                : new Dictionary<string, object>(source, StringComparer.OrdinalIgnoreCase);
         }
 
         private static IReadOnlyList<string> GetStringList(Dictionary<string, object> root, string key)

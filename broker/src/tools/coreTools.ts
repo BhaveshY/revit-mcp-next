@@ -30,12 +30,60 @@ const queryFilterSchema = z.object({
   designOptionIds: z.array(boundedId).max(64).optional(),
   parameterEquals: parameterEqualsSchema.optional(),
 });
+const scopedQueryFilterSchema = queryFilterSchema.omit({ viewId: true, selectionOnly: true });
+
+const documentGuardSchema = {
+  documentFingerprint: boundedString.optional().describe("Optional active document fingerprint from revit.status."),
+  expectedGeneration: generationSchema.optional().describe("Expected active document generation from revit.status."),
+};
 
 const querySchema = {
   filter: queryFilterSchema.describe("Revit-native filters to apply before projection."),
   fields: z.array(boundedString).max(32).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
   preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).optional(),
   limit: z.number().int().min(1).max(500).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+};
+
+const currentViewSchema = {
+  ...documentGuardSchema,
+  includeCropBox: z.boolean().default(false).describe("Include active view crop box bounds when Revit exposes them."),
+};
+
+const scopedElementListSchema = {
+  ...documentGuardSchema,
+  filter: scopedQueryFilterSchema.optional().describe("Additional filters within the tool scope. viewId and selectionOnly are set by the tool."),
+  fields: z.array(boundedString).max(32).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
+  preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).optional(),
+  includeHidden: z.boolean().default(false).describe("Request hidden elements when supported by the Revit view collector."),
+  limit: z.number().int().min(1).max(500).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+};
+
+const modelStatisticsSchema = {
+  ...documentGuardSchema,
+  includeCategoryBreakdown: z.boolean().default(true),
+  includeClassBreakdown: z.boolean().default(true),
+  includeLevelBreakdown: z.boolean().default(true),
+  bucketLimit: z.number().int().min(1).max(200).default(50),
+  maxElementsScanned: z
+    .number()
+    .int()
+    .min(100)
+    .max(100000)
+    .default(50000)
+    .describe("Maximum non-type elements to scan for grouped statistics before returning partial results."),
+};
+
+const materialQuantitiesSchema = {
+  ...documentGuardSchema,
+  filter: queryFilterSchema.optional().describe("Optional model scope. Use selectionOnly or viewId for focused takeoffs."),
+  materialNameContains: z.string().min(1).max(128).optional(),
+  includePaint: z.boolean().default(false).describe("Include paint material quantities where Revit reports them."),
+  maxElementsScanned: z.number().int().min(1).max(100000).default(20000),
+  limit: z.number().int().min(1).max(200).default(50),
   cursor: z.string().optional(),
   includeTotalCount: z.boolean().default(false),
 };
@@ -311,6 +359,163 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const request = makeRequest(context.sessionId, "get_levels", "read", args, 10000);
       const response = await context.bridge.getLevels(request, { signal: extra.signal });
       return asToolResult(response, (levels) => `${levels.length} level(s) returned with exact IDs and elevations.`);
+    }
+  );
+
+  server.registerTool(
+    "revit.get_current_view",
+    {
+      title: "Get Current Revit View",
+      description:
+        "Return the active Revit view with stable IDs, view type, scale, detail metadata, generation, and optional crop box.",
+      inputSchema: currentViewSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(context.sessionId, "get_current_view", "read", args, 10000);
+      const response = await context.bridge.getCurrentView(request, { signal: extra.signal });
+      return asToolResult(response, (result) => `Current view: ${result.view.name} (${result.view.type}).`);
+    }
+  );
+
+  server.registerTool(
+    "revit.get_current_view_elements",
+    {
+      title: "Get Current View Elements",
+      description:
+        "Return a bounded, paginated element list from the active Revit view. Use fields/preset and filters to keep responses compact.",
+      inputSchema: scopedElementListSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        fields: args.fields,
+        preset: args.preset,
+        includeHidden: args.includeHidden ?? false,
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_current_view_elements", "read", payload, 30000);
+      const response = await context.bridge.getCurrentViewElements(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} active-view element(s) returned.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_selection",
+    {
+      title: "Get Revit Selection",
+      description: "Return currently selected Revit elements as a bounded, paginated structured list.",
+      inputSchema: scopedElementListSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: { ...(args.filter ?? {}), selectionOnly: true },
+        fields: args.fields,
+        preset: args.preset,
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_selection", "read", payload, 30000);
+      const response = await context.bridge.getSelection(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} selected element(s) returned.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.analyze_model",
+    {
+      title: "Analyze Revit Model",
+      description:
+        "Return compact model statistics: totals plus bounded category, class, and level breakdowns for audit and planning workflows.",
+      inputSchema: modelStatisticsSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(context.sessionId, "analyze_model", "read", args, 60000);
+      const response = await context.bridge.analyzeModel(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `Analyzed ${result.scannedElements} element(s): ${result.totals.elements} total element(s), ${result.totals.materials} material(s).`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_material_quantities",
+    {
+      title: "Get Material Quantities",
+      description:
+        "Return bounded material takeoff quantities with normalized m2/m3 units, paging, filters, and scan limits.",
+      inputSchema: materialQuantitiesSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        materialNameContains: args.materialNameContains,
+        includePaint: args.includePaint ?? false,
+        maxElementsScanned: args.maxElementsScanned ?? 20000,
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_material_quantities", "read", payload, 60000);
+      const response = await context.bridge.getMaterialQuantities(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} material quantity row(s) returned from ${result.scope}.`
+      );
     }
   );
 

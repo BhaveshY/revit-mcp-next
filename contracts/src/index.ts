@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = "2026-06-22" as const;
+export const PROTOCOL_VERSION = "2026-06-23" as const;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
 export type ElementId = string;
@@ -80,10 +80,15 @@ export type BridgeResponse<TData = unknown> = BridgeSuccess<TData> | BridgeFailu
 
 export interface RevitViewSummary {
   id: ElementId;
+  uniqueId?: UniqueId;
   name: string;
   type: string;
   isGraphical: boolean;
+  isTemplate?: boolean;
+  canBePrinted?: boolean;
   scale?: number;
+  detailLevel?: string;
+  discipline?: string;
 }
 
 export interface RevitDocumentSummary {
@@ -167,6 +172,136 @@ export interface QueryResult {
   fields: string[];
   units: Record<string, string>;
   scope: string;
+  source: string;
+}
+
+export interface DocumentReference {
+  fingerprint: string;
+  title: string;
+  path?: string;
+  generation: number;
+}
+
+export interface CurrentViewRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  includeCropBox?: boolean;
+}
+
+export interface CurrentViewResult {
+  document: DocumentReference;
+  view: RevitViewSummary & {
+    viewTemplateId?: ElementId;
+    viewTemplateName?: string;
+    associatedLevelId?: ElementId;
+    associatedLevelName?: string;
+    cropBoxActive?: boolean;
+    cropBoxVisible?: boolean;
+    cropBox?: {
+      min: Point3;
+      max: Point3;
+    };
+  };
+  source: string;
+}
+
+export interface ScopedElementListRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: QueryFilter;
+  fields?: string[];
+  preset?: QueryPreset;
+  includeHidden?: boolean;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+}
+
+export interface ScopedElementListResult extends QueryResult {
+  document: DocumentReference;
+  view?: RevitViewSummary;
+  selection?: {
+    count: number;
+    available: boolean;
+  };
+}
+
+export interface ModelStatisticsRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  includeCategoryBreakdown?: boolean;
+  includeClassBreakdown?: boolean;
+  includeLevelBreakdown?: boolean;
+  bucketLimit?: number;
+  maxElementsScanned?: number;
+}
+
+export interface ModelStatisticsBucket {
+  key: string;
+  name?: string;
+  builtInCategory?: string;
+  count: number;
+}
+
+export interface ModelStatisticsResult {
+  document: DocumentReference;
+  totals: {
+    elements: number;
+    modelElements: number;
+    elementTypes: number;
+    families: number;
+    views: number;
+    sheets: number;
+    levels: number;
+    materials: number;
+  };
+  scannedElements: number;
+  bucketLimit: number;
+  truncated: boolean;
+  byCategory?: ModelStatisticsBucket[];
+  byClass?: ModelStatisticsBucket[];
+  byLevel?: ModelStatisticsBucket[];
+  source: string;
+}
+
+export interface MaterialQuantitiesRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: QueryFilter;
+  materialNameContains?: string;
+  includePaint?: boolean;
+  maxElementsScanned?: number;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+}
+
+export interface MaterialQuantityItem {
+  materialId: ElementId;
+  materialName: string;
+  materialClass?: string;
+  elementCount: number;
+  area: UnitValue;
+  volume: UnitValue;
+  source: "regular" | "paint" | "mixed";
+  categories?: Array<{ name: string; count: number }>;
+}
+
+export interface MaterialQuantitiesResult {
+  document: DocumentReference;
+  scope: string;
+  items: MaterialQuantityItem[];
+  elementsScanned: number;
+  elementsWithMaterials: number;
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  units: {
+    area: "m2";
+    volume: "m3";
+  };
   source: string;
 }
 

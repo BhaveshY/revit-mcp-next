@@ -40,9 +40,88 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.match(result.content[0].text, /Revit bridge connected/);
     assert.equal(result.structuredContent?.data?.connected, true);
 
-    for (const expected of ["revit.catalog", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request"]) {
+    for (const expected of [
+      "revit.get_current_view",
+      "revit.get_current_view_elements",
+      "revit.get_selection",
+      "revit.analyze_model",
+      "revit.get_material_quantities",
+      "revit.catalog",
+      "revit.preview_change_set",
+      "revit.apply_change_set",
+      "revit.cancel_request",
+    ]) {
       assert.ok(tools.tools.find((tool) => tool.name === expected), `${expected} tool should be listed`);
     }
+
+    const currentViewTool = tools.tools.find((tool) => tool.name === "revit.get_current_view");
+    assert.ok(currentViewTool?.inputSchema, "revit.get_current_view should declare inputSchema");
+    assert.equal(currentViewTool.annotations?.readOnlyHint, true);
+    assert.match(JSON.stringify(currentViewTool.inputSchema), /includeCropBox/);
+
+    const currentView = (await client.callTool({
+      name: "revit.get_current_view",
+      arguments: { includeCropBox: false },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { view?: { id?: string; uniqueId?: string; name?: string } } };
+    };
+    assert.equal(currentView.isError, undefined);
+    assert.equal(currentView.structuredContent?.data?.view?.id, "1024");
+    assert.equal(currentView.structuredContent?.data?.view?.uniqueId, "view-1024");
+
+    const viewElements = (await client.callTool({
+      name: "revit.get_current_view_elements",
+      arguments: { preset: "summary", limit: 1, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { scope?: string; returnedCount?: number; totalCount?: number; items?: Array<{ id?: string }> } };
+    };
+    assert.equal(viewElements.isError, undefined);
+    assert.equal(viewElements.structuredContent?.data?.scope, "activeView");
+    assert.equal(viewElements.structuredContent?.data?.returnedCount, 1);
+    assert.equal(viewElements.structuredContent?.data?.totalCount, 1);
+    assert.equal(viewElements.structuredContent?.data?.items?.[0]?.id, "501");
+
+    const selection = (await client.callTool({
+      name: "revit.get_selection",
+      arguments: { limit: 1, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { scope?: string; selection?: { count?: number; available?: boolean } } };
+    };
+    assert.equal(selection.isError, undefined);
+    assert.equal(selection.structuredContent?.data?.scope, "selection");
+    assert.equal(selection.structuredContent?.data?.selection?.count, 1);
+    assert.equal(selection.structuredContent?.data?.selection?.available, true);
+
+    const modelStats = (await client.callTool({
+      name: "revit.analyze_model",
+      arguments: { bucketLimit: 10 },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { totals?: { elements?: number; materials?: number }; byCategory?: Array<{ key?: string }> } };
+    };
+    assert.equal(modelStats.isError, undefined);
+    assert.equal(modelStats.structuredContent?.data?.totals?.elements, 42);
+    assert.equal(modelStats.structuredContent?.data?.totals?.materials, 2);
+    assert.equal(modelStats.structuredContent?.data?.byCategory?.[0]?.key, "OST_Walls");
+
+    const materialQuantities = (await client.callTool({
+      name: "revit.get_material_quantities",
+      arguments: { limit: 1, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: { returnedCount?: number; totalCount?: number; units?: { area?: string; volume?: string }; items?: Array<{ materialId?: string }> };
+      };
+    };
+    assert.equal(materialQuantities.isError, undefined);
+    assert.equal(materialQuantities.structuredContent?.data?.returnedCount, 1);
+    assert.equal(materialQuantities.structuredContent?.data?.totalCount, 1);
+    assert.equal(materialQuantities.structuredContent?.data?.units?.area, "m2");
+    assert.equal(materialQuantities.structuredContent?.data?.units?.volume, "m3");
+    assert.equal(materialQuantities.structuredContent?.data?.items?.[0]?.materialId, "7001");
 
     const catalogTool = tools.tools.find((tool) => tool.name === "revit.catalog");
     assert.ok(catalogTool?.inputSchema, "revit.catalog should declare inputSchema");

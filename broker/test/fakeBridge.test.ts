@@ -29,6 +29,69 @@ test("fake bridge returns bounded query result shape", async () => {
   assert.equal(response.data.items[0]?.id, "501");
 });
 
+test("fake bridge returns read and analysis parity result shapes", async () => {
+  const bridge = new FakeRevitBridgeClient();
+
+  const currentView = await bridge.getCurrentView(
+    makeRequest("test", "get_current_view", "read", { includeCropBox: false }, 10000)
+  );
+  assert.equal(currentView.ok, true);
+  if (!currentView.ok) return;
+  assert.equal(currentView.data.document.fingerprint, "sample-doc-fingerprint");
+  assert.equal(currentView.data.view.id, "1024");
+  assert.equal(currentView.data.view.uniqueId, "view-1024");
+
+  const viewElements = await bridge.getCurrentViewElements(
+    makeRequest(
+      "test",
+      "get_current_view_elements",
+      "read",
+      { filter: { categories: ["OST_Walls"] }, preset: "summary", limit: 1, includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(viewElements.ok, true);
+  if (!viewElements.ok) return;
+  assert.equal(viewElements.data.scope, "activeView");
+  assert.equal(viewElements.data.returnedCount, 1);
+  assert.equal(viewElements.data.totalCount, 1);
+  assert.equal(viewElements.data.items[0]?.id, "501");
+
+  const selection = await bridge.getSelection(
+    makeRequest("test", "get_selection", "read", { filter: { selectionOnly: true }, limit: 1 }, 30000)
+  );
+  assert.equal(selection.ok, true);
+  if (!selection.ok) return;
+  assert.equal(selection.data.scope, "selection");
+  assert.equal(selection.data.selection?.available, true);
+  assert.equal(selection.data.selection?.count, 1);
+
+  const model = await bridge.analyzeModel(
+    makeRequest("test", "analyze_model", "read", { bucketLimit: 10 }, 60000)
+  );
+  assert.equal(model.ok, true);
+  if (!model.ok) return;
+  assert.equal(model.data.totals.elements, 42);
+  assert.equal(model.data.byCategory?.[0]?.key, "OST_Walls");
+
+  const materials = await bridge.getMaterialQuantities(
+    makeRequest(
+      "test",
+      "get_material_quantities",
+      "read",
+      { filter: {}, limit: 1, includeTotalCount: true },
+      60000
+    )
+  );
+  assert.equal(materials.ok, true);
+  if (!materials.ok) return;
+  assert.equal(materials.data.returnedCount, 1);
+  assert.equal(materials.data.totalCount, 1);
+  assert.equal(materials.data.items[0]?.materialId, "7001");
+  assert.equal(materials.data.units.area, "m2");
+  assert.equal(materials.data.units.volume, "m3");
+});
+
 test("fake bridge returns bounded catalog result shape with compatibility paging", async () => {
   const bridge = new FakeRevitBridgeClient();
   const firstPage = await bridge.catalog(

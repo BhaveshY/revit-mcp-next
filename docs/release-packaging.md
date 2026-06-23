@@ -110,7 +110,7 @@ Useful installer switches:
 
 Each install generates or reuses a local pipe auth token at `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The token is generated on the target machine, is not included in release packages, and is loaded by the generated `launch-revit-mcp-next.cmd` as `REVIT_MCP_NEXT_AUTH_TOKEN`. The installer attempts to restrict the auth config and launcher ACLs to the installing user, Administrators, and SYSTEM.
 
-The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.json`. It includes install paths, launcher path, schema path, integration helper paths, tool names, catalog kinds, and write-operation names. It does not include the auth token.
+The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.json`. It includes install paths, launcher path, schema path, integration helper paths, tool names, catalog kinds, and write-operation names. Tool discovery includes compact read/analysis tools for current view, active-view elements, selection, model statistics, and material quantities. It does not include the auth token.
 
 Support bundle:
 

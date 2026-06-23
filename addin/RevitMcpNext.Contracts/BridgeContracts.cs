@@ -5,7 +5,7 @@ namespace RevitMcpNext.Contracts
 {
     public static class BridgeProtocol
     {
-        public const string Version = "2026-06-22";
+        public const string Version = "2026-06-23";
     }
 
     public sealed class BridgeRequestEnvelope

@@ -10,11 +10,19 @@ import type {
   ChangeApplyResult,
   ChangePreviewResult,
   ChangeSetRequest,
+  CurrentViewRequest,
+  CurrentViewResult,
   LevelSummary,
+  MaterialQuantitiesRequest,
+  MaterialQuantitiesResult,
+  ModelStatisticsRequest,
+  ModelStatisticsResult,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  ScopedElementListRequest,
+  ScopedElementListResult,
 } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
 
@@ -54,6 +62,41 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<{ documentFingerprint?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<LevelSummary[]>> {
+    return this.send(request, options);
+  }
+
+  getCurrentView(
+    request: BridgeRequest<CurrentViewRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CurrentViewResult>> {
+    return this.send(request, options);
+  }
+
+  getCurrentViewElements(
+    request: BridgeRequest<ScopedElementListRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScopedElementListResult>> {
+    return this.send(request, options);
+  }
+
+  getSelection(
+    request: BridgeRequest<ScopedElementListRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScopedElementListResult>> {
+    return this.send(request, options);
+  }
+
+  analyzeModel(
+    request: BridgeRequest<ModelStatisticsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelStatisticsResult>> {
+    return this.send(request, options);
+  }
+
+  getMaterialQuantities(
+    request: BridgeRequest<MaterialQuantitiesRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<MaterialQuantitiesResult>> {
     return this.send(request, options);
   }
 

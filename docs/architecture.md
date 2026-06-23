@@ -47,6 +47,7 @@ Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\Revi
 - Writes use one explicit named transaction or a transaction group.
 - No arbitrary code execution in normal mode.
 - Large results are paginated or exposed as MCP resources.
+- Read/analysis tools return bounded structured data for current views, active-view elements, selection, model statistics, material quantities, catalogs, and custom queries.
 - Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, and `set_element_pinned`.
 
 ## External Automation Integrations

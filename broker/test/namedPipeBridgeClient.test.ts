@@ -120,7 +120,7 @@ async function withStatusPipeServer(
           data: {
             connected: true,
             brokerVersion: "test",
-            protocolVersion: "2026-06-22",
+            protocolVersion: "2026-06-23",
             capabilities: ["status"],
             warnings: [],
           },

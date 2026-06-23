@@ -13,11 +13,19 @@ import type {
   ChangeOperation,
   ChangePreviewResult,
   ChangeSetRequest,
+  CurrentViewRequest,
+  CurrentViewResult,
   LevelSummary,
+  MaterialQuantitiesRequest,
+  MaterialQuantitiesResult,
+  ModelStatisticsRequest,
+  ModelStatisticsResult,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  ScopedElementListRequest,
+  ScopedElementListResult,
 } from "@revit-mcp-next/contracts";
 import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
@@ -54,6 +62,34 @@ const levels: LevelSummary[] = [
     name: "Level 2",
     elevation: { value: 3500, unit: "mm", system: "metric" },
     isBuildingStory: true,
+  },
+];
+
+const capabilities = [
+  "revit.status",
+  "revit.list_documents",
+  "revit.get_levels",
+  "revit.get_current_view",
+  "revit.get_current_view_elements",
+  "revit.get_selection",
+  "revit.analyze_model",
+  "revit.get_material_quantities",
+  "revit.catalog",
+  "revit.query",
+  "revit.preview_change_set",
+  "revit.apply_change_set",
+  "revit.cancel_request",
+];
+
+const fakeQueryItems = [
+  {
+    id: "501",
+    uniqueId: "wall-501",
+    category: "OST_Walls",
+    class: "Wall",
+    name: "Basic Wall",
+    typeId: "9001",
+    levelId: "311",
   },
 ];
 
@@ -147,17 +183,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         processId: 1234,
       },
       activeDocument,
-      selection: { count: 0 },
-      capabilities: [
-        "revit.status",
-        "revit.list_documents",
-        "revit.get_levels",
-        "revit.catalog",
-        "revit.query",
-        "revit.preview_change_set",
-        "revit.apply_change_set",
-        "revit.cancel_request",
-      ],
+      selection: { count: 1 },
+      capabilities,
       warnings: [],
     });
   }
@@ -178,23 +205,123 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     return ok(request, levels);
   }
 
+  async getCurrentView(
+    request: BridgeRequest<CurrentViewRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CurrentViewResult>> {
+    maybeAbort(options);
+    return ok(request, {
+      document: documentReference(),
+      view: {
+        ...activeDocument.activeView!,
+        uniqueId: "view-1024",
+        isTemplate: false,
+        canBePrinted: true,
+        detailLevel: "Medium",
+        discipline: "Coordination",
+      },
+      source: "fake-bridge",
+    });
+  }
+
+  async getCurrentViewElements(
+    request: BridgeRequest<ScopedElementListRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScopedElementListResult>> {
+    maybeAbort(options);
+    const result = buildScopedElementList(request, "activeView");
+    result.view = activeDocument.activeView;
+    return ok(request, result);
+  }
+
+  async getSelection(
+    request: BridgeRequest<ScopedElementListRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScopedElementListResult>> {
+    maybeAbort(options);
+    const result = buildScopedElementList(request, "selection");
+    result.selection = { count: 1, available: true };
+    return ok(request, result);
+  }
+
+  async analyzeModel(
+    request: BridgeRequest<ModelStatisticsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelStatisticsResult>> {
+    maybeAbort(options);
+    const bucketLimit = Math.min(request.payload.bucketLimit ?? 50, 200);
+    return ok(request, {
+      document: documentReference(),
+      totals: {
+        elements: 42,
+        modelElements: 18,
+        elementTypes: catalogItems.filter((item) => item.kind === "elementTypes").length,
+        families: 2,
+        views: 3,
+        sheets: 1,
+        levels: levels.length,
+        materials: 2,
+      },
+      scannedElements: 42,
+      bucketLimit,
+      truncated: false,
+      byCategory: request.payload.includeCategoryBreakdown === false ? undefined : [
+        { key: "OST_Walls", name: "Walls", builtInCategory: "OST_Walls", count: 1 },
+      ],
+      byClass: request.payload.includeClassBreakdown === false ? undefined : [
+        { key: "Wall", count: 1 },
+      ],
+      byLevel: request.payload.includeLevelBreakdown === false ? undefined : [
+        { key: "311", name: "Level 1", count: 1 },
+      ],
+      source: "fake-bridge",
+    });
+  }
+
+  async getMaterialQuantities(
+    request: BridgeRequest<MaterialQuantitiesRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<MaterialQuantitiesResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 200);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const items = [
+      {
+        materialId: "7001",
+        materialName: "Concrete - Cast-in-Place",
+        materialClass: "Concrete",
+        elementCount: 2,
+        area: { value: 24.5, unit: "m2", system: "metric" as const },
+        volume: { value: 3.2, unit: "m3", system: "metric" as const },
+        source: "regular" as const,
+        categories: [{ name: "OST_Walls", count: 1 }, { name: "OST_Floors", count: 1 }],
+      },
+    ].filter((item) => !request.payload.materialNameContains || containsIgnoreCase(item.materialName, request.payload.materialNameContains));
+    const page = items.slice(offset, offset + limit);
+    const truncated = offset + page.length < items.length;
+    return ok(request, {
+      document: documentReference(),
+      scope: request.payload.filter?.selectionOnly ? "selection" : request.payload.filter?.viewId ? `view:${request.payload.filter.viewId}` : "activeDocument",
+      items: page,
+      elementsScanned: 3,
+      elementsWithMaterials: 2,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? items.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      units: { area: "m2", volume: "m3" },
+      source: "fake-bridge",
+    });
+  }
+
   async query(
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>> {
     maybeAbort(options);
     const limit = Math.min(request.payload.limit ?? 50, 500);
-    const items = [
-      {
-        id: "501",
-        uniqueId: "wall-501",
-        category: "OST_Walls",
-        class: "Wall",
-        name: "Basic Wall",
-        typeId: "9001",
-        levelId: "311",
-      },
-    ].slice(0, limit);
+    const items = fakeQueryItems.slice(0, limit);
 
     return ok(request, {
       items,
@@ -312,6 +439,35 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   dispose(): void {
     // No resources.
   }
+}
+
+function documentReference() {
+  return {
+    fingerprint: activeDocument.fingerprint,
+    title: activeDocument.title,
+    path: activeDocument.path,
+    generation: activeDocument.generation,
+  };
+}
+
+function buildScopedElementList(
+  request: BridgeRequest<ScopedElementListRequest>,
+  scope: string
+): ScopedElementListResult {
+  const limit = Math.min(request.payload.limit ?? 50, 500);
+  const items = fakeQueryItems.slice(0, limit);
+  return {
+    document: documentReference(),
+    items,
+    totalCount: request.payload.includeTotalCount ? fakeQueryItems.length : undefined,
+    returnedCount: items.length,
+    limit,
+    truncated: false,
+    fields: request.payload.fields ?? ["id", "category", "class", "name"],
+    units: {},
+    scope,
+    source: "fake-bridge",
+  };
 }
 
 function buildCatalogTarget(elementId?: string) {

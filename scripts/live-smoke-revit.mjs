@@ -13,6 +13,11 @@ const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
 const REQUIRED_TOOLS = [
   "revit.status",
   "revit.get_levels",
+  "revit.get_current_view",
+  "revit.get_current_view_elements",
+  "revit.get_selection",
+  "revit.analyze_model",
+  "revit.get_material_quantities",
   "revit.catalog",
   "revit.query",
   "revit.preview_change_set",
@@ -100,6 +105,59 @@ async function main() {
     console.log(
       `Status OK: ${activeDocument.title ?? "(untitled)"} at generation ${startingGeneration ?? "(unknown)"}`
     );
+
+    const documentGuard = compactObject({
+      documentFingerprint,
+      expectedGeneration: startingGeneration,
+    });
+    const currentView = await callRequiredTool(client, "revit.get_current_view", {
+      ...documentGuard,
+      includeCropBox: false,
+    });
+    assert(currentView?.document?.fingerprint === documentFingerprint, "revit.get_current_view returned a different document.");
+    assert(typeof currentView?.view?.id === "string" && currentView.view.id.length > 0, "revit.get_current_view did not return a view id.");
+    console.log(`Current view OK: ${currentView.view.name ?? "(unnamed view)"} (${currentView.view.id})`);
+
+    const currentViewElements = await callRequiredTool(client, "revit.get_current_view_elements", {
+      ...documentGuard,
+      preset: "summary",
+      limit: 5,
+      includeTotalCount: false,
+    });
+    assert(Array.isArray(currentViewElements.items), "revit.get_current_view_elements did not return an items array.");
+    assert(currentViewElements.returnedCount === currentViewElements.items.length, "revit.get_current_view_elements returnedCount did not match items length.");
+    assert(Number.isInteger(currentViewElements.limit) && currentViewElements.limit > 0, "revit.get_current_view_elements did not return a positive limit.");
+    console.log(`Current view elements OK: ${currentViewElements.returnedCount} sample element(s)`);
+
+    const selection = await callRequiredTool(client, "revit.get_selection", {
+      ...documentGuard,
+      preset: "summary",
+      limit: 5,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(selection.items), "revit.get_selection did not return an items array.");
+    assert(selection.selection && typeof selection.selection.available === "boolean", "revit.get_selection did not return selection metadata.");
+    console.log(`Selection OK: ${selection.selection.count ?? selection.items.length} selected element(s)`);
+
+    const modelStats = await callRequiredTool(client, "revit.analyze_model", {
+      ...documentGuard,
+      bucketLimit: 10,
+      maxElementsScanned: 10000,
+    });
+    assert(Number.isInteger(modelStats?.totals?.elements), "revit.analyze_model did not return totals.elements.");
+    assert(Number.isInteger(modelStats?.scannedElements), "revit.analyze_model did not return scannedElements.");
+    console.log(`Model analysis OK: scanned ${modelStats.scannedElements} element(s)`);
+
+    const materialQuantities = await callRequiredTool(client, "revit.get_material_quantities", {
+      ...documentGuard,
+      limit: 5,
+      maxElementsScanned: 10000,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(materialQuantities.items), "revit.get_material_quantities did not return an items array.");
+    assert(materialQuantities.returnedCount === materialQuantities.items.length, "revit.get_material_quantities returnedCount did not match items length.");
+    assert(materialQuantities.units?.area === "m2" && materialQuantities.units?.volume === "m3", "revit.get_material_quantities did not return normalized units.");
+    console.log(`Material quantities OK: ${materialQuantities.returnedCount} material row(s)`);
 
     const levels = await callRequiredTool(client, "revit.get_levels", { documentFingerprint });
     assert(Array.isArray(levels), "revit.get_levels returned an unexpected result shape.");
@@ -905,23 +963,24 @@ function printHelp() {
 
 Runs a live Revit MCP smoke against the active Revit project:
   1. revit.status
-  2. revit.get_levels
-  3. revit.catalog for wall and floor types
-  4. preview/apply create_grid
-  5. blocked preview for duplicate create_grid
-  6. preview/apply create_floor
-  7. preview/apply create_wall
-  8. revit.query for created elements
-  9. revit.catalog for compatible wall type changes
-  10. preview/apply change_element_type when an alternate valid type exists
-  11. preview/apply move_element
-  12. assert the wall Y location changed by --move-y-mm
-  13. preview/apply rotate_element
-  14. preview/apply copy_element
-  15. preview/apply set_element_pinned true
-  16. blocked preview for moving a pinned element
-  17. rejected apply for mismatched changeSetHash
-  18. preview/apply set_element_pinned false
+  2. read smoke: current view, current-view elements, selection, model analysis, material quantities
+  3. revit.get_levels
+  4. revit.catalog for wall and floor types
+  5. preview/apply create_grid
+  6. blocked preview for duplicate create_grid
+  7. preview/apply create_floor
+  8. preview/apply create_wall
+  9. revit.query for created elements
+  10. revit.catalog for compatible wall type changes
+  11. preview/apply change_element_type when an alternate valid type exists
+  12. preview/apply move_element
+  13. assert the wall Y location changed by --move-y-mm
+  14. preview/apply rotate_element
+  15. preview/apply copy_element
+  16. preview/apply set_element_pinned true
+  17. blocked preview for moving a pinned element
+  18. rejected apply for mismatched changeSetHash
+  19. preview/apply set_element_pinned false
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

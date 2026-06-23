@@ -517,7 +517,7 @@ $clientDiscoveryContent = [ordered] @{
     product = "revit-mcp-next"
     version = $releaseVersion
     installRoot = (Get-FullPath $InstallRoot)
-    protocolVersion = "2026-06-22"
+    protocolVersion = "2026-06-23"
     pipeName = "revit-mcp-next"
     launcherPath = (Get-FullPath $launcher)
     authConfigPath = (Get-FullPath $authConfig)
@@ -531,6 +531,11 @@ $clientDiscoveryContent = [ordered] @{
         "revit.status",
         "revit.list_documents",
         "revit.get_levels",
+        "revit.get_current_view",
+        "revit.get_current_view_elements",
+        "revit.get_selection",
+        "revit.analyze_model",
+        "revit.get_material_quantities",
         "revit.catalog",
         "revit.query",
         "revit.preview_change_set",
