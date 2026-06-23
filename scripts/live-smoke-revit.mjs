@@ -197,18 +197,43 @@ async function main() {
     );
 
     const runId = makeRunId();
+    const smokeLevelElevationMm = chooseSmokeLevelElevationMm(levels, levelElevationMm);
+    const levelName = `MCP Level ${runId}`;
+    const levelOperation = {
+      id: "create-smoke-level",
+      type: "create_level",
+      name: levelName,
+      elevation: unitMm(smokeLevelElevationMm),
+    };
+    const levelTransaction = makeTransactionName(options.transactionPrefix, "create level", runId);
+    const levelChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: startingGeneration,
+      transactionName: levelTransaction,
+      operations: [levelOperation],
+    });
+
+    const levelPreview = await previewChangeSet(client, levelChangeSet, "create_level");
+    const levelApply = await applyChangeSet(client, levelChangeSet, levelPreview, "create_level");
+    const levelChange = findChange(levelApply, "create_level");
+    const smokeLevelId = getCreatedElementId(levelChange);
+    assert(smokeLevelId, "create_level applied but the created level element ID was not returned.");
+    await queryElementById(client, "Level", smokeLevelId);
+    console.log(`Create level OK: ${levelName} (${smokeLevelId}) at ${smokeLevelElevationMm} mm`);
+
     const gridName = `MCP-${runId}`;
+    const gridGeneration = numericOrUndefined(levelApply.generation);
     const gridOperation = {
       id: "create-smoke-grid",
       type: "create_grid",
       name: gridName,
-      start: pointMm(-1000, -1000, levelElevationMm),
-      end: pointMm(options.wallLengthMm + 1000, -1000, levelElevationMm),
+      start: pointMm(-1000, -1000, smokeLevelElevationMm),
+      end: pointMm(options.wallLengthMm + 1000, -1000, smokeLevelElevationMm),
     };
     const gridTransaction = makeTransactionName(options.transactionPrefix, "create grid", runId);
     const gridChangeSet = compactObject({
       documentFingerprint,
-      expectedGeneration: startingGeneration,
+      expectedGeneration: gridGeneration,
       transactionName: gridTransaction,
       operations: [gridOperation],
     });
@@ -236,12 +261,12 @@ async function main() {
     const floorOperation = {
       id: "create-smoke-floor",
       type: "create_floor",
-      levelId: String(level.id),
+      levelId: String(smokeLevelId),
       outline: [
-        pointMm(0, -options.wallLengthMm - 1000, levelElevationMm),
-        pointMm(options.wallLengthMm, -options.wallLengthMm - 1000, levelElevationMm),
-        pointMm(options.wallLengthMm, -1000, levelElevationMm),
-        pointMm(0, -1000, levelElevationMm),
+        pointMm(0, -options.wallLengthMm - 1000, smokeLevelElevationMm),
+        pointMm(options.wallLengthMm, -options.wallLengthMm - 1000, smokeLevelElevationMm),
+        pointMm(options.wallLengthMm, -1000, smokeLevelElevationMm),
+        pointMm(0, -1000, smokeLevelElevationMm),
       ],
       structural: false,
     };
@@ -265,9 +290,9 @@ async function main() {
     const wallOperation = {
       id: "create-smoke-wall",
       type: "create_wall",
-      levelId: String(level.id),
-      start: pointMm(0, 0, levelElevationMm),
-      end: pointMm(options.wallLengthMm, 0, levelElevationMm),
+      levelId: String(smokeLevelId),
+      start: pointMm(0, 0, smokeLevelElevationMm),
+      end: pointMm(options.wallLengthMm, 0, smokeLevelElevationMm),
       height: unitMm(options.wallHeightMm),
       structural: false,
       flip: false,
@@ -290,6 +315,22 @@ async function main() {
     const queriedWall = await queryWallById(client, wallId);
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
 
+    const parameterGeneration = numericOrUndefined(createApply.generation);
+    const parameterValue = `MCP-${runId}`;
+    const parameterResult = await applyFirstReadySetParameter(client, {
+      documentFingerprint,
+      expectedGeneration: parameterGeneration,
+      transactionName: makeTransactionName(options.transactionPrefix, "set wall parameter", runId),
+      elementId: wallId,
+      value: parameterValue,
+      candidateNames: ["Comments", "Kommentare", "Mark", "Kennzeichen", "Markierung"],
+    });
+    const parameterApply = parameterResult.apply;
+    const parameterChange = findChange(parameterApply, "set_parameter");
+    assertParameterValue(parameterChange, parameterValue);
+    await queryElementByParameter(client, "Wall", wallId, parameterResult.parameterName, parameterValue);
+    console.log(`Set parameter OK: wall ${wallId} ${parameterResult.parameterName}=${parameterValue}`);
+
     const compatibleWallTypes = await catalog(client, {
       kind: "elementTypes",
       filter: { forElementId: wallId },
@@ -308,7 +349,7 @@ async function main() {
 
     let changeTypeApply = undefined;
     if (alternateWallType) {
-      const changeTypeGeneration = numericOrUndefined(createApply.generation);
+      const changeTypeGeneration = numericOrUndefined(parameterApply.generation);
       const changeTypeOperation = {
         id: "change-smoke-wall-type",
         type: "change_element_type",
@@ -336,7 +377,7 @@ async function main() {
       console.log("Change wall type skipped: no alternate compatible wall type was available in this project.");
     }
 
-    const moveGeneration = numericOrUndefined(changeTypeApply?.generation ?? createApply.generation);
+    const moveGeneration = numericOrUndefined(changeTypeApply?.generation ?? parameterApply.generation);
     const moveOperation = {
       id: "move-smoke-wall",
       type: "move_element",
@@ -361,7 +402,7 @@ async function main() {
     console.log(`Post-move query OK: wall ${movedWall.id} is still queryable`);
 
     const rotationGeneration = numericOrUndefined(moveApply.generation);
-    const axisStart = pointFromLocationSnapshot(moveChange?.after?.location, pointMm(0, options.moveYMm, levelElevationMm));
+    const axisStart = pointFromLocationSnapshot(moveChange?.after?.location, pointMm(0, options.moveYMm, smokeLevelElevationMm));
     const axisEnd = offsetPointMm(axisStart, 0, 0, 1000);
     const rotateOperation = {
       id: "rotate-smoke-wall",
@@ -769,6 +810,48 @@ async function queryWallById(client, wallId) {
   return queryElementById(client, "Wall", wallId);
 }
 
+async function applyFirstReadySetParameter(
+  client,
+  { documentFingerprint, expectedGeneration, transactionName, elementId, value, candidateNames }
+) {
+  const blockedMessages = [];
+  for (const parameterName of candidateNames) {
+    const operation = {
+      id: `set-smoke-wall-${parameterName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      type: "set_parameter",
+      elementId,
+      parameterName,
+      value,
+    };
+    const changeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration,
+      transactionName,
+      operations: [operation],
+    });
+    const preview = await callRequiredTool(client, "revit.preview_change_set", changeSet);
+    assert(Array.isArray(preview.changes), "set_parameter preview did not return changes.");
+
+    if (preview.ready === true && preview.changes.every((change) => change.status === "ready")) {
+      assert(preview.previewId, "set_parameter preview did not return previewId.");
+      assert(preview.changeSetHash, "set_parameter preview did not return changeSetHash.");
+      console.log(`Preview OK: set_parameter (${preview.previewId}) using ${parameterName}`);
+      const apply = await applyChangeSet(client, changeSet, preview, "set_parameter");
+      return { apply, parameterName };
+    }
+
+    blockedMessages.push(`${parameterName}: ${formatChanges(preview.changes)}`);
+  }
+
+  throw new Error(
+    [
+      "No candidate writable text parameter was available for set_parameter smoke.",
+      "Tried: " + candidateNames.join(", "),
+      blockedMessages.join("\n"),
+    ].join("\n")
+  );
+}
+
 async function queryElementById(client, className, elementId) {
   let cursor = undefined;
   let scanned = 0;
@@ -791,9 +874,46 @@ async function queryElementById(client, className, elementId) {
   throw new Error(`Created ${className} ${elementId} was not found by revit.query after scanning ${scanned} item(s).`);
 }
 
+async function queryElementByParameter(client, className, elementId, parameterName, value) {
+  let cursor = undefined;
+  let scanned = 0;
+  do {
+    const query = await callRequiredTool(client, "revit.query", {
+      filter: {
+        classes: [className],
+        parameterEquals: {
+          [parameterName]: value,
+        },
+      },
+      fields: ["id", "class", "name", `param:${parameterName}`],
+      limit: 500,
+      cursor,
+      includeTotalCount: true,
+    });
+
+    const items = Array.isArray(query.items) ? query.items : [];
+    scanned += items.length;
+    const match = items.find((item) => String(item.id) === String(elementId));
+    if (match) return match;
+    cursor = typeof query.cursor === "string" && query.cursor.length > 0 ? query.cursor : undefined;
+  } while (cursor);
+
+  throw new Error(
+    `${className} ${elementId} was not found by revit.query with ${parameterName}=${value} after scanning ${scanned} matching item(s).`
+  );
+}
+
 function chooseLevel(levels) {
   const buildingStory = levels.find((level) => level?.isBuildingStory);
   return buildingStory ?? levels[0];
+}
+
+function chooseSmokeLevelElevationMm(levels, fallbackElevationMm) {
+  const elevations = levels
+    .map((level) => Number(level?.elevation?.value))
+    .filter((value) => Number.isFinite(value));
+  const highest = elevations.length > 0 ? Math.max(...elevations) : fallbackElevationMm;
+  return highest + 3000;
 }
 
 function findChange(result, type) {
@@ -821,6 +941,14 @@ function assertPinnedState(change, expectedPinned) {
   assert(
     change.after.pinned === expectedPinned,
     `Expected pinned=${expectedPinned} but observed pinned=${String(change.after.pinned)}.`
+  );
+}
+
+function assertParameterValue(change, expectedValue) {
+  assert(change?.after, "set_parameter apply did not include after state.");
+  assert(
+    String(change.after.value) === String(expectedValue),
+    `Expected set_parameter after.value=${expectedValue} but observed ${String(change.after.value)}.`
   );
 }
 
@@ -978,21 +1106,23 @@ Runs a live Revit MCP smoke against the active Revit project:
   2. read smoke: current view, current-view elements, selection, model analysis, material quantities
   3. revit.get_levels
   4. revit.catalog for wall and floor types
-  5. preview/apply create_grid
-  6. blocked preview for duplicate create_grid
-  7. preview/apply create_floor
-  8. preview/apply create_wall
-  9. revit.query for created elements
-  10. revit.catalog for compatible wall type changes
-  11. preview/apply change_element_type when an alternate valid type exists
-  12. preview/apply move_element
-  13. assert the wall Y location changed by --move-y-mm
-  14. preview/apply rotate_element
-  15. preview/apply copy_element
-  16. preview/apply set_element_pinned true
-  17. blocked preview for moving a pinned element
-  18. rejected apply for mismatched changeSetHash
-  19. preview/apply set_element_pinned false
+  5. preview/apply create_level
+  6. preview/apply create_grid
+  7. blocked preview for duplicate create_grid
+  8. preview/apply create_floor
+  9. preview/apply create_wall
+  10. revit.query for created elements
+  11. preview/apply set_parameter on the created wall
+  12. revit.catalog for compatible wall type changes
+  13. preview/apply change_element_type when an alternate valid type exists
+  14. preview/apply move_element
+  15. assert the wall Y location changed by --move-y-mm
+  16. preview/apply rotate_element
+  17. preview/apply copy_element
+  18. preview/apply set_element_pinned true
+  19. blocked preview for moving a pinned element
+  20. rejected apply for mismatched changeSetHash
+  21. preview/apply set_element_pinned false
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
