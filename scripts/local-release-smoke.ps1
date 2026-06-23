@@ -28,7 +28,7 @@ function Show-Help {
 Usage:
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\local-release-smoke.ps1 [options]
 
-Builds a staged release candidate, installs it into a run-local install root,
+Builds a staged release candidate, installs it into a stable per-year install root,
 copies a disposable RVT model, launches Revit when needed, runs doctor/live
 smoke/support/evidence, and writes all artifacts under a short local work root.
 
@@ -41,7 +41,7 @@ Options:
   -RevitApiPath <path>       Directory containing RevitAPI.dll. Default: Program Files Autodesk Revit <year>.
   -RevitExePath <path>       Revit.exe path. Default: Program Files Autodesk Revit <year>\Revit.exe.
   -ModelPath <path>          Disposable RVT to copy before launch. Default: Dynamo sample RVT for the year.
-  -InstallRoot <path>        Install root. Default: current run directory\install.
+  -InstallRoot <path>        Install root. Default: output root\install\<year>.
   -OutputRoot <path>         Evidence root. Default: C:\tmp\revit-mcp-next-smoke when writable.
   -PackageRoot <path>        Existing staged package root when using -SkipBuild.
   -StartupWaitSeconds <n>    Wait after Revit starts before doctor/smoke. Default: 120.
@@ -274,17 +274,39 @@ function Invoke-BridgeReadinessProbe {
 
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
+        $stdoutPath = Join-Path (Split-Path -Parent $LogPath) "bridge-readiness-stdout-$PID.tmp"
+        $stderrPath = Join-Path (Split-Path -Parent $LogPath) "bridge-readiness-stderr-$PID.tmp"
         try {
-            & $node @probeArgs 2>&1 | Tee-Object -FilePath $LogPath -Append
+            & $node @probeArgs > $stdoutPath 2> $stderrPath
             $exitCode = $LASTEXITCODE
+            $stdoutText = ""
+            $stderrText = ""
+            if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) {
+                $stdoutText = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+                $stderrText = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+            }
+            if (-not [string]::IsNullOrWhiteSpace($stdoutText)) {
+                Add-Content -LiteralPath $LogPath -Value $stdoutText -Encoding UTF8
+            }
+            if (-not [string]::IsNullOrWhiteSpace($stderrText)) {
+                Add-Content -LiteralPath $LogPath -Value $stderrText -Encoding UTF8
+            }
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
+            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
         }
 
         if ($exitCode -eq 0) {
+            if (-not [string]::IsNullOrWhiteSpace($stdoutText)) {
+                Write-Host $stdoutText.Trim()
+            }
             Write-Step "Revit bridge is ready."
             return
         }
+
+        Write-Step "Revit bridge is not ready yet (exit code $exitCode)."
 
         $runningProbe = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $runningProbe) {
@@ -343,8 +365,9 @@ $packageOutputRoot = Join-Path $runRoot "pkg"
 $supportRoot = Join-Path $runRoot "support"
 $releaseEvidenceRoot = Join-Path $runRoot "rel-evidence"
 
-if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-    $InstallRoot = Join-Path $runRoot "install"
+$defaultInstallRoot = [string]::IsNullOrWhiteSpace($InstallRoot)
+if ($defaultInstallRoot) {
+    $InstallRoot = Join-Path $outputRootFull "install\$RevitYear"
 }
 $installRootFull = Get-FullPath $InstallRoot
 $launcherPath = Join-Path $installRootFull "launch-revit-mcp-next.cmd"
@@ -355,6 +378,8 @@ Assert-PathChild $runRoot $evidenceDir "evidence directory"
 Assert-PathChild $runRoot $packageOutputRoot "package output root"
 if ($installRootFull.StartsWith((Add-TrailingSeparator $runRoot), [System.StringComparison]::OrdinalIgnoreCase)) {
     Assert-PathChild $runRoot $installRootFull "install root"
+} elseif ($defaultInstallRoot) {
+    Assert-PathChild $outputRootFull $installRootFull "install root"
 }
 
 New-Item -ItemType Directory -Force -Path $evidenceDir, $logsDir | Out-Null
@@ -368,6 +393,7 @@ $runInputs = [ordered] @{
     sourceModelPath = $sourceModel
     disposableModelPath = $disposableModel
     installRoot = $installRootFull
+    defaultInstallRoot = $defaultInstallRoot
     launcherPath = $launcherPath
     packageRoot = $PackageRoot
     outputRoot = $outputRootFull
@@ -388,7 +414,7 @@ Write-Step "Source model: $sourceModel"
 Write-Step "Install root: $installRootFull"
 
 $runningAtStart = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($runningAtStart -and -not $SkipInstall) {
+if (-not $DryRun -and $runningAtStart -and -not $SkipInstall) {
     throw "Revit is already running as process id $($runningAtStart.Id). Close Revit before installing a fresh package, or rerun with -SkipInstall to smoke the already installed add-in."
 }
 
@@ -420,7 +446,7 @@ if (-not $DryRun -and -not $SkipBuild -and [string]::IsNullOrWhiteSpace($Package
 
 if (-not $SkipInstall) {
     $runningForInstall = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($runningForInstall) {
+    if (-not $DryRun -and $runningForInstall) {
         throw "Revit is already running as process id $($runningForInstall.Id). Close Revit before installing, or rerun with -SkipInstall to smoke the already installed add-in."
     }
 
