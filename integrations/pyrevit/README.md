@@ -44,7 +44,13 @@ When using `pyrevit run` for unattended evidence, set `REVIT_MCP_NEXT_PYREVIT_EV
 npm run pyrevit:hosts -- -Builds 20230106_1515,20241105_1515
 ```
 
-The packaged release runner wraps those steps and validates the raw JSON:
+The packaged release runner wraps those steps and validates the raw JSON. For
+unattended `pyrevit run` evidence, the wrapper also stages a temporary
+`RevitMcpNext.addin` through pyRevit `--import` and pins
+`REVIT_MCP_NEXT_INSTALL_ROOT`/`REVIT_MCP_NEXT_AUTH_CONFIG` so the runner-launched
+Revit process loads the installed Revit MCP Next add-in before the smoke script
+calls the in-process bridge. This is required evidence: host smoke fails if the
+bridge reports the Python direct fallback instead of `configuredAddin`.
 
 ```powershell
 npm run smoke:pyrevit-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\pyrevit.json -SeedHostsCache

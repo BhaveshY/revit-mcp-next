@@ -8,6 +8,8 @@ param(
     [string] $PyRevitPath = "",
     [string[]] $Builds = @(),
     [switch] $SeedHostsCache,
+    [switch] $SkipRunnerAddinImport,
+    [switch] $KeepRunnerAddinImport,
     [switch] $ValidateOnly,
     [switch] $AllowFailed,
     [switch] $DryRun,
@@ -51,6 +53,10 @@ function Resolve-OptionalFile($Path) {
     return Resolve-RequiredFile $Path "Configured file"
 }
 
+function Escape-XmlText($Value) {
+    return [System.Security.SecurityElement]::Escape([string] $Value)
+}
+
 function Resolve-PyRevitPath {
     if (-not [string]::IsNullOrWhiteSpace($PyRevitPath)) {
         if ($DryRun) {
@@ -77,12 +83,69 @@ function Resolve-PyRevitPath {
     throw "pyrevit.exe was not found. Pass -PyRevitPath or install pyRevit."
 }
 
-function Get-DefaultInstallRoot {
-    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        throw "LOCALAPPDATA is not set. Pass -InstallRoot with the installed Revit MCP Next root."
+function Get-RunnerImportRoot($EvidenceFull) {
+    $parent = Split-Path -Parent $EvidenceFull
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        $parent = (Get-Location).Path
     }
 
-    return Join-Path $env:LOCALAPPDATA "RevitMcpNext"
+    return Join-Path $parent "pyrevit-runner-addin-import"
+}
+
+function Write-RunnerAddinImport($ImportRoot, $InstallRoot) {
+    $addinAssembly = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll"
+    $addinAssemblyFull = Resolve-RequiredFile $addinAssembly "Installed Revit MCP Next add-in assembly"
+
+    if (Test-Path -LiteralPath $ImportRoot -PathType Container) {
+        Remove-Item -LiteralPath $ImportRoot -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Force -Path $ImportRoot | Out-Null
+    $manifestPath = Join-Path $ImportRoot "RevitMcpNext.addin"
+    $manifest = @"
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Revit MCP Next</Name>
+    <Assembly>$(Escape-XmlText $addinAssemblyFull)</Assembly>
+    <ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>
+    <FullClassName>RevitMcpNext.Addin.RevitMcpApplication</FullClassName>
+    <VendorId>BHVY</VendorId>
+    <VendorDescription>BhaveshY Revit MCP Next</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+"@
+    Set-Content -LiteralPath $manifestPath -Value $manifest -Encoding UTF8
+
+    return $manifestPath
+}
+
+function Get-DefaultInstallRoot {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $candidates.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext")) | Out-Null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "RevitMcpNext")) | Out-Null
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            return (Get-FullPath $candidate)
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return Join-Path $env:LOCALAPPDATA "RevitMcpNext"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        return Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext"
+    }
+
+    throw "APPDATA and LOCALAPPDATA are not set. Pass -InstallRoot with the installed Revit MCP Next root."
 }
 
 function Get-DefaultEvidencePath {
@@ -177,6 +240,13 @@ if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
     $EvidencePath = Get-DefaultEvidencePath
 }
 $evidenceFull = Get-FullPath $EvidencePath
+$authConfigFull = Get-FullPath (Join-Path $installRootFull "config\auth.env")
+$runnerImportRoot = if ($SkipRunnerAddinImport) { "" } else { Get-RunnerImportRoot $evidenceFull }
+$runnerImportManifestPath = if ([string]::IsNullOrWhiteSpace($runnerImportRoot)) {
+    ""
+} else {
+    Join-Path $runnerImportRoot "RevitMcpNext.addin"
+}
 
 $arguments = New-Object System.Collections.Generic.List[string]
 $arguments.Add("run") | Out-Null
@@ -186,6 +256,9 @@ if (-not [string]::IsNullOrWhiteSpace($modelFull)) {
 }
 $arguments.Add("--revit=$RevitYear") | Out-Null
 $arguments.Add("--purge") | Out-Null
+if (-not [string]::IsNullOrWhiteSpace($runnerImportRoot)) {
+    $arguments.Add("--import=$runnerImportRoot") | Out-Null
+}
 
 if ($DryRun) {
     $result = [ordered] @{
@@ -196,6 +269,17 @@ if ($DryRun) {
         hostSmokeScript = $hostSmokeScript
         modelPath = $modelFull
         evidencePath = $evidenceFull
+        environment = [ordered] @{
+            REVIT_MCP_NEXT_INSTALL_ROOT = $installRootFull
+            REVIT_MCP_NEXT_AUTH_CONFIG = $authConfigFull
+            REVIT_MCP_NEXT_PYREVIT_EVIDENCE = $evidenceFull
+            REVIT_MCP_NEXT_PYREVIT_MODEL = $modelFull
+        }
+        runnerAddinImport = [ordered] @{
+            enabled = -not [bool] $SkipRunnerAddinImport
+            importRoot = $runnerImportRoot
+            manifestPath = $runnerImportManifestPath
+        }
         seedHostsCache = [bool] $SeedHostsCache
         validateOnly = [bool] $ValidateOnly
         command = "pyrevit.exe $($arguments -join ' ')"
@@ -241,6 +325,11 @@ if (Test-Path -LiteralPath $evidenceFull -PathType Leaf) {
     Remove-Item -LiteralPath $evidenceFull -Force
 }
 
+if (-not [string]::IsNullOrWhiteSpace($runnerImportRoot)) {
+    $runnerImportManifestPath = Write-RunnerAddinImport $runnerImportRoot $installRootFull
+    Write-Step "Prepared pyRevit runner add-in import: $runnerImportManifestPath"
+}
+
 if ($SeedHostsCache) {
     $hostsArgs = @()
     if ($Builds -and $Builds.Count -gt 0) {
@@ -256,7 +345,11 @@ if ($SeedHostsCache) {
 
 $oldEvidence = $env:REVIT_MCP_NEXT_PYREVIT_EVIDENCE
 $oldModel = $env:REVIT_MCP_NEXT_PYREVIT_MODEL
+$oldInstallRoot = $env:REVIT_MCP_NEXT_INSTALL_ROOT
+$oldAuthConfig = $env:REVIT_MCP_NEXT_AUTH_CONFIG
 try {
+    $env:REVIT_MCP_NEXT_INSTALL_ROOT = $installRootFull
+    $env:REVIT_MCP_NEXT_AUTH_CONFIG = $authConfigFull
     $env:REVIT_MCP_NEXT_PYREVIT_EVIDENCE = $evidenceFull
     if (-not [string]::IsNullOrWhiteSpace($modelFull)) {
         $env:REVIT_MCP_NEXT_PYREVIT_MODEL = $modelFull
@@ -268,6 +361,11 @@ try {
 } finally {
     $env:REVIT_MCP_NEXT_PYREVIT_EVIDENCE = $oldEvidence
     $env:REVIT_MCP_NEXT_PYREVIT_MODEL = $oldModel
+    $env:REVIT_MCP_NEXT_INSTALL_ROOT = $oldInstallRoot
+    $env:REVIT_MCP_NEXT_AUTH_CONFIG = $oldAuthConfig
+    if (-not $KeepRunnerAddinImport -and -not [string]::IsNullOrWhiteSpace($runnerImportRoot) -and (Test-Path -LiteralPath $runnerImportRoot -PathType Container)) {
+        Remove-Item -LiteralPath $runnerImportRoot -Recurse -Force
+    }
 }
 
 if ($exitCode -ne 0 -and -not $AllowFailed) {

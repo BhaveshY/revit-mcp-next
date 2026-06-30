@@ -205,7 +205,14 @@ npm run smoke:host-integrations -- `
 
 This command writes `raw\pyrevit.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, and leaves host-smoke logs under `logs`.
 
-For pyRevit CLI runs, use the packaged runner. It sets `REVIT_MCP_NEXT_PYREVIT_EVIDENCE`, sets `REVIT_MCP_NEXT_PYREVIT_MODEL` when a model is supplied, optionally seeds pyRevit's per-user host cache, runs the packaged Host Smoke command, and rejects failed raw evidence:
+For pyRevit CLI runs, use the packaged runner. It stages a temporary
+`RevitMcpNext.addin` into pyRevit's unattended runner with `--import`, pins
+`REVIT_MCP_NEXT_INSTALL_ROOT` and `REVIT_MCP_NEXT_AUTH_CONFIG`, sets
+`REVIT_MCP_NEXT_PYREVIT_EVIDENCE`, sets `REVIT_MCP_NEXT_PYREVIT_MODEL` when a
+model is supplied, optionally seeds pyRevit's per-user host cache, runs the
+packaged Host Smoke command, and rejects failed raw evidence. Keep the runner
+add-in import enabled for release evidence; the evidence must report
+`inProcessBridge.handler=configuredAddin`, not the Python direct fallback:
 
 ```powershell
 npm run smoke:pyrevit-host -- `

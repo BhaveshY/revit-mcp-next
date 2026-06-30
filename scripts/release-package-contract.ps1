@@ -230,6 +230,21 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if (-not ([string] $pyRevitState.hostSmokeScript).Contains("Host Smoke.pushbutton\script.py")) {
         throw "pyRevit host smoke dry run did not target the packaged Host Smoke command."
     }
+    if ($pyRevitState.runnerAddinImport.enabled -ne $true) {
+        throw "pyRevit host smoke dry run did not plan the runner add-in import."
+    }
+    if (-not ([string] $pyRevitState.runnerAddinImport.manifestPath).EndsWith("pyrevit-runner-addin-import\RevitMcpNext.addin")) {
+        throw "pyRevit host smoke dry run used unexpected runner add-in manifest path: $($pyRevitState.runnerAddinImport.manifestPath)"
+    }
+    if (-not ([string] $pyRevitState.command).Contains("--import=")) {
+        throw "pyRevit host smoke dry run command did not include pyRevit --import."
+    }
+    if ([string] $pyRevitState.environment.REVIT_MCP_NEXT_INSTALL_ROOT -ne [System.IO.Path]::GetFullPath($InstallRoot)) {
+        throw "pyRevit host smoke dry run did not pin REVIT_MCP_NEXT_INSTALL_ROOT."
+    }
+    if ([string] $pyRevitState.environment.REVIT_MCP_NEXT_AUTH_CONFIG -ne [System.IO.Path]::GetFullPath((Join-Path $InstallRoot "config\auth.env"))) {
+        throw "pyRevit host smoke dry run did not pin REVIT_MCP_NEXT_AUTH_CONFIG."
+    }
 
     $dynamoOutput = Invoke-RepoScriptCapture $dynamoSmokeScript @(
         "-DryRun",
