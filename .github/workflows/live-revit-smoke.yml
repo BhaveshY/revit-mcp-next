@@ -46,11 +46,47 @@ on:
         required: true
         type: boolean
         default: true
+      collect_host_integrations:
+        description: Collect hosted pyRevit/Dynamo evidence before live smoke. Requires interactive Dynamo graph run.
+        required: true
+        type: boolean
+        default: false
+      pyrevit_path:
+        description: Optional pyrevit.exe path for hosted pyRevit smoke.
+        required: false
+        default: ""
+      seed_pyrevit_hosts:
+        description: Seed pyRevit's per-user Revit host cache before hosted pyRevit smoke.
+        required: true
+        type: boolean
+        default: false
+      pyrevit_builds:
+        description: Optional comma-separated Revit build ids for pyRevit host cache seeding.
+        required: false
+        default: ""
+      dynamo_timeout_seconds:
+        description: Seconds to wait for Dynamo-for-Revit host-smoke evidence.
+        required: true
+        default: "900"
       require_type_change:
         description: Fail unless the smoke can discover and apply an alternate compatible wall type.
         required: true
         type: boolean
         default: true
+      signing_mode:
+        description: Package signing mode. Use none, local-dev, or release-cert.
+        required: true
+        default: none
+      require_trusted_signatures:
+        description: Fail signed packaging unless Authenticode signatures validate as trusted.
+        required: true
+        type: boolean
+        default: true
+      signing_no_timestamp:
+        description: Sign without timestamping. Use only for local-dev/offline smoke certificates.
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,7 +112,19 @@ jobs:
       INSTALL_ROOT_INPUT: ${{ inputs.install_root }}
       DOCUMENT_FINGERPRINT: ${{ inputs.document_fingerprint }}
       STARTUP_WAIT_SECONDS: ${{ inputs.startup_wait_seconds }}
+      COLLECT_HOST_INTEGRATIONS: ${{ inputs.collect_host_integrations }}
+      PYREVIT_PATH: ${{ inputs.pyrevit_path }}
+      SEED_PYREVIT_HOSTS: ${{ inputs.seed_pyrevit_hosts }}
+      PYREVIT_BUILDS: ${{ inputs.pyrevit_builds }}
+      DYNAMO_TIMEOUT_SECONDS: ${{ inputs.dynamo_timeout_seconds }}
       REQUIRE_TYPE_CHANGE: ${{ inputs.require_type_change }}
+      SIGNING_MODE: ${{ inputs.signing_mode }}
+      REQUIRE_TRUSTED_SIGNATURES: ${{ inputs.require_trusted_signatures }}
+      SIGNING_NO_TIMESTAMP: ${{ inputs.signing_no_timestamp }}
+      REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT: ${{ secrets.REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT }}
+      REVIT_MCP_NEXT_SIGN_CERT_PATH: ${{ secrets.REVIT_MCP_NEXT_SIGN_CERT_PATH }}
+      REVIT_MCP_NEXT_SIGN_CERT_PASSWORD: ${{ secrets.REVIT_MCP_NEXT_SIGN_CERT_PASSWORD }}
+      REVIT_MCP_NEXT_TIMESTAMP_URL: ${{ secrets.REVIT_MCP_NEXT_TIMESTAMP_URL }}
 
     steps:
       - name: Checkout
@@ -109,17 +157,23 @@ jobs:
 
           $installRoot = [System.IO.Path]::GetFullPath($installRoot)
           $launcherPath = Join-Path $installRoot "launch-revit-mcp-next.cmd"
+          $authConfigPath = Join-Path $installRoot "config\auth.env"
 
           "INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "LAUNCHER_PATH=$launcherPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "REVIT_MCP_NEXT_AUTH_CONFIG=$authConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           $summary = [ordered] @{
             revitYear = $env:REVIT_YEAR
             revitApiPath = $env:REVIT_API_PATH
             revitExePath = $env:REVIT_EXE_PATH
             installRoot = $installRoot
+            authConfigPath = $authConfigPath
             launchRevit = "${{ inputs.launch_revit }}"
             skipInstall = "${{ inputs.skip_install }}"
+            signingMode = $env:SIGNING_MODE
+            requireTrustedSignatures = $env:REQUIRE_TRUSTED_SIGNATURES
+            signingNoTimestamp = $env:SIGNING_NO_TIMESTAMP
             runnerName = $env:RUNNER_NAME
             runnerOs = $env:RUNNER_OS
           }
@@ -186,9 +240,56 @@ jobs:
             throw "validate-repo.mjs failed with exit code $LASTEXITCODE."
           }
 
+          $signingMode = $env:SIGNING_MODE.Trim().ToLowerInvariant()
+          if ($signingMode -notin @("none", "local-dev", "release-cert")) {
+            throw "signing_mode must be one of: none, local-dev, release-cert. Received: $env:SIGNING_MODE"
+          }
+
           $packageOutputRoot = "artifacts\release-candidate"
           $packageLog = Join-Path $env:EVIDENCE_DIR "package-release.log"
-          & npm.cmd run package:windows -- -OutputRoot $packageOutputRoot 2>&1 | Tee-Object -FilePath $packageLog
+          $packageArgs = @("run", "package:windows", "--", "-OutputRoot", $packageOutputRoot, "-RevitYears", $env:REVIT_YEAR)
+
+          if ($signingMode -eq "local-dev") {
+            $devCertJsonPath = Join-Path $env:EVIDENCE_DIR "dev-signing-certificate.json"
+            $devCertLogPath = Join-Path $env:EVIDENCE_DIR "dev-signing-certificate.log"
+            "Command: scripts\ensure-dev-signing-certificate.ps1 -Trust -AutoApproveRootTrustPrompt -Json" | Set-Content -LiteralPath $devCertLogPath -Encoding UTF8
+            $devCertJson = & powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure-dev-signing-certificate.ps1 -Trust -AutoApproveRootTrustPrompt -Json 2>&1
+            $devCertJson | Tee-Object -FilePath $devCertLogPath -Append | Set-Content -LiteralPath $devCertJsonPath -Encoding UTF8
+            if ($LASTEXITCODE -ne 0) {
+              throw "Local dev signing certificate setup failed with exit code $LASTEXITCODE. See $devCertLogPath"
+            }
+
+            $devCertState = ($devCertJson | Out-String) | ConvertFrom-Json
+            if ([string]::IsNullOrWhiteSpace([string] $devCertState.thumbprint)) {
+              throw "Local dev signing certificate helper did not return a thumbprint."
+            }
+            if (-not [bool] $devCertState.trusted.rootPresent -or -not [bool] $devCertState.trusted.trustedPublisherPresent) {
+              throw "Local dev signing certificate is not trusted in CurrentUser Root and TrustedPublisher stores."
+            }
+
+            $packageArgs += @(
+              "-Sign",
+              "-RequireSigned",
+              "-RequireTrustedSignatures",
+              "-SigningCertificateThumbprint",
+              ([string] $devCertState.thumbprint),
+              "-NoTimestamp"
+            )
+          } elseif ($signingMode -eq "release-cert") {
+            if ([string]::IsNullOrWhiteSpace($env:REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT) -and [string]::IsNullOrWhiteSpace($env:REVIT_MCP_NEXT_SIGN_CERT_PATH)) {
+              throw "signing_mode=release-cert requires REVIT_MCP_NEXT_SIGN_CERT_THUMBPRINT or REVIT_MCP_NEXT_SIGN_CERT_PATH from runner environment or repository secrets."
+            }
+
+            $packageArgs += @("-Sign", "-RequireSigned")
+            if ($env:REQUIRE_TRUSTED_SIGNATURES -eq "true") {
+              $packageArgs += "-RequireTrustedSignatures"
+            }
+            if ($env:SIGNING_NO_TIMESTAMP -eq "true") {
+              $packageArgs += "-NoTimestamp"
+            }
+          }
+
+          & npm.cmd @packageArgs 2>&1 | Tee-Object -FilePath $packageLog
           if ($LASTEXITCODE -ne 0) {
             throw "npm run package:windows failed with exit code $LASTEXITCODE."
           }
@@ -219,6 +320,49 @@ jobs:
             throw "package install failed with exit code $LASTEXITCODE."
           }
 
+      - name: Collect hosted pyRevit and Dynamo evidence
+        if: ${{ inputs.collect_host_integrations }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:REVIT_MODEL_PATH)) {
+            throw "collect_host_integrations=true requires revit_model_path so pyRevit and Dynamo use the same disposable model."
+          }
+          if (-not (Test-Path -LiteralPath $env:REVIT_MODEL_PATH -PathType Leaf)) {
+            throw "Configured revit_model_path was not found: $env:REVIT_MODEL_PATH"
+          }
+
+          $running = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($running) {
+            throw "collect_host_integrations=true requires Revit to be closed before this step so Dynamo smoke can launch Revit with evidence environment variables. Running process id: $($running.Id)"
+          }
+
+          $hostRoot = Join-Path $env:EVIDENCE_DIR "host-integrations"
+          $log = Join-Path $env:EVIDENCE_DIR "host-integrations.log"
+          $hostArgs = @(
+            "run", "smoke:host-integrations", "--",
+            "-RevitYear", $env:REVIT_YEAR,
+            "-InstallRoot", $env:INSTALL_ROOT,
+            "-ModelPath", $env:REVIT_MODEL_PATH,
+            "-OutputRoot", $hostRoot,
+            "-LaunchRevitForDynamo",
+            "-DynamoRevitPath", $env:REVIT_EXE_PATH,
+            "-DynamoTimeoutSeconds", $env:DYNAMO_TIMEOUT_SECONDS
+          )
+          if (-not [string]::IsNullOrWhiteSpace($env:PYREVIT_PATH)) {
+            $hostArgs += @("-PyRevitPath", $env:PYREVIT_PATH)
+          }
+          if ($env:SEED_PYREVIT_HOSTS -eq "true") {
+            $hostArgs += "-SeedPyRevitHosts"
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:PYREVIT_BUILDS)) {
+            $hostArgs += @("-PyRevitBuilds", $env:PYREVIT_BUILDS)
+          }
+
+          & npm.cmd @hostArgs 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm run smoke:host-integrations failed with exit code $LASTEXITCODE."
+          }
+
       - name: Ensure Revit is running
         run: |
           $ErrorActionPreference = "Stop"
@@ -232,7 +376,7 @@ jobs:
           $existing = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($existing) {
             Write-RunLog "Revit is already running as process id $($existing.Id). The workflow will not restart it."
-            Write-RunLog "Confirm the active Revit session has loaded the current add-in and has a disposable project document open."
+            Write-RunLog "Confirm the active Revit session has loaded the current add-in, has a disposable project document open, and was started with REVIT_MCP_NEXT_AUTH_CONFIG=$env:REVIT_MCP_NEXT_AUTH_CONFIG when using a custom install root."
             exit 0
           }
 
@@ -293,7 +437,13 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $log = Join-Path $env:EVIDENCE_DIR "smoke-revit.log"
-          $smokeArgs = @("run", "smoke:revit", "--", "-LauncherPath", $env:LAUNCHER_PATH)
+          $smokeSummaryPath = Join-Path $env:EVIDENCE_DIR "smoke-summary.json"
+          $smokeArgs = @(
+            "run", "smoke:revit", "--",
+            "-LauncherPath", $env:LAUNCHER_PATH,
+            "-ExpectedRevitYear", $env:REVIT_YEAR,
+            "-SummaryPath", $smokeSummaryPath
+          )
           if (-not [string]::IsNullOrWhiteSpace($env:DOCUMENT_FINGERPRINT)) {
             $smokeArgs += @("-DocumentFingerprint", $env:DOCUMENT_FINGERPRINT)
           }
@@ -320,31 +470,58 @@ jobs:
       - name: Collect release evidence
         if: ${{ always() && !inputs.skip_install }}
         run: |
-          $ErrorActionPreference = "Continue"
+          $ErrorActionPreference = "Stop"
           if ([string]::IsNullOrWhiteSpace($env:PACKAGE_ROOT) -or -not (Test-Path -LiteralPath $env:PACKAGE_ROOT -PathType Container)) {
             Write-Warning "Skipping release evidence because PACKAGE_ROOT is unavailable."
             exit 0
           }
 
           $supportZip = Get-ChildItem -LiteralPath (Join-Path $env:EVIDENCE_DIR "support") -Filter "*.zip" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          $releaseManifestPath = Join-Path $env:PACKAGE_ROOT "release-manifest.json"
+          $signingRequested = $false
+          if (Test-Path -LiteralPath $releaseManifestPath -PathType Leaf) {
+            $releaseManifest = Get-Content -LiteralPath $releaseManifestPath -Raw | ConvertFrom-Json
+            $signingRequested = [bool] $releaseManifest.signing.requested
+          }
+
           $evidenceArgs = @(
             "run", "evidence:release:windows", "--",
             "-PackageRoot", $env:PACKAGE_ROOT,
             "-ValidateRepoLogPath", (Join-Path $env:EVIDENCE_DIR "validate-repo.log"),
             "-PackageLogPath", (Join-Path $env:EVIDENCE_DIR "package-release.log"),
             "-DoctorLogPath", (Join-Path $env:EVIDENCE_DIR "doctor-windows.log"),
-            "-SigningSkipReason", "No release certificate configured for this workflow run.",
             "-LiveSmokeEvidencePath", $env:EVIDENCE_DIR
           )
+          if ($signingRequested) {
+            $evidenceArgs += @("-SigningLogPath", (Join-Path $env:EVIDENCE_DIR "package-release.log"))
+          } else {
+            $evidenceArgs += @("-SigningSkipReason", "Workflow signing_mode was '$env:SIGNING_MODE' and this package was unsigned.")
+          }
           if ($supportZip) {
             $evidenceArgs += @("-SupportBundlePath", $supportZip.FullName)
           } else {
             $evidenceArgs += @("-SupportBundleSkipReason", "Support bundle was not collected successfully for this workflow run.")
           }
 
+          $hostIntegrationRoot = Join-Path $env:EVIDENCE_DIR "host-integrations"
+          if (Test-Path -LiteralPath (Join-Path $hostIntegrationRoot "host-integrations-summary.json") -PathType Leaf) {
+            $evidenceArgs += @("-HostedIntegrationEvidencePath", $hostIntegrationRoot)
+            $hostCommandLogs = @(
+              (Join-Path $env:EVIDENCE_DIR "host-integrations.log"),
+              (Join-Path $hostIntegrationRoot "logs\pyrevit-host-smoke.log"),
+              (Join-Path $hostIntegrationRoot "logs\dynamo-host-smoke.log"),
+              (Join-Path $hostIntegrationRoot "logs\host-integrations-evidence.log")
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+            if ($hostCommandLogs.Count -gt 0) {
+              $evidenceArgs += @("-CommandLogPaths") + $hostCommandLogs
+            }
+          } else {
+            $evidenceArgs += @("-HostedIntegrationSkipReason", "Hosted pyRevit/Dynamo smoke was not collected by this workflow run.")
+          }
+
           & npm.cmd @evidenceArgs 2>&1 | Tee-Object -FilePath (Join-Path $env:EVIDENCE_DIR "release-evidence.log")
           if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Release evidence collection failed with exit code $LASTEXITCODE. Existing smoke artifacts will still be uploaded."
+            throw "Release evidence collection failed with exit code $LASTEXITCODE."
           }
 
       - name: Upload smoke evidence

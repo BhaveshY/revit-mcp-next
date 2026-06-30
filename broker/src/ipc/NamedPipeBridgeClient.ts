@@ -21,6 +21,8 @@ import type {
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  RoomsRequest,
+  RoomsResult,
   ScopedElementListRequest,
   ScopedElementListResult,
 } from "@revit-mcp-next/contracts";
@@ -97,6 +99,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<MaterialQuantitiesRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<MaterialQuantitiesResult>> {
+    return this.send(request, options);
+  }
+
+  getRooms(
+    request: BridgeRequest<RoomsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<RoomsResult>> {
     return this.send(request, options);
   }
 

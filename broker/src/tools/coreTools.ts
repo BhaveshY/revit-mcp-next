@@ -21,6 +21,16 @@ const parameterEqualsSchema = z
   .refine((value) => Object.keys(value).length <= 16, "At most 16 parameter equality filters are allowed.");
 
 const queryFilterSchema = z.object({
+  elementIds: z
+    .array(boundedId)
+    .max(256)
+    .optional()
+    .describe("Explicit Revit element IDs to retrieve before applying any secondary filters."),
+  uniqueIds: z
+    .array(boundedString)
+    .max(256)
+    .optional()
+    .describe("Explicit Revit UniqueId values to retrieve before applying any secondary filters."),
   categories: z.array(boundedString).max(16).optional(),
   classes: z.array(boundedString).max(16).optional(),
   viewId: boundedId.optional(),
@@ -88,6 +98,34 @@ const materialQuantitiesSchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const roomFilterSchema = z
+  .object({
+    elementIds: z.array(boundedId).max(256).optional().describe("Explicit room element IDs."),
+    uniqueIds: z.array(boundedString).max(256).optional().describe("Explicit room UniqueId values."),
+    levelIds: z.array(boundedId).max(64).optional().describe("Optional room level IDs."),
+    phaseIds: z.array(boundedId).max(16).optional().describe("Optional created phase IDs."),
+    numbers: z.array(z.string().min(1).max(64)).max(128).optional().describe("Exact room numbers to return."),
+    numberContains: z.string().min(1).max(64).optional(),
+    nameContains: z.string().min(1).max(128).optional(),
+    departmentContains: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+
+const roomsSchema = {
+  ...documentGuardSchema,
+  filter: roomFilterSchema.optional().describe("Optional room-specific filters. Results remain bounded and paginated."),
+  fields: z
+    .array(boundedString)
+    .max(32)
+    .optional()
+    .describe("Room fields to return. Use explicit fields for compact room export."),
+  preset: z.enum(["idOnly", "summary", "schedule"]).default("summary"),
+  limit: z.number().int().min(1).max(500).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+  includeUnplaced: z.boolean().default(false),
+};
+
 const catalogFilterSchema = z
   .object({
     forElementId: boundedId
@@ -140,6 +178,12 @@ const changePoint3Schema = z
     x: changeUnitValueSchema.describe("X coordinate with explicit units."),
     y: changeUnitValueSchema.describe("Y coordinate with explicit units."),
     z: changeUnitValueSchema.describe("Z coordinate with explicit units."),
+  })
+  .strict();
+const changePoint2Schema = z
+  .object({
+    x: changeUnitValueSchema.describe("X coordinate with explicit units."),
+    y: changeUnitValueSchema.describe("Y coordinate with explicit units."),
   })
   .strict();
 const changeSetHashSchema = z.string().min(1).max(128);
@@ -236,6 +280,26 @@ const createFloorOperationSchema = operationBaseSchema
     structural: z.boolean().optional().describe("Whether to create a structural floor when the Revit API supports it."),
   })
   .strict();
+const createRoomOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_room"),
+    levelId: boundedId.describe("Level ID on which to place the room."),
+    location: changePoint2Schema.describe("2D room placement point in the target level plane."),
+    name: z.string().min(1).max(256).optional().describe("Optional room name."),
+    number: z.string().min(1).max(64).optional().describe("Optional room number. Duplicate numbers are blocked unless explicitly allowed."),
+    department: z.string().min(1).max(128).optional().describe("Optional room department schedule value."),
+    allowDuplicateNumber: z.boolean().optional().describe("Allow duplicate room numbers. Defaults to false."),
+  })
+  .strict();
+const deleteElementOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("delete_element"),
+    elementId: boundedId.describe("Target Revit element ID to delete."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard to avoid deleting an unexpected element if ids were reused."),
+    expectedPinned: z.boolean().optional().describe("Optional current pinned state guard."),
+    allowPinned: z.boolean().optional().describe("Must be true to delete a currently pinned element."),
+  })
+  .strict();
 const changeOperationSchema = z.discriminatedUnion("type", [
   setParameterOperationSchema,
   createLevelOperationSchema,
@@ -247,6 +311,8 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   setElementPinnedOperationSchema,
   createGridOperationSchema,
   createFloorOperationSchema,
+  createRoomOperationSchema,
+  deleteElementOperationSchema,
 ]);
 
 const changeSetSchema = {
@@ -520,6 +586,43 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
   );
 
   server.registerTool(
+    "revit.get_rooms",
+    {
+      title: "Get Revit Rooms",
+      description:
+        "Return compact, paginated room export data with room numbers, names, levels, area/volume units, location, and schedule fields.",
+      inputSchema: roomsSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        fields: args.fields,
+        preset: args.preset ?? "summary",
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+        includeUnplaced: args.includeUnplaced ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_rooms", "read", payload, 30000);
+      const response = await context.bridge.getRooms(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} room(s) returned from ${result.scope}.`
+      );
+    }
+  );
+
+  server.registerTool(
     "revit.catalog",
     {
       title: "Revit Catalog",
@@ -595,7 +698,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, and create_floor.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {
@@ -626,7 +729,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       outputSchema: toolOutputSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false,
       },

@@ -24,6 +24,9 @@ import type {
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  RoomSummary,
+  RoomsRequest,
+  RoomsResult,
   ScopedElementListRequest,
   ScopedElementListResult,
 } from "@revit-mcp-next/contracts";
@@ -74,6 +77,7 @@ const capabilities = [
   "revit.get_selection",
   "revit.analyze_model",
   "revit.get_material_quantities",
+  "revit.get_rooms",
   "revit.catalog",
   "revit.query",
   "revit.preview_change_set",
@@ -90,6 +94,30 @@ const fakeQueryItems = [
     name: "Basic Wall",
     typeId: "9001",
     levelId: "311",
+  },
+];
+
+const fakeRooms: RoomSummary[] = [
+  {
+    id: "601",
+    uniqueId: "room-601",
+    number: "101",
+    name: "Conference",
+    levelId: "311",
+    levelName: "Level 1",
+    phaseId: "801",
+    phaseName: "New Construction",
+    area: { value: 24.5, unit: "m2", system: "metric" },
+    volume: { value: 73.5, unit: "m3", system: "metric" },
+    perimeter: { value: 19800, unit: "mm", system: "metric" },
+    location: {
+      x: { value: 2000, unit: "mm", system: "metric" },
+      y: { value: 1500, unit: "mm", system: "metric" },
+      z: { value: 0, unit: "mm", system: "metric" },
+    },
+    isPlaced: true,
+    isEnclosed: true,
+    department: "Operations",
   },
 ];
 
@@ -315,23 +343,68 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     });
   }
 
+  async getRooms(
+    request: BridgeRequest<RoomsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<RoomsResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 500);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    const fields = request.payload.fields ?? roomFieldsForPreset(request.payload.preset);
+    let items = fakeRooms.filter((room) => matchesRoomFilter(room, filter, request.payload.includeUnplaced ?? false));
+    const page = items.slice(offset, offset + limit).map((room) => projectRoom(room, fields));
+    const truncated = offset + page.length < items.length;
+    return ok(request, {
+      document: documentReference(),
+      items: page,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? items.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      fields,
+      units: {
+        area: "m2",
+        volume: "m3",
+        location: "mm",
+      },
+      scope: "rooms",
+      source: "fake-bridge",
+    });
+  }
+
   async query(
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>> {
     maybeAbort(options);
     const limit = Math.min(request.payload.limit ?? 50, 500);
-    const items = fakeQueryItems.slice(0, limit);
+    let filteredItems = fakeQueryItems;
+    const elementIds = request.payload.filter.elementIds ?? [];
+    const uniqueIds = request.payload.filter.uniqueIds ?? [];
+    if (elementIds.length > 0) {
+      filteredItems = filteredItems.filter((item) => elementIds.includes(item.id));
+    }
+    if (uniqueIds.length > 0) {
+      filteredItems = filteredItems.filter((item) => item.uniqueId && uniqueIds.includes(item.uniqueId));
+    }
+    const items = filteredItems.slice(0, limit);
 
     return ok(request, {
       items,
-      totalCount: 1,
+      totalCount: request.payload.includeTotalCount ? filteredItems.length : undefined,
       returnedCount: items.length,
       limit,
       truncated: false,
       fields: request.payload.fields ?? ["id", "category", "class", "name"],
       units: {},
-      scope: request.payload.filter.viewId ? `view:${request.payload.filter.viewId}` : "document",
+      scope:
+        elementIds.length > 0 || uniqueIds.length > 0
+          ? "elements"
+          : request.payload.filter.viewId
+            ? `view:${request.payload.filter.viewId}`
+            : "document",
       source: "fake-bridge",
     });
   }
@@ -387,7 +460,11 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       operationCount: request.payload.operations.length,
       ready: true,
       requiresConfirmation: true,
-      riskLevel: request.payload.operations.some(isMediumRiskOperation) ? "medium" : "low",
+      riskLevel: request.payload.operations.some(isHighRiskOperation)
+        ? "high"
+        : request.payload.operations.some(isMediumRiskOperation)
+          ? "medium"
+          : "low",
       changes: request.payload.operations.map((operation, index) => ({
         operationIndex: index,
         operationId: operation.id,
@@ -493,6 +570,66 @@ function buildCatalogTarget(elementId?: string) {
     canChangeType: true,
     validTypeCount: 2,
   };
+}
+
+function roomFieldsForPreset(preset?: string): string[] {
+  switch (preset) {
+    case "idOnly":
+      return ["id"];
+    case "schedule":
+      return ["id", "number", "name", "levelId", "levelName", "area", "volume", "department"];
+    default:
+      return ["id", "uniqueId", "number", "name", "levelId", "area"];
+  }
+}
+
+function matchesRoomFilter(room: RoomSummary, filter: RoomsRequest["filter"], includeUnplaced: boolean): boolean {
+  if (!includeUnplaced && room.isPlaced === false) return false;
+  if (filter?.elementIds?.length && !filter.elementIds.includes(room.id)) return false;
+  if (filter?.uniqueIds?.length && (!room.uniqueId || !filter.uniqueIds.includes(room.uniqueId))) return false;
+  if (filter?.levelIds?.length && (!room.levelId || !filter.levelIds.includes(room.levelId))) return false;
+  if (filter?.phaseIds?.length && (!room.phaseId || !filter.phaseIds.includes(room.phaseId))) return false;
+  if (filter?.numbers?.length && (!room.number || !filter.numbers.includes(room.number))) return false;
+  if (filter?.numberContains && !containsIgnoreCase(room.number ?? "", filter.numberContains)) return false;
+  if (filter?.nameContains && !containsIgnoreCase(room.name ?? "", filter.nameContains)) return false;
+  if (filter?.departmentContains && !containsIgnoreCase(room.department ?? "", filter.departmentContains)) return false;
+  return true;
+}
+
+function projectRoom(room: RoomSummary, fields: string[]): RoomSummary {
+  const projected: RoomSummary = {
+    id: room.id,
+  };
+
+  for (const field of fields) {
+    switch (field) {
+      case "id":
+        break;
+      case "uniqueId":
+      case "number":
+      case "name":
+      case "levelId":
+      case "levelName":
+      case "phaseId":
+      case "phaseName":
+      case "area":
+      case "volume":
+      case "perimeter":
+      case "location":
+      case "isPlaced":
+      case "isEnclosed":
+      case "department":
+        const roomRecord = room as unknown as Record<string, unknown>;
+        if (roomRecord[field] !== undefined) {
+          (projected as unknown as Record<string, unknown>)[field] = roomRecord[field];
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  return projected;
 }
 
 function matchesCatalogFilter(item: CatalogItem, filter: CatalogRequest["filter"]): boolean {
@@ -611,6 +748,16 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         levelId: operation.levelId,
         floorTypeId: operation.floorTypeId,
       };
+    case "create_room":
+      return {
+        document: activeDocument.title,
+        levelId: operation.levelId,
+      };
+    case "delete_element":
+      return {
+        elementId: operation.elementId,
+        expectedUniqueId: operation.expectedUniqueId,
+      };
     default:
       return assertNever(operation);
   }
@@ -672,9 +819,28 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         floorTypeId: operation.floorTypeId,
         structural: operation.structural,
       };
+    case "create_room":
+      return {
+        levelId: operation.levelId,
+        location: operation.location,
+        name: operation.name,
+        number: operation.number,
+        department: operation.department,
+        allowDuplicateNumber: operation.allowDuplicateNumber,
+      };
+    case "delete_element":
+      return {
+        deleted: true,
+        expectedPinned: operation.expectedPinned,
+        allowPinned: operation.allowPinned,
+      };
     default:
       return assertNever(operation);
   }
+}
+
+function isHighRiskOperation(operation: ChangeOperation): boolean {
+  return operation.type === "delete_element";
 }
 
 function isMediumRiskOperation(operation: ChangeOperation): boolean {
@@ -683,6 +849,7 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
     operation.type === "create_wall" ||
     operation.type === "create_grid" ||
     operation.type === "create_floor" ||
+    operation.type === "create_room" ||
     operation.type === "copy_element" ||
     operation.type === "change_element_type"
   );

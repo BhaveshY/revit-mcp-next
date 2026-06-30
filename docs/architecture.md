@@ -10,7 +10,7 @@ The broker is launched by MCP clients over stdio. It owns:
 - Tool registration and annotations.
 - Input validation.
 - Output shaping and token budgets.
-- Pagination and resource handles.
+- Pagination. MCP resource handles are planned for larger export surfaces but are not part of the current broker contract.
 - Client-specific startup and diagnostics.
 
 The broker never references Autodesk DLLs and never calls the Revit API.
@@ -46,9 +46,9 @@ Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\Revi
 - Reads need no transaction.
 - Writes use one explicit named transaction or a transaction group.
 - No arbitrary code execution in normal mode.
-- Large results are paginated or exposed as MCP resources.
+- Large current-contract results are paginated and bounded. MCP resource handles are reserved for future large export surfaces.
 - Read/analysis tools return bounded structured data for current views, active-view elements, selection, model statistics, material quantities, catalogs, and custom queries.
-- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, and `set_element_pinned`.
+- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `set_element_pinned`, and guarded `delete_element`.
 
 ## External Automation Integrations
 

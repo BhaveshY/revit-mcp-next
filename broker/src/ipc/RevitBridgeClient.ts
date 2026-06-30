@@ -20,6 +20,8 @@ import type {
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  RoomsRequest,
+  RoomsResult,
   ScopedElementListRequest,
   ScopedElementListResult,
 } from "@revit-mcp-next/contracts";
@@ -57,6 +59,10 @@ export interface RevitBridgeClient {
     request: BridgeRequest<MaterialQuantitiesRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<MaterialQuantitiesResult>>;
+  getRooms(
+    request: BridgeRequest<RoomsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<RoomsResult>>;
   query(
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions

@@ -7,6 +7,8 @@ param(
     [double]$WallHeightMm = 3000,
     [string]$TransactionPrefix = "Revit MCP Next smoke",
     [string]$LauncherPath,
+    [int]$ExpectedRevitYear = 0,
+    [string]$SummaryPath = "",
     [switch]$RequireTypeChange,
     [switch]$StatusOnly
 )
@@ -82,6 +84,14 @@ if ($RequireTypeChange) {
 
 if ($StatusOnly) {
     $nodeArgs += @("--status-only")
+}
+
+if ($ExpectedRevitYear -gt 0) {
+    $nodeArgs += @("--expected-revit-year", "$ExpectedRevitYear")
+}
+
+if (-not [string]::IsNullOrWhiteSpace($SummaryPath)) {
+    $nodeArgs += @("--summary-path", $SummaryPath)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($DocumentFingerprint)) {

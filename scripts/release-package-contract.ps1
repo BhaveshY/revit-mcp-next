@@ -68,6 +68,26 @@ function Invoke-RepoScriptCapture([string] $Path, [string[]] $Arguments) {
     return $text
 }
 
+function Assert-ScriptFailsLike([string] $Path, [string[]] $Arguments, [string] $ExpectedPattern, [string] $Label) {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    if ($exitCode -eq 0) {
+        throw "$Label unexpectedly passed."
+    }
+
+    $text = ($output | Out-String)
+    if ($text -notlike $ExpectedPattern) {
+        throw "$Label failed with unexpected output: $text"
+    }
+}
+
 function Assert-FileExists($Path, $Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Label was not created: $Path"
@@ -142,6 +162,208 @@ function Assert-DevSigningDryRuns($RepoRoot, $SyntheticAddinRoot, $RunRoot) {
     )
     if (-not $signOutput.Contains("Would sign:")) {
         throw "Signer dry run did not accept -NoTimestamp."
+    }
+}
+
+function Assert-RevitTrustDryRun($RepoRoot) {
+    $trustScript = Join-Path $RepoRoot "scripts\ensure-revit-addin-trust.ps1"
+    $trustOutput = Invoke-RepoScriptCapture $trustScript @("-DryRun", "-RevitYears", "2024", "-Json")
+    $trustState = $trustOutput | ConvertFrom-Json
+    if ($trustState.dryRun -ne $true) {
+        throw "Revit Always Load trust dry run did not report dryRun=true."
+    }
+    if ([string] $trustState.clientId -ne "6f78e70d-be13-4e0b-9b11-9e28f876af71") {
+        throw "Revit Always Load trust dry run used unexpected client id: $($trustState.clientId)"
+    }
+    if (-not $trustState.entries -or [string] $trustState.entries[0].path -ne "HKCU:\Software\Autodesk\Revit\Autodesk Revit 2024\CodeSigning") {
+        throw "Revit Always Load trust dry run used unexpected registry path."
+    }
+}
+
+function Assert-PyRevitHostsCacheDryRun($RepoRoot, $RunRoot) {
+    $pyRevitHostsScript = Join-Path $RepoRoot "scripts\ensure-pyrevit-hosts-cache.ps1"
+    $cachePath = Join-Path $RunRoot "pyrevit-hosts-cache\pyrevit-hosts.json"
+    $output = Invoke-RepoScriptCapture $pyRevitHostsScript @(
+        "-DryRun",
+        "-Json",
+        "-CachePath", $cachePath,
+        "-Builds", "20990101_1515"
+    )
+    $state = $output | ConvertFrom-Json
+    if ($state.dryRun -ne $true) {
+        throw "pyRevit hosts cache dry run did not report dryRun=true."
+    }
+    if ([string] $state.cachePath -ne [System.IO.Path]::GetFullPath($cachePath)) {
+        throw "pyRevit hosts cache dry run used unexpected cache path: $($state.cachePath)"
+    }
+    if (-not ($state.addedBuilds -contains "20990101_1515")) {
+        throw "pyRevit hosts cache dry run did not plan the requested build."
+    }
+    if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
+        throw "pyRevit hosts cache dry run wrote the cache file."
+    }
+}
+
+function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) {
+    $pyRevitSmokeScript = Join-Path $PackageRoot "scripts\run-pyrevit-host-smoke.ps1"
+    $dynamoSmokeScript = Join-Path $PackageRoot "scripts\run-dynamo-host-smoke.ps1"
+    $hostIntegrationsSmokeScript = Join-Path $PackageRoot "scripts\run-host-integrations-smoke.ps1"
+    $pyRevitEvidencePath = Join-Path $RunRoot "host-smoke\pyrevit.json"
+    $dynamoEvidencePath = Join-Path $RunRoot "host-smoke\dynamo.json"
+    $modelPath = Join-Path $RunRoot "host-smoke\disposable.rvt"
+
+    $pyRevitOutput = Invoke-RepoScriptCapture $pyRevitSmokeScript @(
+        "-DryRun",
+        "-Json",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $pyRevitEvidencePath,
+        "-ModelPath", $modelPath,
+        "-PyRevitPath", (Join-Path $RunRoot "tools\pyrevit.exe")
+    )
+    $pyRevitState = $pyRevitOutput | ConvertFrom-Json
+    if ($pyRevitState.status -ne "planned") {
+        throw "pyRevit host smoke dry run did not report planned status."
+    }
+    if ([string] $pyRevitState.evidencePath -ne [System.IO.Path]::GetFullPath($pyRevitEvidencePath)) {
+        throw "pyRevit host smoke dry run used unexpected evidence path: $($pyRevitState.evidencePath)"
+    }
+    if (-not ([string] $pyRevitState.hostSmokeScript).Contains("Host Smoke.pushbutton\script.py")) {
+        throw "pyRevit host smoke dry run did not target the packaged Host Smoke command."
+    }
+
+    $dynamoOutput = Invoke-RepoScriptCapture $dynamoSmokeScript @(
+        "-DryRun",
+        "-Json",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $dynamoEvidencePath,
+        "-ModelPath", $modelPath,
+        "-LaunchRevit",
+        "-RevitPath", (Join-Path $RunRoot "tools\Revit.exe")
+    )
+    $dynamoState = $dynamoOutput | ConvertFrom-Json
+    if ($dynamoState.status -ne "planned") {
+        throw "Dynamo host smoke dry run did not report planned status."
+    }
+    if ([string] $dynamoState.evidencePath -ne [System.IO.Path]::GetFullPath($dynamoEvidencePath)) {
+        throw "Dynamo host smoke dry run used unexpected evidence path: $($dynamoState.evidencePath)"
+    }
+    if (-not ([string] $dynamoState.graphPath).EndsWith("integrations\dynamo\revit_mcp_next_host_smoke.dyn")) {
+        throw "Dynamo host smoke dry run did not target the packaged host-smoke graph."
+    }
+    if ([string] $dynamoState.environment.REVIT_MCP_NEXT_DYNAMO_EVIDENCE -ne [System.IO.Path]::GetFullPath($dynamoEvidencePath)) {
+        throw "Dynamo host smoke dry run did not plan the evidence environment variable."
+    }
+
+    $aggregateOutputRoot = Join-Path $RunRoot "host-integrations"
+    $aggregateOutput = Invoke-RepoScriptCapture $hostIntegrationsSmokeScript @(
+        "-DryRun",
+        "-Json",
+        "-OutputRoot", $aggregateOutputRoot,
+        "-InstallRoot", $InstallRoot,
+        "-ModelPath", $modelPath,
+        "-PyRevitPath", (Join-Path $RunRoot "tools\pyrevit.exe"),
+        "-LaunchRevitForDynamo",
+        "-DynamoRevitPath", (Join-Path $RunRoot "tools\Revit.exe")
+    )
+    $aggregateState = $aggregateOutput | ConvertFrom-Json
+    if ($aggregateState.status -ne "planned") {
+        throw "Aggregate hosted integration smoke dry run did not report planned status."
+    }
+    if ([string] $aggregateState.summaryPath -ne [System.IO.Path]::GetFullPath((Join-Path $aggregateOutputRoot "host-integrations-summary.json"))) {
+        throw "Aggregate hosted integration smoke dry run used unexpected summary path."
+    }
+
+    $passedPyRevitEvidencePath = Join-Path $RunRoot "host-smoke\passed-pyrevit.json"
+    $passedDynamoEvidencePath = Join-Path $RunRoot "host-smoke\passed-dynamo.json"
+    $failedDynamoEvidencePath = Join-Path $RunRoot "host-smoke\failed-dynamo.json"
+    $fallbackPyRevitEvidencePath = Join-Path $RunRoot "host-smoke\fallback-pyrevit.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $passedPyRevitEvidencePath) | Out-Null
+
+    $passedPyRevit = [ordered] @{
+        schemaVersion = 1
+        status = "passed"
+        host = "pyrevit"
+        previewReady = $true
+        applyWrites = $true
+        activeDocument = [ordered] @{ fingerprint = "doc-package-contract" }
+        inProcessBridge = [ordered] @{
+            addinHandlerActive = $true
+            handler = "configuredAddin"
+            directFallbackActive = $false
+        }
+        coveredTools = @("revit.status", "revit.preview_change_set", "revit.apply_change_set")
+        coveredOperations = @("create_level")
+        createdElementIds = @(1001)
+    }
+    $passedDynamo = [ordered] @{
+        schemaVersion = 1
+        status = "passed"
+        host = "dynamo"
+        previewReady = $true
+        applyWrites = $true
+        activeDocument = [ordered] @{ fingerprint = "doc-package-contract" }
+        inProcessBridge = [ordered] @{
+            addinHandlerActive = $true
+            handler = "configuredAddin"
+            directFallbackActive = $false
+        }
+        coveredTools = @("revit.status", "revit.preview_change_set", "revit.apply_change_set")
+        coveredOperations = @("create_level")
+        createdElementIds = @(1002)
+    }
+    $fallbackPyRevit = [ordered] @{}
+    foreach ($property in $passedPyRevit.GetEnumerator()) {
+        $fallbackPyRevit[$property.Key] = $property.Value
+    }
+    $fallbackPyRevit["inProcessBridge"] = [ordered] @{
+        addinHandlerActive = $false
+        handler = "directFallback"
+        directFallbackActive = $true
+    }
+    $failedDynamo = [ordered] @{
+        schemaVersion = 1
+        status = "failed"
+        host = "dynamo"
+        previewReady = $false
+        applyWrites = $false
+        activeDocument = [ordered] @{ fingerprint = "doc-package-contract" }
+        coveredTools = @()
+        coveredOperations = @()
+        createdElementIds = @()
+    }
+    Set-Content -LiteralPath $passedPyRevitEvidencePath -Value ($passedPyRevit | ConvertTo-Json -Depth 8) -Encoding UTF8
+    Set-Content -LiteralPath $passedDynamoEvidencePath -Value ($passedDynamo | ConvertTo-Json -Depth 8) -Encoding UTF8
+    Set-Content -LiteralPath $failedDynamoEvidencePath -Value ($failedDynamo | ConvertTo-Json -Depth 8) -Encoding UTF8
+    Set-Content -LiteralPath $fallbackPyRevitEvidencePath -Value ($fallbackPyRevit | ConvertTo-Json -Depth 8) -Encoding UTF8
+
+    Invoke-RepoScript $pyRevitSmokeScript @(
+        "-ValidateOnly",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $passedPyRevitEvidencePath
+    )
+    Invoke-RepoScript $dynamoSmokeScript @(
+        "-ValidateOnly",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $passedDynamoEvidencePath
+    )
+    Assert-ScriptFailsLike $dynamoSmokeScript @(
+        "-ValidateOnly",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $failedDynamoEvidencePath
+    ) "*Dynamo evidence did not pass*" "Dynamo host smoke failed-evidence gate"
+    Assert-ScriptFailsLike $pyRevitSmokeScript @(
+        "-ValidateOnly",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $fallbackPyRevitEvidencePath
+    ) "*expected configuredAddin*" "pyRevit host smoke direct-fallback gate"
+}
+
+function Assert-PackagedNpmAliases($PackageRoot) {
+    $package = Read-JsonFile (Join-Path $PackageRoot "package.json")
+    foreach ($alias in @("smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations")) {
+        if (-not $package.scripts.PSObject.Properties[$alias]) {
+            throw "Packaged package.json is missing npm alias: $alias"
+        }
     }
 }
 
@@ -222,8 +444,17 @@ try {
     Write-Step "Run root: $runRoot"
     New-SyntheticAddinOutput $syntheticAddinRoot
     Assert-DevSigningDryRuns $repoRoot $syntheticAddinRoot $runRoot
+    Assert-RevitTrustDryRun $repoRoot
+    Assert-PyRevitHostsCacheDryRun $repoRoot $runRoot
 
     $packageScript = Join-Path $repoRoot "scripts\package-release.ps1"
+    Assert-ScriptFailsLike $packageScript @(
+        "-DryRun",
+        "-OutputRoot", (Join-Path $runRoot "unsupported-year-package"),
+        "-AddinOutputRoot", $syntheticAddinRoot,
+        "-RevitYears", "2025"
+    ) "*Revit 2025 packaging is not supported yet*" "Unsupported Revit year package gate"
+
     Invoke-RepoScript $packageScript @(
         "-OutputRoot", $packageOutputRoot,
         "-AddinOutputRoot", $syntheticAddinRoot
@@ -248,10 +479,20 @@ try {
     }
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_client.py") "packaged Python integration client"
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_inprocess.py") "packaged Python in-process integration helper"
+    Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_host_smoke.py") "packaged Python host-smoke evidence helper"
     Assert-FileExists (Join-Path $packageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py") "packaged pyRevit status command"
+    Assert-FileExists (Join-Path $packageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py") "packaged pyRevit host-smoke command"
     Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\status_node.py") "packaged Dynamo status node"
+    Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\host_smoke_node.py") "packaged Dynamo host-smoke node"
+    Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "packaged Dynamo host-smoke graph"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
+    Assert-ScriptFailsLike $installerScript @(
+        "-PackageRoot", $packageRoot,
+        "-InstallRoot", (Join-Path $runRoot "unsupported-year-install"),
+        "-RevitYears", "2025"
+    ) "*Revit 2025 install is not supported yet*" "Unsupported Revit year install gate"
+
     Invoke-RepoScript $installerScript @(
         "-PackageRoot", $packageRoot,
         "-InstallRoot", $installRoot,
@@ -259,9 +500,60 @@ try {
     )
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_client.py") "installed Python integration client"
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_inprocess.py") "installed Python in-process integration helper"
+    Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_host_smoke.py") "installed Python host-smoke evidence helper"
     Assert-FileExists (Join-Path $installRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py") "installed pyRevit status command"
+    Assert-FileExists (Join-Path $installRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py") "installed pyRevit host-smoke command"
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\status_node.py") "installed Dynamo status node"
+    Assert-FileExists (Join-Path $installRoot "integrations\dynamo\host_smoke_node.py") "installed Dynamo host-smoke node"
+    Assert-FileExists (Join-Path $installRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "installed Dynamo host-smoke graph"
     Assert-FileExists (Join-Path $installRoot "config\client-discovery.json") "installed client discovery config"
+    Assert-FileExists (Join-Path $packageRoot "scripts\print-mcp-config.ps1") "packaged MCP config printer"
+    Assert-FileExists (Join-Path $packageRoot "scripts\ensure-revit-addin-trust.ps1") "packaged Revit trust helper"
+    Assert-FileExists (Join-Path $packageRoot "scripts\ensure-pyrevit-hosts-cache.ps1") "packaged pyRevit hosts cache helper"
+    Assert-FileExists (Join-Path $packageRoot "scripts\run-pyrevit-host-smoke.ps1") "packaged pyRevit host-smoke runner"
+    Assert-FileExists (Join-Path $packageRoot "scripts\run-dynamo-host-smoke.ps1") "packaged Dynamo host-smoke runner"
+    Assert-FileExists (Join-Path $packageRoot "scripts\run-host-integrations-smoke.ps1") "packaged aggregate hosted integration smoke runner"
+    Assert-FileExists (Join-Path $packageRoot "scripts\collect-host-integration-evidence.ps1") "packaged hosted integration evidence composer"
+    Assert-PackagedNpmAliases $packageRoot
+    Assert-HostedSmokeWrapperDryRuns $packageRoot $installRoot $runRoot
+
+    $addinManifestPath = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext.addin"
+    Assert-FileExists $addinManifestPath "installed Revit add-in manifest"
+    $addinManifestText = Get-Content -LiteralPath $addinManifestPath -Raw
+    if (-not $addinManifestText.Contains("<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>")) {
+        throw "Installed Revit add-in manifest does not use ClientId."
+    }
+    if ($addinManifestText.Contains("<AddInId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</AddInId>")) {
+        throw "Installed Revit add-in manifest still uses AddInId."
+    }
+
+    $clientDiscovery = Read-JsonFile (Join-Path $installRoot "config\client-discovery.json")
+    if ([string] $clientDiscovery.addinClientId -ne "6F78E70D-BE13-4E0B-9B11-9E28F876AF71") {
+        throw "Client discovery did not record the Revit add-in ClientId."
+    }
+    if (-not $clientDiscovery.supportedRevitYears -or [int] $clientDiscovery.supportedRevitYears[0] -ne 2024) {
+        throw "Client discovery did not record supported Revit year 2024."
+    }
+    if (-not $clientDiscovery.addinAssemblyPaths.PSObject.Properties["2024"]) {
+        throw "Client discovery did not record a year-specific add-in assembly path."
+    }
+
+    $configOutput = Invoke-RepoScriptCapture (Join-Path $packageRoot "scripts\print-mcp-config.ps1") @(
+        "-InstallRoot", $installRoot
+    )
+    $launcherPath = Join-Path $installRoot "launch-revit-mcp-next.cmd"
+    if (-not $configOutput.Contains("claude mcp add --scope user revit-mcp-next")) {
+        throw "MCP config printer did not include a Claude Code command."
+    }
+    if (-not $configOutput.Contains("claude_desktop_config.json")) {
+        throw "MCP config printer did not include a Claude Desktop config heading."
+    }
+    if (-not $configOutput.Contains("[mcp_servers.revit-mcp-next]")) {
+        throw "MCP config printer did not include a Codex TOML entry."
+    }
+    if (-not $configOutput.Contains($launcherPath)) {
+        throw "MCP config printer did not include the installed launcher path."
+    }
 
     $doctorScript = Join-Path $packageRoot "scripts\doctor.ps1"
     Invoke-RepoScript $doctorScript @(
@@ -281,6 +573,9 @@ try {
     }
 
     $authToken = Read-AuthTokenConfig (Join-Path $installRoot "config\auth.env")
+    if (-not [string]::IsNullOrWhiteSpace($authToken) -and $configOutput.Contains($authToken)) {
+        throw "MCP config printer leaked the raw auth token."
+    }
     Assert-NoRawTokenInSupportBundle $supportRoot $authToken
 
     Assert-TamperedPackageFails $packageRoot $runRoot $installerScript

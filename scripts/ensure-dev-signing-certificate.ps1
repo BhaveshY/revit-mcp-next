@@ -3,6 +3,7 @@ param(
     [string] $Thumbprint = "",
     [int] $ValidYears = 3,
     [switch] $Trust,
+    [switch] $AutoApproveRootTrustPrompt,
     [switch] $StatusOnly,
     [switch] $Remove,
     [switch] $Json,
@@ -24,7 +25,14 @@ function Test-CodeSigningCertificate($Certificate) {
 
     $codeSigningOid = "1.3.6.1.5.5.7.3.3"
     foreach ($usage in $Certificate.EnhancedKeyUsageList) {
-        if ($usage.ObjectId.Value -eq $codeSigningOid) {
+        $oidValue = ""
+        if ($usage.ObjectId -is [string]) {
+            $oidValue = [string] $usage.ObjectId
+        } elseif ($usage.ObjectId) {
+            $oidValue = [string] $usage.ObjectId.Value
+        }
+
+        if ($oidValue -eq $codeSigningOid -or [string] $usage.FriendlyName -eq "Code Signing") {
             return $true
         }
     }
@@ -151,6 +159,110 @@ function Test-CertificateInStore($Certificate, $StoreName) {
     }
 }
 
+function Invoke-TrustPromptApproval($Process, $TimeoutSeconds) {
+    if (-not $AutoApproveRootTrustPrompt) {
+        return $false
+    }
+
+    try {
+        Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes -ErrorAction Stop
+        if (-not ("RevitMcpNextMouseClicker" -as [type])) {
+            Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class RevitMcpNextMouseClicker {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+  public const uint LEFTDOWN = 0x0002;
+  public const uint LEFTUP = 0x0004;
+}
+'@
+        }
+    } catch {
+        throw "Unable to initialize UIAutomation for certificate trust prompt approval. $($_.Exception.Message)"
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $buttonNames = @("Yes", "Ja", "OK")
+    $buttonIds = @("CommandButton_6", "CommandButton_1")
+    while (-not $Process.HasExited -and (Get-Date) -lt $deadline) {
+        $root = [System.Windows.Automation.AutomationElement]::RootElement
+        $elements = $root.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition
+        )
+
+        foreach ($element in $elements) {
+            $name = [string] $element.Current.Name
+            $automationId = [string] $element.Current.AutomationId
+            if ($buttonNames -notcontains $name -and $buttonIds -notcontains $automationId) {
+                continue
+            }
+
+            $rect = $element.Current.BoundingRectangle
+            if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) {
+                continue
+            }
+
+            $x = [int] ($rect.X + ($rect.Width / 2))
+            $y = [int] ($rect.Y + ($rect.Height / 2))
+            [RevitMcpNextMouseClicker]::SetCursorPos($x, $y) | Out-Null
+            Start-Sleep -Milliseconds 100
+            [RevitMcpNextMouseClicker]::mouse_event([RevitMcpNextMouseClicker]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 100
+            [RevitMcpNextMouseClicker]::mouse_event([RevitMcpNextMouseClicker]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 500
+        $Process.Refresh()
+    }
+
+    return $false
+}
+
+function Add-CertificateToRootWithCertUtil($Certificate) {
+    if (Test-CertificateInStore $Certificate "Root") {
+        return $false
+    }
+
+    if ($DryRun) {
+        return $true
+    }
+
+    $tempCertificate = Join-Path $env:TEMP ("revit-mcp-next-dev-" + $Certificate.Thumbprint + ".cer")
+    $stdoutPath = Join-Path $env:TEMP ("revit-mcp-next-dev-certutil-" + $Certificate.Thumbprint + ".out.log")
+    $stderrPath = Join-Path $env:TEMP ("revit-mcp-next-dev-certutil-" + $Certificate.Thumbprint + ".err.log")
+    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    try {
+        Export-Certificate -Cert $Certificate -FilePath $tempCertificate -Type CERT -Force | Out-Null
+        $process = Start-Process `
+            -FilePath "certutil.exe" `
+            -ArgumentList @("-user", "-addstore", "-f", "Root", $tempCertificate) `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+
+        $approved = Invoke-TrustPromptApproval $process 60
+        if (-not $process.WaitForExit(60000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $approvalMessage = if ($AutoApproveRootTrustPrompt) { "Auto-approval attempted: $approved." } else { "Pass -AutoApproveRootTrustPrompt on disposable interactive machines." }
+            throw "Timed out adding the dev signing certificate to CurrentUser Root. $approvalMessage"
+        }
+
+        if ($process.ExitCode -ne 0) {
+            $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+            throw "certutil failed adding the dev signing certificate to CurrentUser Root with exit code $($process.ExitCode). $stderr"
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempCertificate -Force -ErrorAction SilentlyContinue
+    }
+
+    return $true
+}
+
 function Add-CertificateToStore($Certificate, $StoreName) {
     if (Test-CertificateInStore $Certificate $StoreName) {
         return $false
@@ -160,14 +272,24 @@ function Add-CertificateToStore($Certificate, $StoreName) {
         return $true
     }
 
+    if ($StoreName -eq "Root") {
+        return Add-CertificateToRootWithCertUtil $Certificate
+    }
+
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
         $StoreName,
         [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
     )
     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $publicCertificate = $null
     try {
-        $store.Add($Certificate)
+        $publicBytes = $Certificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+        $publicCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$publicBytes)
+        $store.Add($publicCertificate)
     } finally {
+        if ($publicCertificate -and $publicCertificate -is [System.IDisposable]) {
+            $publicCertificate.Dispose()
+        }
         $store.Close()
     }
 

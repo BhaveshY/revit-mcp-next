@@ -7,6 +7,8 @@ param(
     [string] $LiveSmokeSkipReason = "",
     [string] $SupportBundlePath = "",
     [string] $SupportBundleSkipReason = "",
+    [string] $HostedIntegrationEvidencePath = "",
+    [string] $HostedIntegrationSkipReason = "",
     [string] $ValidateRepoLogPath = "",
     [string] $PackageLogPath = "",
     [string] $DoctorLogPath = "",
@@ -279,6 +281,119 @@ function Require-SkipOrEvidence($EvidencePath, $SkipReason, $Label) {
     }
 }
 
+function Resolve-LiveSmokeSummaryPath($EvidencePath) {
+    $resolved = Resolve-RequiredEvidencePath $EvidencePath "Live Revit smoke evidence"
+    if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+        if ((Split-Path -Leaf $resolved) -ieq "smoke-summary.json") {
+            return $resolved
+        }
+
+        throw "Live Revit smoke evidence file must be smoke-summary.json. Received: $resolved"
+    }
+
+    $direct = Join-Path $resolved "smoke-summary.json"
+    if (Test-Path -LiteralPath $direct -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $direct).Path
+    }
+
+    $candidate = Get-ChildItem -LiteralPath $resolved -Recurse -Filter "smoke-summary.json" -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($candidate) {
+        return $candidate.FullName
+    }
+
+    throw "Live Revit smoke evidence must include smoke-summary.json with status=passed. Missing under: $resolved"
+}
+
+function Read-PassedLiveSmokeSummary($EvidencePath) {
+    $summaryPath = Resolve-LiveSmokeSummaryPath $EvidencePath
+    $summary = Read-JsonFile $summaryPath
+    if ([string] $summary.status -ne "passed") {
+        throw "Live Revit smoke summary did not pass. Status: $($summary.status). Summary: $summaryPath"
+    }
+
+    if ($summary.schemaVersion -ne 1) {
+        throw "Live Revit smoke summary has unexpected schemaVersion: $($summary.schemaVersion). Summary: $summaryPath"
+    }
+
+    return [ordered] @{
+        path = $summaryPath
+        data = $summary
+    }
+}
+
+function Resolve-HostedIntegrationSummaryPath($EvidencePath) {
+    $resolved = Resolve-RequiredEvidencePath $EvidencePath "Hosted pyRevit/Dynamo integration smoke evidence"
+    if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+        if ((Split-Path -Leaf $resolved) -ieq "host-integrations-summary.json") {
+            return $resolved
+        }
+
+        throw "Hosted pyRevit/Dynamo integration smoke evidence file must be host-integrations-summary.json. Received: $resolved"
+    }
+
+    $direct = Join-Path $resolved "host-integrations-summary.json"
+    if (Test-Path -LiteralPath $direct -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $direct).Path
+    }
+
+    $candidate = Get-ChildItem -LiteralPath $resolved -Recurse -Filter "host-integrations-summary.json" -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($candidate) {
+        return $candidate.FullName
+    }
+
+    throw "Hosted pyRevit/Dynamo integration smoke evidence must include host-integrations-summary.json with status=passed. Missing under: $resolved"
+}
+
+function Get-RequiredHostSummary($Summary, $HostName, $SummaryPath) {
+    if (-not $Summary.hosts) {
+        throw "Hosted pyRevit/Dynamo integration summary is missing hosts. Summary: $SummaryPath"
+    }
+
+    $hostProperty = $Summary.hosts.PSObject.Properties[$HostName]
+    if (-not $hostProperty) {
+        throw "Hosted pyRevit/Dynamo integration summary is missing host '$HostName'. Summary: $SummaryPath"
+    }
+
+    $hostSummary = $hostProperty.Value
+    if ([string] $hostSummary.status -ne "passed") {
+        throw "Hosted pyRevit/Dynamo integration host '$HostName' did not pass. Status: $($hostSummary.status). Summary: $SummaryPath"
+    }
+
+    if ($null -ne $hostSummary.previewReady -and [bool] $hostSummary.previewReady -ne $true) {
+        throw "Hosted pyRevit/Dynamo integration host '$HostName' did not report previewReady=true. Summary: $SummaryPath"
+    }
+
+    return $hostSummary
+}
+
+function Read-PassedHostedIntegrationSummary($EvidencePath) {
+    $summaryPath = Resolve-HostedIntegrationSummaryPath $EvidencePath
+    $summary = Read-JsonFile $summaryPath
+    if ([string] $summary.status -ne "passed") {
+        throw "Hosted pyRevit/Dynamo integration summary did not pass. Status: $($summary.status). Summary: $summaryPath"
+    }
+
+    if ($summary.schemaVersion -ne 1) {
+        throw "Hosted pyRevit/Dynamo integration summary has unexpected schemaVersion: $($summary.schemaVersion). Summary: $summaryPath"
+    }
+
+    $pyRevit = Get-RequiredHostSummary $summary "pyrevit" $summaryPath
+    $dynamo = Get-RequiredHostSummary $summary "dynamo" $summaryPath
+
+    return [ordered] @{
+        path = $summaryPath
+        data = $summary
+        hosts = [ordered] @{
+            pyrevit = $pyRevit
+            dynamo = $dynamo
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot "artifacts\release-evidence"
@@ -299,6 +414,7 @@ $packageZipFull = Resolve-RequiredFile $PackageZipPath "Package zip is missing."
 
 Require-SkipOrEvidence $LiveSmokeEvidencePath $LiveSmokeSkipReason "Live Revit smoke"
 Require-SkipOrEvidence $SupportBundlePath $SupportBundleSkipReason "Support bundle"
+Require-SkipOrEvidence $HostedIntegrationEvidencePath $HostedIntegrationSkipReason "Hosted pyRevit/Dynamo integration smoke"
 
 $releaseManifest = Read-JsonFile $releaseManifestPath
 $version = [string] $releaseManifest.package.version
@@ -351,9 +467,11 @@ $liveSmokeSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
     skipReason = $LiveSmokeSkipReason
+    summary = $null
     files = @()
 }
 if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
+    $liveSmokeSummary = Read-PassedLiveSmokeSummary $LiveSmokeEvidencePath
     $liveSmokeRoot = Join-Path $stageRoot "live-smoke"
     $copiedLiveSmoke = Copy-EvidencePath $LiveSmokeEvidencePath $liveSmokeRoot "Live Revit smoke evidence"
     $liveSmokeSection = [ordered] @{
@@ -361,6 +479,18 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
         sourcePath = (Resolve-RequiredEvidencePath $LiveSmokeEvidencePath "Live Revit smoke evidence")
         storedAs = ((Get-RelativePath $stageRoot $liveSmokeRoot) -replace "\\", "/")
         skipReason = $null
+        summary = [ordered] @{
+            sourcePath = $liveSmokeSummary.path
+            status = [string] $liveSmokeSummary.data.status
+            mode = [string] $liveSmokeSummary.data.mode
+            expectedRevitYear = $liveSmokeSummary.data.expectedRevitYear
+            revit = $liveSmokeSummary.data.revit
+            activeDocument = $liveSmokeSummary.data.activeDocument
+            documentFingerprint = $liveSmokeSummary.data.documentFingerprint
+            coveredTools = $liveSmokeSummary.data.coveredTools
+            coveredOperations = $liveSmokeSummary.data.coveredOperations
+            skippedOperations = $liveSmokeSummary.data.skippedOperations
+        }
         files = Get-InventoryEntries $copiedLiveSmoke
     }
 }
@@ -380,6 +510,34 @@ if (-not [string]::IsNullOrWhiteSpace($SupportBundlePath)) {
         storedAs = ((Get-RelativePath $stageRoot $supportRoot) -replace "\\", "/")
         skipReason = $null
         files = Get-InventoryEntries $copiedSupport
+    }
+}
+
+$hostedIntegrationSection = [ordered] @{
+    status = "skipped"
+    sourcePath = $null
+    skipReason = $HostedIntegrationSkipReason
+    summary = $null
+    files = @()
+}
+if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
+    $hostedIntegrationSummary = Read-PassedHostedIntegrationSummary $HostedIntegrationEvidencePath
+    $hostedIntegrationRoot = Join-Path $stageRoot "host-integrations"
+    $copiedHostedIntegration = Copy-EvidencePath $HostedIntegrationEvidencePath $hostedIntegrationRoot "Hosted pyRevit/Dynamo integration smoke evidence"
+    $hostedIntegrationSection = [ordered] @{
+        status = "captured"
+        sourcePath = (Resolve-RequiredEvidencePath $HostedIntegrationEvidencePath "Hosted pyRevit/Dynamo integration smoke evidence")
+        storedAs = ((Get-RelativePath $stageRoot $hostedIntegrationRoot) -replace "\\", "/")
+        skipReason = $null
+        summary = [ordered] @{
+            sourcePath = $hostedIntegrationSummary.path
+            status = [string] $hostedIntegrationSummary.data.status
+            hosts = [ordered] @{
+                pyrevit = $hostedIntegrationSummary.hosts.pyrevit
+                dynamo = $hostedIntegrationSummary.hosts.dynamo
+            }
+        }
+        files = Get-InventoryEntries $copiedHostedIntegration
     }
 }
 
@@ -433,6 +591,7 @@ $evidenceManifest = [ordered] @{
     validation = $validationSection
     liveSmoke = $liveSmokeSection
     supportBundle = $supportSection
+    hostedIntegrations = $hostedIntegrationSection
     commandLogs = $commandLogs
     additionalEvidence = $additionalEvidence
     contents = @()
@@ -448,7 +607,8 @@ $summaryLines = @(
     "- Git dirty: $($releaseManifest.package.gitDirty)",
     "- Signing: $signingStatus",
     "- Live smoke: $($liveSmokeSection.status)",
-    "- Support bundle: $($supportSection.status)"
+    "- Support bundle: $($supportSection.status)",
+    "- Hosted pyRevit/Dynamo integrations: $($hostedIntegrationSection.status)"
 )
 
 if ($signingStatus -eq "skipped") {
@@ -459,6 +619,9 @@ if ($liveSmokeSection.status -eq "skipped") {
 }
 if ($supportSection.status -eq "skipped") {
     $summaryLines += "- Support bundle skip reason: $SupportBundleSkipReason"
+}
+if ($hostedIntegrationSection.status -eq "skipped") {
+    $summaryLines += "- Hosted pyRevit/Dynamo integrations skip reason: $HostedIntegrationSkipReason"
 }
 
 $summaryLines += @(

@@ -5,10 +5,12 @@ param(
     [int[]] $RevitYears = @(2024),
     [string] $InstallRoot = "$env:LOCALAPPDATA\RevitMcpNext",
     [string] $NodePath = "",
-    [string] $PackageRoot = ""
+    [string] $PackageRoot = "",
+    [switch] $TrustRevitAlwaysLoad
 )
 
 $ErrorActionPreference = "Stop"
+$addinClientId = "6F78E70D-BE13-4E0B-9B11-9E28F876AF71"
 
 function Write-Step($Message) {
     Write-Host "[revit-mcp-next] $Message"
@@ -347,6 +349,18 @@ function Ensure-AuthTokenConfig($Path) {
     }
 }
 
+function Assert-SupportedRevitYears {
+    if (-not $RevitYears -or $RevitYears.Count -eq 0) {
+        throw "At least one Revit year must be supplied."
+    }
+
+    foreach ($year in ($RevitYears | Sort-Object -Unique)) {
+        if ($year -ne 2024) {
+            throw "Revit $year install is not supported yet. Revit 2025+ requires year-specific .NET 8 add-in artifacts; this installer currently supports Revit 2024 only."
+        }
+    }
+}
+
 function Get-ReleaseVersion($SourceMode, $PackageRootPath, $RepoRootPath) {
     if ($SourceMode -eq "package") {
         $manifestPath = Join-Path $PackageRootPath "release-manifest.json"
@@ -366,6 +380,7 @@ function Get-ReleaseVersion($SourceMode, $PackageRootPath, $RepoRootPath) {
     return "0.1.0"
 }
 
+Assert-SupportedRevitYears
 Assert-SafeInstallRoot
 
 Write-Step "Installing Revit MCP Next"
@@ -396,6 +411,14 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
 $nodeExe = Resolve-NodeExe
 Assert-NodeVersion $nodeExe
 $releaseVersion = Get-ReleaseVersion $sourceMode $resolvedPackageRoot $repoRoot
+$revitTrustScript = ""
+if ($TrustRevitAlwaysLoad) {
+    if ($sourceMode -eq "package") {
+        $revitTrustScript = Resolve-RequiredFile (Join-Path $resolvedPackageRoot "scripts\ensure-revit-addin-trust.ps1") "Packaged Revit trust helper is missing."
+    } else {
+        $revitTrustScript = Resolve-RequiredFile (Join-Path $repoRoot "scripts\ensure-revit-addin-trust.ps1") "Revit trust helper is missing."
+    }
+}
 
 if ($sourceMode -eq "package") {
     $payloadRoot = Resolve-RequiredDirectory (Join-Path $resolvedPackageRoot "payload") "Package payload is missing."
@@ -537,10 +560,15 @@ $clientDiscoveryContent = [ordered] @{
     installRoot = (Get-FullPath $InstallRoot)
     protocolVersion = "2026-06-23"
     pipeName = "revit-mcp-next"
+    addinClientId = $addinClientId
     launcherPath = (Get-FullPath $launcher)
     authConfigPath = (Get-FullPath $authConfig)
     brokerEntryPath = (Get-FullPath $installedBrokerEntry)
     addinAssemblyPath = (Get-FullPath (Join-Path $installedAddin "RevitMcpNext.Addin.dll"))
+    supportedRevitYears = $RevitYears
+    addinAssemblyPaths = [ordered] @{
+        "2024" = (Get-FullPath (Join-Path $installedAddin "RevitMcpNext.Addin.dll"))
+    }
     integrationsPath = (Get-FullPath $installedIntegrations)
     pythonClientPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_client.py"))
     pythonInProcessHelperPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_inprocess.py"))
@@ -554,6 +582,7 @@ $clientDiscoveryContent = [ordered] @{
         "revit.get_selection",
         "revit.analyze_model",
         "revit.get_material_quantities",
+        "revit.get_rooms",
         "revit.catalog",
         "revit.query",
         "revit.preview_change_set",
@@ -567,11 +596,13 @@ $clientDiscoveryContent = [ordered] @{
         "create_wall",
         "create_grid",
         "create_floor",
+        "create_room",
         "move_element",
         "rotate_element",
         "copy_element",
         "change_element_type",
-        "set_element_pinned"
+        "set_element_pinned",
+        "delete_element"
     )
 }
 
@@ -597,6 +628,23 @@ foreach ($year in $RevitYears) {
     }
 }
 
+if ($TrustRevitAlwaysLoad) {
+    $trustArgs = @("-RevitYears")
+    foreach ($year in $RevitYears) {
+        $trustArgs += "$year"
+    }
+    $trustArgs += @("-ClientId", $addinClientId)
+    if ($DryRun) {
+        $trustArgs += "-DryRun"
+    }
+
+    Write-Step "Seeding Revit Always Load trust for local/test install."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $revitTrustScript @trustArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Revit Always Load trust helper failed with exit code $LASTEXITCODE."
+    }
+}
+
 $receiptPackageRoot = $null
 if ($sourceMode -eq "package") {
     $receiptPackageRoot = $resolvedPackageRoot
@@ -609,6 +657,11 @@ $installReceipt = [ordered] @{
     packageRoot = $receiptPackageRoot
     installRoot = (Get-FullPath $InstallRoot)
     revitYears = $RevitYears
+    addinClientId = $addinClientId
+    revitAlwaysLoadTrust = [ordered] @{
+        requested = [bool] $TrustRevitAlwaysLoad
+        helper = $revitTrustScript
+    }
     packagedNodeModules = -not [string]::IsNullOrWhiteSpace($packagedNodeModules)
     checksumVerification = ($sourceMode -ne "package" -or -not $SkipChecksumVerification)
     nodePath = $nodeExe

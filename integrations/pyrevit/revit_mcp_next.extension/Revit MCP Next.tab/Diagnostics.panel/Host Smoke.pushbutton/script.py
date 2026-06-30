@@ -39,7 +39,7 @@ def candidate_python_dirs():
 
 def add_installed_python_client_to_path():
     for python_dir in candidate_python_dirs():
-        if os.path.exists(os.path.join(python_dir, "revit_mcp_next_inprocess.py")):
+        if os.path.exists(os.path.join(python_dir, "revit_mcp_next_host_smoke.py")):
             if python_dir not in sys.path:
                 sys.path.insert(0, python_dir)
             return python_dir
@@ -48,9 +48,11 @@ def add_installed_python_client_to_path():
 
 add_installed_python_client_to_path()
 
-from revit_mcp_next_inprocess import status  # noqa: E402
+from revit_mcp_next_host_smoke import run_host_smoke  # noqa: E402
 
 
-response = status(__revit__)
+evidence_path = os.environ.get("REVIT_MCP_NEXT_PYREVIT_EVIDENCE")
+model_path = os.environ.get("REVIT_MCP_NEXT_PYREVIT_MODEL")
+evidence = run_host_smoke(__revit__, "pyrevit", evidence_path=evidence_path, model_path=model_path)
 
-print(json.dumps(response, indent=2, sort_keys=True))
+print(json.dumps(evidence, indent=2, sort_keys=True))

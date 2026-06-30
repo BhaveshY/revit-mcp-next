@@ -13,6 +13,7 @@ namespace RevitMcpNext.Addin
     {
         private static readonly object Gate = new object();
         private static RevitExternalEventHandler _handler;
+        private static RevitExternalEventHandler _directFallbackHandler;
 
         internal static void Configure(RevitExternalEventHandler handler)
         {
@@ -80,9 +81,20 @@ namespace RevitMcpNext.Addin
             }
 
             RevitExternalEventHandler handler;
+            bool addinHandlerActive;
             lock (Gate)
             {
                 handler = _handler;
+                addinHandlerActive = handler != null;
+                if (handler == null)
+                {
+                    _directFallbackHandler = _directFallbackHandler ??
+                        new RevitExternalEventHandler(
+                            new RevitRequestQueue(),
+                            new TransactionService(),
+                            new DocumentGenerationTracker());
+                    handler = _directFallbackHandler;
+                }
             }
 
             if (handler == null)
@@ -95,7 +107,35 @@ namespace RevitMcpNext.Addin
             }
 
             BridgeResponseEnvelope response = handler.HandleDirect(app, request);
+            AddInProcessBridgeStatus(response, request, addinHandlerActive);
             return SerializeResponse(response);
+        }
+
+        private static void AddInProcessBridgeStatus(
+            BridgeResponseEnvelope response,
+            BridgeRequestEnvelope request,
+            bool addinHandlerActive)
+        {
+            if (response == null ||
+                request == null ||
+                !string.Equals(request.Operation, "status", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var data = response.Data as Dictionary<string, object>;
+            if (data == null)
+            {
+                data = new Dictionary<string, object>();
+                response.Data = data;
+            }
+
+            data["inProcessBridge"] = new Dictionary<string, object>
+            {
+                ["addinHandlerActive"] = addinHandlerActive,
+                ["handler"] = addinHandlerActive ? "configuredAddin" : "directFallback",
+                ["directFallbackActive"] = !addinHandlerActive
+            };
         }
 
         private static BridgeRequestEnvelope ParseRequest(string requestJson)
@@ -257,4 +297,3 @@ namespace RevitMcpNext.Addin
         }
     }
 }
-

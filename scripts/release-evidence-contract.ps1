@@ -91,6 +91,88 @@ function New-SyntheticAddinOutput($Root) {
     Set-Content -LiteralPath (Join-Path $Root "RevitMcpNext.Contracts.dll") -Value "synthetic contracts placeholder for evidence contract" -Encoding ASCII
 }
 
+function New-SyntheticHostIntegrationEvidence($Root, [switch] $Failed) {
+    New-Item -ItemType Directory -Force -Path $Root | Out-Null
+
+    $pyRevitEvidencePath = Join-Path $Root "pyrevit.json"
+    $dynamoEvidencePath = Join-Path $Root "dynamo.json"
+    $dynamoStatus = if ($Failed) { "failed" } else { "passed" }
+    $dynamoPreviewReady = if ($Failed) { $false } else { $true }
+
+    Set-Content -LiteralPath $pyRevitEvidencePath -Value ([ordered] @{
+        schemaVersion = 1
+        status = "passed"
+        host = "pyrevit"
+        activeDocument = [ordered] @{
+            title = "Synthetic Evidence Contract.rvt"
+            fingerprint = "doc-synthetic-evidence-contract"
+            generation = 42
+        }
+        coveredTools = @("inprocess.status", "inprocess.preview_change_set", "inprocess.apply_change_set")
+        coveredOperations = @("create_level")
+        applyWrites = $true
+        previewReady = $true
+        inProcessBridge = [ordered] @{
+            addinHandlerActive = $true
+            handler = "configuredAddin"
+            directFallbackActive = $false
+        }
+        createdElementIds = @("9001")
+        evidencePath = $pyRevitEvidencePath
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+
+    Set-Content -LiteralPath $dynamoEvidencePath -Value ([ordered] @{
+        schemaVersion = 1
+        status = $dynamoStatus
+        host = "dynamo"
+        activeDocument = [ordered] @{
+            title = "Synthetic Evidence Contract.rvt"
+            fingerprint = "doc-synthetic-evidence-contract"
+            generation = 42
+        }
+        coveredTools = @("inprocess.status", "inprocess.preview_change_set", "inprocess.apply_change_set")
+        coveredOperations = @("create_level")
+        applyWrites = $true
+        previewReady = $dynamoPreviewReady
+        inProcessBridge = [ordered] @{
+            addinHandlerActive = -not $Failed
+            handler = if ($Failed) { "directFallback" } else { "configuredAddin" }
+            directFallbackActive = [bool] $Failed
+        }
+        createdElementIds = if ($Failed) { @() } else { @("9002") }
+        evidencePath = $dynamoEvidencePath
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+
+    Set-Content -LiteralPath (Join-Path $Root "host-integrations-summary.json") -Value ([ordered] @{
+        schemaVersion = 1
+        status = if ($Failed) { "failed" } else { "passed" }
+        hosts = [ordered] @{
+            pyrevit = [ordered] @{
+                status = "passed"
+                evidencePath = "pyrevit.json"
+                previewReady = $true
+                inProcessBridge = [ordered] @{
+                    addinHandlerActive = $true
+                    handler = "configuredAddin"
+                    directFallbackActive = $false
+                }
+                createdElementIds = @("9001")
+            }
+            dynamo = [ordered] @{
+                status = $dynamoStatus
+                evidencePath = "dynamo.json"
+                previewReady = $dynamoPreviewReady
+                inProcessBridge = [ordered] @{
+                    addinHandlerActive = -not $Failed
+                    handler = if ($Failed) { "directFallback" } else { "configuredAddin" }
+                    directFallbackActive = [bool] $Failed
+                }
+                createdElementIds = if ($Failed) { @() } else { @("9002") }
+            }
+        }
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+}
+
 function Assert-ScriptFailsLike([string] $Path, [string[]] $Arguments, [string] $ExpectedPattern, [string] $Label) {
     $oldErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -169,6 +251,8 @@ try {
     $installRoot = Join-Path $runRoot "inst"
     $supportRoot = Join-Path $runRoot "sup"
     $liveSmokeRoot = Join-Path $runRoot "live"
+    $hostIntegrationRawRoot = Join-Path $runRoot "host-integrations-raw"
+    $hostIntegrationRoot = Join-Path $runRoot "host-integrations"
     $evidenceOutputRoot = Join-Path $runRoot "evidence"
     $logsRoot = Join-Path $runRoot "logs"
     $env:APPDATA = Join-Path $runRoot "ad"
@@ -219,6 +303,43 @@ try {
     New-Item -ItemType Directory -Force -Path $liveSmokeRoot | Out-Null
     Set-Content -LiteralPath (Join-Path $liveSmokeRoot "smoke-revit.log") -Value "synthetic live smoke artifact for evidence contract" -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $liveSmokeRoot "run-inputs.json") -Value (@{ revitYear = 2024; synthetic = $true } | ConvertTo-Json) -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $liveSmokeRoot "smoke-summary.json") -Value ([ordered] @{
+        schemaVersion = 1
+        status = "passed"
+        mode = "full"
+        expectedRevitYear = "2024"
+        revit = [ordered] @{
+            version = "2024"
+            build = "synthetic"
+        }
+        activeDocument = [ordered] @{
+            title = "Synthetic Evidence Contract.rvt"
+            fingerprint = "doc-synthetic-evidence-contract"
+            generation = 42
+        }
+        documentFingerprint = "doc-synthetic-evidence-contract"
+        coveredTools = @("revit.status", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
+        coveredOperations = @("create_level", "create_wall", "create_room")
+        skippedOperations = @()
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+
+    $failedLiveSmokeRoot = Join-Path $runRoot "live-failed"
+    New-Item -ItemType Directory -Force -Path $failedLiveSmokeRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $failedLiveSmokeRoot "smoke-summary.json") -Value (@{
+        schemaVersion = 1
+        status = "failed"
+        error = "synthetic failed smoke"
+    } | ConvertTo-Json) -Encoding UTF8
+
+    New-SyntheticHostIntegrationEvidence $hostIntegrationRawRoot
+    Invoke-RepoScript (Join-Path $logsRoot "host-integrations-evidence.log") (Join-Path $repoRoot "scripts\collect-host-integration-evidence.ps1") @(
+        "-PyRevitEvidencePath", (Join-Path $hostIntegrationRawRoot "pyrevit.json"),
+        "-DynamoEvidencePath", (Join-Path $hostIntegrationRawRoot "dynamo.json"),
+        "-OutputRoot", $hostIntegrationRoot
+    )
+
+    $failedHostIntegrationRoot = Join-Path $runRoot "host-integrations-failed"
+    New-SyntheticHostIntegrationEvidence $failedHostIntegrationRoot -Failed
 
     $evidenceScript = Join-Path $repoRoot "scripts\collect-release-evidence.ps1"
     Assert-ScriptFailsLike $evidenceScript @(
@@ -239,19 +360,47 @@ try {
         "-PackageRoot", $packageRoot,
         "-OutputRoot", (Join-Path $runRoot "fail-signing"),
         "-LiveSmokeEvidencePath", $liveSmokeRoot,
-        "-SupportBundlePath", $supportZip.FullName
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot
     ) "*Signing was not requested for this build*" "Missing signing skip reason gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-smoke-summary"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $failedLiveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot
+    ) "*Live Revit smoke summary did not pass*" "Failed live-smoke summary gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-missing"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName
+    ) "*Hosted pyRevit/Dynamo integration smoke evidence was not provided*" "Missing hosted integration evidence gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-summary"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $failedHostIntegrationRoot
+    ) "*Hosted pyRevit/Dynamo integration summary did not pass*" "Failed hosted integration summary gate"
 
     Invoke-RepoScript (Join-Path $logsRoot "release-evidence.log") $evidenceScript @(
         "-PackageRoot", $packageRoot,
         "-OutputRoot", $evidenceOutputRoot,
         "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
         "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot,
         "-SupportBundlePath", $supportZip.FullName,
         "-ValidateRepoLogPath", $validateLog,
         "-PackageLogPath", $packageLog,
         "-DoctorLogPath", $doctorLog,
-        "-CommandLogPaths", $supportLog
+        "-CommandLogPaths", $supportLog, (Join-Path $logsRoot "host-integrations-evidence.log")
     )
 
     $evidenceRoot = Get-ChildItem -LiteralPath $evidenceOutputRoot -Directory | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
@@ -282,8 +431,29 @@ try {
     if ($evidenceManifest.liveSmoke.status -ne "captured") {
         throw "Live smoke evidence was not marked captured."
     }
+    if ($evidenceManifest.liveSmoke.summary.status -ne "passed") {
+        throw "Live smoke summary pass status was not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.expectedRevitYear -ne "2024") {
+        throw "Live smoke expected Revit year was not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.documentFingerprint -ne "doc-synthetic-evidence-contract") {
+        throw "Live smoke document fingerprint was not recorded."
+    }
     if ($evidenceManifest.supportBundle.status -ne "captured") {
         throw "Support bundle evidence was not marked captured."
+    }
+    if ($evidenceManifest.hostedIntegrations.status -ne "captured") {
+        throw "Hosted pyRevit/Dynamo evidence was not marked captured."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.status -ne "passed") {
+        throw "Hosted pyRevit/Dynamo summary pass status was not recorded."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.hosts.pyrevit.status -ne "passed") {
+        throw "pyRevit hosted integration pass status was not recorded."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.hosts.dynamo.status -ne "passed") {
+        throw "Dynamo hosted integration pass status was not recorded."
     }
     if ($evidenceManifest.validation.validateRepoLog.present -ne $true) {
         throw "validate-repo log was not recorded."
@@ -298,6 +468,7 @@ try {
     Assert-InventoryContains $evidenceManifest.contents "package/release-manifest.json"
     Assert-InventoryContains $evidenceManifest.contents "package/CHECKSUMS.sha256"
     Assert-InventoryContains $evidenceManifest.contents "package/package-zip.sha256"
+    Assert-InventoryContains $evidenceManifest.contents "host-integrations/host-integrations-summary.json"
     Assert-InventoryContains $evidenceManifest.contents "release-evidence-summary.md"
 
     $authToken = Read-AuthTokenConfig (Join-Path $installRoot "config\auth.env")

@@ -90,6 +90,24 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   assert.equal(materials.data.items[0]?.materialId, "7001");
   assert.equal(materials.data.units.area, "m2");
   assert.equal(materials.data.units.volume, "m3");
+
+  const rooms = await bridge.getRooms(
+    makeRequest(
+      "test",
+      "get_rooms",
+      "read",
+      { filter: { levelIds: ["311"], numberContains: "101" }, preset: "schedule", includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(rooms.ok, true);
+  if (!rooms.ok) return;
+  assert.equal(rooms.data.returnedCount, 1);
+  assert.equal(rooms.data.totalCount, 1);
+  assert.equal(rooms.data.items[0]?.id, "601");
+  assert.equal(rooms.data.items[0]?.number, "101");
+  assert.equal(rooms.data.units.area, "m2");
+  assert.equal(rooms.data.units.location, "mm");
 });
 
 test("fake bridge returns bounded catalog result shape with compatibility paging", async () => {
@@ -172,6 +190,10 @@ test("fake bridge previews and applies a bounded change set", async () => {
     x: { value: 0, unit: "mm", system: "metric" as const },
     y: { value: 250, unit: "mm", system: "metric" as const },
     z: { value: 0, unit: "mm", system: "metric" as const },
+  };
+  const roomLocation = {
+    x: { value: 2500, unit: "mm", system: "metric" as const },
+    y: { value: 1200, unit: "mm", system: "metric" as const },
   };
   const changeSet = {
     documentFingerprint: "sample-doc-fingerprint",
@@ -271,6 +293,15 @@ test("fake bridge previews and applies a bounded change set", async () => {
           },
         ],
       },
+      {
+        id: "op-11",
+        type: "create_room" as const,
+        levelId: "311",
+        location: roomLocation,
+        name: "Conference",
+        number: "101",
+        department: "Operations",
+      },
     ],
   } satisfies ChangeSetRequest;
 
@@ -278,7 +309,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 10);
+  assert.equal(preview.data.operationCount, 11);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -324,6 +355,12 @@ test("fake bridge previews and applies a bounded change set", async () => {
     levelId: "311",
     floorTypeId: "9100",
   });
+  assert.equal(preview.data.changes[10]?.type, "create_room");
+  assert.deepEqual(preview.data.changes[10]?.target, {
+    document: "Sample.rvt",
+    levelId: "311",
+  });
+  assert.deepEqual(preview.data.changes[10]?.after?.location, roomLocation);
 
   const applyPayload = {
     ...changeSet,
@@ -340,7 +377,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 10);
+  assert.equal(applied.data.changedCount, 11);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
@@ -351,4 +388,5 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.data.changes[7]?.type, "set_element_pinned");
   assert.equal(applied.data.changes[8]?.type, "create_grid");
   assert.equal(applied.data.changes[9]?.type, "create_floor");
+  assert.equal(applied.data.changes[10]?.type, "create_room");
 });

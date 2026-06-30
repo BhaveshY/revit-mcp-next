@@ -46,7 +46,9 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.get_selection",
       "revit.analyze_model",
       "revit.get_material_quantities",
+      "revit.get_rooms",
       "revit.catalog",
+      "revit.query",
       "revit.preview_change_set",
       "revit.apply_change_set",
       "revit.cancel_request",
@@ -123,6 +125,76 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(materialQuantities.structuredContent?.data?.units?.volume, "m3");
     assert.equal(materialQuantities.structuredContent?.data?.items?.[0]?.materialId, "7001");
 
+    const roomsTool = tools.tools.find((tool) => tool.name === "revit.get_rooms");
+    assert.ok(roomsTool?.inputSchema, "revit.get_rooms should declare inputSchema");
+    assert.equal(roomsTool.annotations?.readOnlyHint, true);
+    const roomsSchema = JSON.stringify(roomsTool.inputSchema);
+    for (const expectedRoomSchemaTerm of [
+      "levelIds",
+      "phaseIds",
+      "numbers",
+      "numberContains",
+      "includeUnplaced",
+      "schedule",
+      "fields",
+      "includeTotalCount",
+    ]) {
+      assert.match(roomsSchema, new RegExp(expectedRoomSchemaTerm));
+    }
+    const rooms = (await client.callTool({
+      name: "revit.get_rooms",
+      arguments: {
+        filter: { levelIds: ["311"], numberContains: "101" },
+        preset: "schedule",
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          returnedCount?: number;
+          totalCount?: number;
+          units?: { area?: string; volume?: string; location?: string };
+          items?: Array<{ id?: string; number?: string; name?: string }>;
+        };
+      };
+    };
+    assert.equal(rooms.isError, undefined);
+    assert.equal(rooms.structuredContent?.data?.returnedCount, 1);
+    assert.equal(rooms.structuredContent?.data?.totalCount, 1);
+    assert.equal(rooms.structuredContent?.data?.units?.area, "m2");
+    assert.equal(rooms.structuredContent?.data?.units?.volume, "m3");
+    assert.equal(rooms.structuredContent?.data?.units?.location, "mm");
+    assert.equal(rooms.structuredContent?.data?.items?.[0]?.id, "601");
+    assert.equal(rooms.structuredContent?.data?.items?.[0]?.number, "101");
+    assert.equal(rooms.structuredContent?.data?.items?.[0]?.name, "Conference");
+
+    const queryTool = tools.tools.find((tool) => tool.name === "revit.query");
+    assert.ok(queryTool?.inputSchema, "revit.query should declare inputSchema");
+    const querySchema = JSON.stringify(queryTool.inputSchema);
+    assert.match(querySchema, /elementIds/);
+    assert.match(querySchema, /uniqueIds/);
+    const explicitQuery = (await client.callTool({
+      name: "revit.query",
+      arguments: {
+        filter: { elementIds: ["501"] },
+        fields: ["id", "uniqueId", "class"],
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: { scope?: string; returnedCount?: number; totalCount?: number; items?: Array<{ id?: string; uniqueId?: string; class?: string }> };
+      };
+    };
+    assert.equal(explicitQuery.isError, undefined);
+    assert.equal(explicitQuery.structuredContent?.data?.scope, "elements");
+    assert.equal(explicitQuery.structuredContent?.data?.returnedCount, 1);
+    assert.equal(explicitQuery.structuredContent?.data?.totalCount, 1);
+    assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.id, "501");
+    assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.uniqueId, "wall-501");
+    assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.class, "Wall");
+
     const catalogTool = tools.tools.find((tool) => tool.name === "revit.catalog");
     assert.ok(catalogTool?.inputSchema, "revit.catalog should declare inputSchema");
     assert.equal(catalogTool.annotations?.readOnlyHint, true);
@@ -190,6 +262,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "set_element_pinned",
       "create_grid",
       "create_floor",
+      "create_room",
+      "delete_element",
       "levelId",
       "start",
       "end",
@@ -204,8 +278,14 @@ test("broker exposes annotated tools with output schemas and callable structured
       "typeId",
       "pinned",
       "expectedPinned",
+      "expectedUniqueId",
+      "allowPinned",
       "outline",
       "floorTypeId",
+      "location",
+      "number",
+      "department",
+      "allowDuplicateNumber",
       "changeSetHash",
       "documentFingerprint",
       "expectedGeneration",
@@ -224,6 +304,10 @@ test("broker exposes annotated tools with output schemas and callable structured
       x: { value: 4200, unit: "mm", system: "metric" },
       y: { value: 0, unit: "mm", system: "metric" },
       z: { value: 0, unit: "mm", system: "metric" },
+    };
+    const roomLocation = {
+      x: { value: 2000, unit: "mm", system: "metric" },
+      y: { value: 1500, unit: "mm", system: "metric" },
     };
     const operations = [
       {
@@ -328,6 +412,20 @@ test("broker exposes annotated tools with output schemas and callable structured
           },
         ],
       },
+      {
+        type: "create_room",
+        levelId: "311",
+        location: roomLocation,
+        name: "Conference",
+        number: "101",
+        department: "Operations",
+      },
+      {
+        type: "delete_element",
+        elementId: "501",
+        expectedUniqueId: "wall-501",
+        expectedPinned: false,
+      },
     ];
     const preview = (await client.callTool({
       name: "revit.preview_change_set",
@@ -343,6 +441,7 @@ test("broker exposes annotated tools with output schemas and callable structured
         data?: {
           previewId?: string;
           ready?: boolean;
+          riskLevel?: string;
           changeSetHash?: string;
           documentFingerprint?: string;
           baseGeneration?: number;
@@ -352,6 +451,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(preview.isError, undefined);
     assert.equal(preview.structuredContent?.data?.ready, true);
+    assert.equal(preview.structuredContent?.data?.riskLevel, "high");
     assert.ok(preview.structuredContent?.data?.previewId);
     assert.ok(preview.structuredContent?.data?.changeSetHash);
 
@@ -373,7 +473,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 9);
+    assert.equal(apply.structuredContent?.data?.changedCount, 11);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

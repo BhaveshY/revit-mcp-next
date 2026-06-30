@@ -7,6 +7,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
 using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Contracts;
@@ -23,6 +24,7 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxStatisticsScanLimit = 100000;
         private const int MaxMaterialLimit = 200;
         private const int MaxMaterialScanLimit = 100000;
+        private const int MaxRoomLimit = 500;
         private const int MaxChangeSetOperations = 50;
         private readonly RevitRequestQueue _queue;
         private readonly TransactionService _transactions;
@@ -122,6 +124,8 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleAnalyzeModel(app, request, sw);
                         case "get_material_quantities":
                             return HandleGetMaterialQuantities(app, request, sw);
+                        case "get_rooms":
+                            return HandleGetRooms(app, request, sw);
                         case "catalog":
                             return HandleCatalog(app, request, sw);
                         case "query":
@@ -546,6 +550,75 @@ namespace RevitMcpNext.Addin.Revit
                 generation: generation);
         }
 
+        private BridgeResponseEnvelope HandleGetRooms(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_rooms.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
+            int limit = Math.Min(MaxRoomLimit, Math.Max(1, GetInt(payload, "limit") ?? 50));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includeUnplaced = GetBool(payload, "includeUnplaced", false);
+            string[] fields = NormalizeRoomFields(GetStringList(payload, "fields"), GetString(payload, "preset"), warnings);
+
+            List<Room> materialized = CreateRoomElements(document, filter, warnings)
+                .Where(room => includeUnplaced || IsRoomPlaced(room))
+                .Where(room => MatchesRoomFilter(document, room, filter))
+                .OrderBy(room => GetRoomLevelName(document, room), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(GetRoomNumber, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(SafeElementName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(room => GetElementIdValue(room.Id))
+                .ToList();
+            int totalCount = materialized.Count;
+            List<Room> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["items"] = page.Select(room => BuildRoomItem(document, room, fields)).ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < totalCount,
+                ["fields"] = fields,
+                ["units"] = new Dictionary<string, object>
+                {
+                    ["area"] = "m2",
+                    ["volume"] = "m3",
+                    ["location"] = "mm"
+                },
+                ["scope"] = "rooms",
+                ["source"] = "revit-addin"
+            };
+
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
         private BridgeResponseEnvelope HandleScopedElementList(
             UIApplication app,
             BridgeRequestEnvelope request,
@@ -759,10 +832,15 @@ namespace RevitMcpNext.Addin.Revit
                     string.Equals(operationType, "create_wall", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_grid", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_floor", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_room", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "copy_element", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase))
                 {
                     riskLevel = "medium";
+                }
+                if (string.Equals(operationType, "delete_element", StringComparison.OrdinalIgnoreCase))
+                {
+                    riskLevel = "high";
                 }
             }
 
@@ -938,6 +1016,10 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewCreateGrid(document, operation, index, validationContext);
                 case "create_floor":
                     return PreviewCreateFloor(document, operation, index);
+                case "create_room":
+                    return PreviewCreateRoom(document, operation, index, validationContext);
+                case "delete_element":
+                    return PreviewDeleteElement(document, operation, index);
                 default:
                     return BlockedChange(operation, index, "Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -968,6 +1050,10 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyCreateGrid(document, operation, index);
                 case "create_floor":
                     return ApplyCreateFloor(document, operation, index);
+                case "create_room":
+                    return ApplyCreateRoom(document, operation, index);
+                case "delete_element":
+                    return ApplyDeleteElement(document, operation, index);
                 default:
                     throw new InvalidOperationException("Unsupported change operation type: " + (type ?? "(missing)"));
             }
@@ -1349,6 +1435,101 @@ namespace RevitMcpNext.Addin.Revit
                 after: FloorSnapshot(floor, points));
         }
 
+        private static Dictionary<string, object> PreviewCreateRoom(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
+        {
+            string levelId = GetString(operation, "levelId");
+            Dictionary<string, object> locationValue = GetDictionary(operation, "location");
+            if (string.IsNullOrWhiteSpace(levelId)) return BlockedChange(operation, index, "create_room requires levelId.");
+            if (locationValue == null) return BlockedChange(operation, index, "create_room requires location.");
+
+            Level level = ResolveElement(document, levelId) as Level;
+            if (level == null) return BlockedChange(operation, index, "Level " + levelId + " was not found.");
+
+            UV location;
+            try
+            {
+                location = ToInternalUv(locationValue, "location");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            string number = NormalizeOptionalText(GetString(operation, "number"));
+            bool allowDuplicateNumber = GetBool(operation, "allowDuplicateNumber", false);
+            if (!string.IsNullOrWhiteSpace(number) && !allowDuplicateNumber)
+            {
+                if (RoomNumberExists(document, number))
+                {
+                    return BlockedChange(operation, index, "A room numbered '" + number + "' already exists.");
+                }
+                if (validationContext != null && !validationContext.TryAddRoomNumber(number))
+                {
+                    return BlockedChange(operation, index, "The change set creates duplicate room number '" + number + "'.");
+                }
+            }
+
+            Room existingRoom = document.GetRoomAtPoint(new XYZ(location.U, location.V, level.Elevation));
+            if (existingRoom != null)
+            {
+                return BlockedChange(operation, index, "Room " + GetRoomNumber(existingRoom) + " already contains the requested location.");
+            }
+
+            var after = new Dictionary<string, object>
+            {
+                ["levelId"] = ToElementIdString(level.Id),
+                ["levelName"] = level.Name,
+                ["location"] = Point2Value(location),
+                ["allowDuplicateNumber"] = allowDuplicateNumber
+            };
+
+            string name = NormalizeOptionalText(GetString(operation, "name"));
+            string department = NormalizeOptionalText(GetString(operation, "department"));
+            if (!string.IsNullOrWhiteSpace(name)) after["name"] = name;
+            if (!string.IsNullOrWhiteSpace(number)) after["number"] = number;
+            if (!string.IsNullOrWhiteSpace(department)) after["department"] = department;
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["document"] = document.Title,
+                    ["levelId"] = ToElementIdString(level.Id),
+                    ["levelName"] = level.Name
+                },
+                before: null,
+                after: after);
+        }
+
+        private static Dictionary<string, object> ApplyCreateRoom(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateRoom(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_room preview failed.");
+            }
+
+            Level level = ResolveElement(document, GetString(operation, "levelId")) as Level;
+            UV location = ToInternalUv(GetDictionary(operation, "location"), "location");
+            Room room = document.Create.NewRoom(level, location);
+            if (room == null)
+            {
+                throw new InvalidOperationException("Revit did not create a room at the requested location.");
+            }
+
+            SetRoomStringParameter(room, BuiltInParameter.ROOM_NAME, NormalizeOptionalText(GetString(operation, "name")));
+            SetRoomStringParameter(room, BuiltInParameter.ROOM_NUMBER, NormalizeOptionalText(GetString(operation, "number")));
+            SetRoomStringParameter(room, BuiltInParameter.ROOM_DEPARTMENT, NormalizeOptionalText(GetString(operation, "department")));
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(room, null),
+                before: null,
+                after: RoomSnapshot(room));
+        }
+
         private static Dictionary<string, object> PreviewMoveElement(Document document, Dictionary<string, object> operation, int index)
         {
             string elementId = GetString(operation, "elementId");
@@ -1661,6 +1842,67 @@ namespace RevitMcpNext.Addin.Revit
                 });
         }
 
+        private static Dictionary<string, object> PreviewDeleteElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            string elementId = GetString(operation, "elementId");
+            if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "delete_element requires elementId.");
+
+            Element element = ResolveElement(document, elementId);
+            if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be deleted by delete_element.");
+
+            string expectedUniqueId = GetString(operation, "expectedUniqueId");
+            if (!string.IsNullOrWhiteSpace(expectedUniqueId) && !string.Equals(element.UniqueId, expectedUniqueId, StringComparison.Ordinal))
+            {
+                return BlockedChange(operation, index, "Element " + elementId + " uniqueId did not match expectedUniqueId.");
+            }
+
+            bool? expectedPinned = GetNullableBool(operation, "expectedPinned");
+            if (expectedPinned.HasValue && expectedPinned.Value != element.Pinned)
+            {
+                return BlockedChange(
+                    operation,
+                    index,
+                    "Element " + elementId + " pinned state is " + element.Pinned.ToString(CultureInfo.InvariantCulture) +
+                    " but expectedPinned was " + expectedPinned.Value.ToString(CultureInfo.InvariantCulture) + ".");
+            }
+
+            if (element.Pinned && !GetBool(operation, "allowPinned", false))
+            {
+                return BlockedChange(operation, index, "Element " + elementId + " is pinned. Pass allowPinned=true only after explicitly reviewing the target.");
+            }
+
+            return Change(operation, index, "ready", ElementTarget(element, null),
+                before: DeleteSnapshot(document, element),
+                after: new Dictionary<string, object>
+                {
+                    ["deleted"] = true
+                });
+        }
+
+        private static Dictionary<string, object> ApplyDeleteElement(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewDeleteElement(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "delete_element preview failed.");
+            }
+
+            Element element = ResolveElement(document, GetString(operation, "elementId"));
+            Dictionary<string, object> target = ElementTarget(element, null);
+            Dictionary<string, object> before = DeleteSnapshot(document, element);
+            ICollection<ElementId> deletedIds = document.Delete(element.Id);
+
+            return Change(operation, index, "applied", target,
+                before: before,
+                after: new Dictionary<string, object>
+                {
+                    ["deleted"] = true,
+                    ["deletedCount"] = deletedIds?.Count ?? 0,
+                    ["deletedElementIds"] = (deletedIds ?? Array.Empty<ElementId>()).Select(ToElementIdString).ToArray()
+                });
+        }
+
         private static Dictionary<string, object> Change(
             Dictionary<string, object> operation,
             int index,
@@ -1695,6 +1937,7 @@ namespace RevitMcpNext.Addin.Revit
         {
             private readonly HashSet<string> _levelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             private readonly HashSet<string> _gridNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<string> _roomNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             public bool TryAddLevelName(string name)
             {
@@ -1704,6 +1947,11 @@ namespace RevitMcpNext.Addin.Revit
             public bool TryAddGridName(string name)
             {
                 return _gridNames.Add((name ?? string.Empty).Trim());
+            }
+
+            public bool TryAddRoomNumber(string number)
+            {
+                return _roomNumbers.Add((number ?? string.Empty).Trim());
             }
         }
 
@@ -1789,6 +2037,18 @@ namespace RevitMcpNext.Addin.Revit
                 .Any(grid => string.Equals(grid.Name, name, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static bool RoomNumberExists(Document document, string number)
+        {
+            string normalized = NormalizeOptionalText(number);
+            if (string.IsNullOrWhiteSpace(normalized)) return false;
+
+            return new FilteredElementCollector(document)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType()
+                .OfType<Room>()
+                .Any(room => string.Equals(GetRoomNumber(room), normalized, StringComparison.OrdinalIgnoreCase));
+        }
+
         private static FloorType ResolveFloorType(Document document, string floorTypeId)
         {
             if (!string.IsNullOrWhiteSpace(floorTypeId))
@@ -1854,6 +2114,14 @@ namespace RevitMcpNext.Addin.Revit
                 ToInternalLength(GetDictionary(point, "x"), fieldName + ".x"),
                 ToInternalLength(GetDictionary(point, "y"), fieldName + ".y"),
                 ToInternalLength(GetDictionary(point, "z"), fieldName + ".z"));
+        }
+
+        private static UV ToInternalUv(Dictionary<string, object> point, string fieldName)
+        {
+            if (point == null) throw new ArgumentException(fieldName + " is required.");
+            return new UV(
+                ToInternalLength(GetDictionary(point, "x"), fieldName + ".x"),
+                ToInternalLength(GetDictionary(point, "y"), fieldName + ".y"));
         }
 
         private static List<XYZ> ToInternalPointList(IReadOnlyList<Dictionary<string, object>> points, string fieldName)
@@ -2013,6 +2281,15 @@ namespace RevitMcpNext.Addin.Revit
             };
         }
 
+        private static Dictionary<string, object> Point2Value(UV point)
+        {
+            return new Dictionary<string, object>
+            {
+                ["x"] = LengthValue(point.U),
+                ["y"] = LengthValue(point.V)
+            };
+        }
+
         private static object[] PointArrayValue(IEnumerable<XYZ> points)
         {
             return points.Select(PointValue).ToArray();
@@ -2024,6 +2301,21 @@ namespace RevitMcpNext.Addin.Revit
             if (parameter == null) throw new InvalidOperationException("Wall " + parameterName + " parameter was not found.");
             if (parameter.IsReadOnly) throw new InvalidOperationException("Wall " + parameterName + " parameter is read-only.");
             parameter.Set(value);
+        }
+
+        private static void SetRoomStringParameter(Room room, BuiltInParameter builtInParameter, string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+
+            Parameter parameter = room.get_Parameter(builtInParameter);
+            if (parameter == null) throw new InvalidOperationException("Room parameter " + builtInParameter + " was not found.");
+            if (parameter.IsReadOnly) throw new InvalidOperationException("Room parameter " + builtInParameter + " is read-only.");
+            parameter.Set(value);
+        }
+
+        private static string NormalizeOptionalText(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
         }
 
         private static Dictionary<string, object> ElementSummary(Document document, Element element)
@@ -2154,6 +2446,61 @@ namespace RevitMcpNext.Addin.Revit
                 snapshot["structural"] = structural.AsInteger() != 0;
             }
 
+            return snapshot;
+        }
+
+        private static Dictionary<string, object> RoomSnapshot(Room room)
+        {
+            var snapshot = ElementSummary(room.Document, room);
+            string number = GetRoomNumber(room);
+            if (!string.IsNullOrWhiteSpace(number)) snapshot["number"] = number;
+            snapshot["name"] = GetRoomName(room);
+
+            ElementId levelId = GetLevelId(room);
+            if (IsValidElementId(levelId))
+            {
+                snapshot["levelId"] = ToElementIdString(levelId);
+                Element level = room.Document.GetElement(levelId);
+                if (level != null) snapshot["levelName"] = SafeElementName(level);
+            }
+
+            ElementId phaseId = GetCreatedPhaseId(room);
+            if (IsValidElementId(phaseId))
+            {
+                snapshot["phaseId"] = ToElementIdString(phaseId);
+                Element phase = room.Document.GetElement(phaseId);
+                if (phase != null) snapshot["phaseName"] = SafeElementName(phase);
+            }
+
+            double area = SafeRoomArea(room);
+            double volume = SafeRoomVolume(room);
+            if (area > 0) snapshot["area"] = AreaValue(area);
+            if (volume > 0) snapshot["volume"] = VolumeValue(volume);
+
+            Parameter perimeter = room.get_Parameter(BuiltInParameter.ROOM_PERIMETER);
+            if (perimeter != null && perimeter.StorageType == StorageType.Double)
+            {
+                double perimeterValue = perimeter.AsDouble();
+                if (perimeterValue > 0) snapshot["perimeter"] = LengthValue(perimeterValue);
+            }
+
+            LocationPoint point = room.Location as LocationPoint;
+            if (point != null) snapshot["location"] = PointValue(point.Point);
+
+            snapshot["isPlaced"] = IsRoomPlaced(room);
+            snapshot["isEnclosed"] = area > 0;
+
+            string department = GetRoomDepartment(room);
+            if (!string.IsNullOrWhiteSpace(department)) snapshot["department"] = department;
+
+            return snapshot;
+        }
+
+        private static Dictionary<string, object> DeleteSnapshot(Document document, Element element)
+        {
+            var snapshot = ElementSummary(document, element);
+            snapshot["pinned"] = element.Pinned;
+            snapshot["viewSpecific"] = element.ViewSpecific;
             return snapshot;
         }
 
@@ -2347,6 +2694,7 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.get_selection",
                     "revit.analyze_model",
                     "revit.get_material_quantities",
+                    "revit.get_rooms",
                     "revit.catalog",
                     "revit.query",
                     "revit.preview_change_set",
@@ -2587,6 +2935,15 @@ namespace RevitMcpNext.Addin.Revit
             List<BridgeWarning> warnings,
             out string scope)
         {
+            IReadOnlyList<string> elementIds = GetStringList(filter, "elementIds");
+            IReadOnlyList<string> uniqueIds = GetStringList(filter, "uniqueIds");
+            if (elementIds.Count > 0 || uniqueIds.Count > 0)
+            {
+                scope = "elements";
+                return ResolveExplicitElements(document, elementIds, uniqueIds, warnings)
+                    .Where(element => MatchesPostFilters(element, filter));
+            }
+
             bool selectionOnly = GetBool(filter, "selectionOnly", false);
             string viewId = GetString(filter, "viewId");
 
@@ -2628,6 +2985,60 @@ namespace RevitMcpNext.Addin.Revit
             return (!nativeCategoryFilter || !nativeClassFilter)
                 ? elements.Where(element => MatchesPostFilters(element, filter))
                 : elements.Where(element => MatchesSecondaryPostFilters(element, filter));
+        }
+
+        private static IEnumerable<Element> ResolveExplicitElements(
+            Document document,
+            IReadOnlyList<string> elementIds,
+            IReadOnlyList<string> uniqueIds,
+            List<BridgeWarning> warnings)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var resolved = new List<Element>();
+
+            foreach (string elementId in elementIds)
+            {
+                Element element = null;
+                try
+                {
+                    element = document.GetElement(CreateElementId(elementId));
+                }
+                catch
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "INVALID_ELEMENT_ID_FILTER",
+                        Message = "filter.elementIds contains a non-numeric element ID; it was ignored."
+                    });
+                }
+
+                if (element == null) continue;
+                string key = ToElementIdString(element.Id);
+                if (seen.Add(key)) resolved.Add(element);
+            }
+
+            foreach (string uniqueId in uniqueIds)
+            {
+                Element element = null;
+                try
+                {
+                    element = document.GetElement(uniqueId);
+                }
+                catch
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "INVALID_UNIQUE_ID_FILTER",
+                        Message = "filter.uniqueIds contains an invalid UniqueId; it was ignored."
+                    });
+                }
+
+                if (element == null) continue;
+                string key = ToElementIdString(element.Id);
+                if (seen.Add(key)) resolved.Add(element);
+            }
+
+            return resolved;
         }
 
         private static bool TryApplyCategoryFilter(
@@ -3000,6 +3411,189 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static IEnumerable<Room> CreateRoomElements(Document document, Dictionary<string, object> filter, List<BridgeWarning> warnings)
+        {
+            IReadOnlyList<string> elementIds = GetStringList(filter, "elementIds");
+            IReadOnlyList<string> uniqueIds = GetStringList(filter, "uniqueIds");
+            if (elementIds.Count > 0 || uniqueIds.Count > 0)
+            {
+                var rooms = new List<Room>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string elementId in elementIds)
+                {
+                    Element element = null;
+                    try
+                    {
+                        element = document.GetElement(CreateElementId(elementId));
+                    }
+                    catch
+                    {
+                        warnings.Add(new BridgeWarning
+                        {
+                            Code = "INVALID_ROOM_ID",
+                            Message = "filter.elementIds contains an invalid room ElementId; it was ignored."
+                        });
+                    }
+
+                    Room room = element as Room;
+                    if (room == null) continue;
+                    string key = ToElementIdString(room.Id);
+                    if (seen.Add(key)) rooms.Add(room);
+                }
+
+                foreach (string uniqueId in uniqueIds)
+                {
+                    Element element = null;
+                    try
+                    {
+                        element = document.GetElement(uniqueId);
+                    }
+                    catch
+                    {
+                        warnings.Add(new BridgeWarning
+                        {
+                            Code = "INVALID_ROOM_UNIQUE_ID",
+                            Message = "filter.uniqueIds contains an invalid room UniqueId; it was ignored."
+                        });
+                    }
+
+                    Room room = element as Room;
+                    if (room == null) continue;
+                    string key = ToElementIdString(room.Id);
+                    if (seen.Add(key)) rooms.Add(room);
+                }
+
+                return rooms;
+            }
+
+            return new FilteredElementCollector(document)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType()
+                .OfType<Room>();
+        }
+
+        private static bool MatchesRoomFilter(Document document, Room room, Dictionary<string, object> filter)
+        {
+            IReadOnlyList<string> levelIds = GetStringList(filter, "levelIds");
+            if (levelIds.Count > 0 && !levelIds.Contains(ToElementIdString(GetLevelId(room)), StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> phaseIds = GetStringList(filter, "phaseIds");
+            if (phaseIds.Count > 0 && !phaseIds.Contains(ToElementIdString(GetCreatedPhaseId(room)), StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> numbers = GetStringList(filter, "numbers");
+            string number = GetRoomNumber(room);
+            if (numbers.Count > 0 && !numbers.Contains(number, StringComparer.OrdinalIgnoreCase)) return false;
+
+            string numberContains = GetString(filter, "numberContains");
+            if (!string.IsNullOrWhiteSpace(numberContains) &&
+                (number ?? string.Empty).IndexOf(numberContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            string nameContains = GetString(filter, "nameContains");
+            if (!string.IsNullOrWhiteSpace(nameContains) &&
+                (GetRoomName(room) ?? string.Empty).IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            string departmentContains = GetString(filter, "departmentContains");
+            if (!string.IsNullOrWhiteSpace(departmentContains) &&
+                (GetRoomDepartment(room) ?? string.Empty).IndexOf(departmentContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static Dictionary<string, object> BuildRoomItem(Document document, Room room, IReadOnlyList<string> fields)
+        {
+            var item = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(room.Id)
+            };
+
+            foreach (string field in fields)
+            {
+                switch (field)
+                {
+                    case "id":
+                        break;
+                    case "uniqueId":
+                        item["uniqueId"] = room.UniqueId;
+                        break;
+                    case "number":
+                        item["number"] = GetRoomNumber(room);
+                        break;
+                    case "name":
+                        item["name"] = GetRoomName(room);
+                        break;
+                    case "levelId":
+                        ElementId levelId = GetLevelId(room);
+                        if (IsValidElementId(levelId)) item["levelId"] = ToElementIdString(levelId);
+                        break;
+                    case "levelName":
+                        string levelName = GetRoomLevelName(document, room);
+                        if (!string.IsNullOrWhiteSpace(levelName)) item["levelName"] = levelName;
+                        break;
+                    case "phaseId":
+                        ElementId phaseId = GetCreatedPhaseId(room);
+                        if (IsValidElementId(phaseId)) item["phaseId"] = ToElementIdString(phaseId);
+                        break;
+                    case "phaseName":
+                        ElementId phaseNameId = GetCreatedPhaseId(room);
+                        Element phase = IsValidElementId(phaseNameId) ? document.GetElement(phaseNameId) : null;
+                        if (phase != null) item["phaseName"] = SafeElementName(phase);
+                        break;
+                    case "area":
+                        double area = SafeRoomArea(room);
+                        if (area > 0) item["area"] = AreaValue(area);
+                        break;
+                    case "volume":
+                        double volume = SafeRoomVolume(room);
+                        if (volume > 0) item["volume"] = VolumeValue(volume);
+                        break;
+                    case "perimeter":
+                        Parameter perimeter = room.get_Parameter(BuiltInParameter.ROOM_PERIMETER);
+                        if (perimeter != null && perimeter.StorageType == StorageType.Double && perimeter.AsDouble() > 0)
+                        {
+                            item["perimeter"] = LengthValue(perimeter.AsDouble());
+                        }
+                        break;
+                    case "location":
+                        LocationPoint point = room.Location as LocationPoint;
+                        if (point != null) item["location"] = PointValue(point.Point);
+                        break;
+                    case "isPlaced":
+                        item["isPlaced"] = IsRoomPlaced(room);
+                        break;
+                    case "isEnclosed":
+                        item["isEnclosed"] = SafeRoomArea(room) > 0;
+                        break;
+                    case "department":
+                        string department = GetRoomDepartment(room);
+                        if (!string.IsNullOrWhiteSpace(department)) item["department"] = department;
+                        break;
+                    default:
+                        if (field.StartsWith("param:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string parameterName = field.Substring("param:".Length);
+                            Parameter parameter = room.LookupParameter(parameterName);
+                            if (parameter != null)
+                            {
+                                Dictionary<string, object> extras = GetOrCreateFields(item);
+                                extras[parameterName] = ParameterValue(parameter);
+                            }
+                        }
+                        break;
+                }
+            }
+
+            return item;
+        }
+
         private static Dictionary<string, object> BuildQueryItem(Element element, IReadOnlyList<string> fields)
         {
             var item = new Dictionary<string, object>
@@ -3106,6 +3700,70 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return normalized.Count == 0 ? new[] { "id" } : normalized.ToArray();
+        }
+
+        private static string[] NormalizeRoomFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
+        {
+            string[] defaults;
+            switch (preset)
+            {
+                case "idOnly":
+                    defaults = new[] { "id" };
+                    break;
+                case "schedule":
+                    defaults = new[] { "id", "number", "name", "levelId", "levelName", "area", "volume", "department" };
+                    break;
+                default:
+                    defaults = new[] { "id", "uniqueId", "number", "name", "levelId", "area" };
+                    break;
+            }
+
+            IReadOnlyList<string> source = requested.Count == 0 ? defaults : requested;
+            var normalized = new List<string>();
+            foreach (string rawField in source)
+            {
+                string field = rawField?.Trim();
+                if (string.IsNullOrWhiteSpace(field)) continue;
+                if (IsSupportedRoomField(field) && !normalized.Contains(field, StringComparer.OrdinalIgnoreCase))
+                {
+                    normalized.Add(field);
+                }
+                else if (!IsSupportedRoomField(field))
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "UNSUPPORTED_ROOM_FIELD",
+                        Message = "Room field '" + field + "' is not supported by the current room projection."
+                    });
+                }
+            }
+
+            return normalized.Count == 0 ? new[] { "id" } : normalized.ToArray();
+        }
+
+        private static bool IsSupportedRoomField(string field)
+        {
+            switch (field)
+            {
+                case "id":
+                case "uniqueId":
+                case "number":
+                case "name":
+                case "levelId":
+                case "levelName":
+                case "phaseId":
+                case "phaseName":
+                case "area":
+                case "volume":
+                case "perimeter":
+                case "location":
+                case "isPlaced":
+                case "isEnclosed":
+                case "department":
+                    return true;
+                default:
+                    return field.StartsWith("param:", StringComparison.OrdinalIgnoreCase) && field.Length > "param:".Length;
+            }
         }
 
         private static string[] SummaryFields()
@@ -3548,6 +4206,104 @@ namespace RevitMcpNext.Addin.Revit
         {
             ViewFamilyType viewFamilyType = element as ViewFamilyType;
             return viewFamilyType?.ViewFamily.ToString() ?? string.Empty;
+        }
+
+        private static string GetRoomNumber(Room room)
+        {
+            try
+            {
+                return room?.Number ?? string.Empty;
+            }
+            catch
+            {
+                Parameter parameter = room?.get_Parameter(BuiltInParameter.ROOM_NUMBER);
+                return parameter?.AsString() ?? string.Empty;
+            }
+        }
+
+        private static string GetRoomName(Room room)
+        {
+            try
+            {
+                Parameter parameter = room?.get_Parameter(BuiltInParameter.ROOM_NAME);
+                string parameterValue = parameter?.AsString();
+                if (!string.IsNullOrWhiteSpace(parameterValue)) return parameterValue;
+            }
+            catch
+            {
+                // Fall through to the Revit display name.
+            }
+
+            return room == null ? string.Empty : SafeElementName(room);
+        }
+
+        private static string GetRoomDepartment(Room room)
+        {
+            try
+            {
+                Parameter parameter = room?.get_Parameter(BuiltInParameter.ROOM_DEPARTMENT);
+                return parameter?.AsString() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static string GetRoomLevelName(Document document, Room room)
+        {
+            ElementId levelId = GetLevelId(room);
+            Element level = IsValidElementId(levelId) ? document.GetElement(levelId) : null;
+            return level == null ? string.Empty : SafeElementName(level);
+        }
+
+        private static ElementId GetCreatedPhaseId(Element element)
+        {
+            try
+            {
+                ElementId phaseId = element.CreatedPhaseId;
+                return IsValidElementId(phaseId) ? phaseId : ElementId.InvalidElementId;
+            }
+            catch
+            {
+                return ElementId.InvalidElementId;
+            }
+        }
+
+        private static double SafeRoomArea(Room room)
+        {
+            try
+            {
+                return room?.Area ?? 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static double SafeRoomVolume(Room room)
+        {
+            try
+            {
+                return room?.Volume ?? 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static bool IsRoomPlaced(Room room)
+        {
+            try
+            {
+                return room != null && room.Location != null;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static ElementId GetLevelId(Element element)

@@ -298,6 +298,18 @@ function Assert-SignatureEntries($Entries) {
     }
 }
 
+function Assert-SupportedRevitYears {
+    if (-not $RevitYears -or $RevitYears.Count -eq 0) {
+        throw "At least one Revit year must be supplied."
+    }
+
+    foreach ($year in ($RevitYears | Sort-Object -Unique)) {
+        if ($year -ne 2024) {
+            throw "Revit $year packaging is not supported yet. Revit 2025+ requires year-specific .NET 8 add-in artifacts; this package currently supports Revit 2024 only."
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot "artifacts\release"
@@ -313,6 +325,8 @@ $rootPackage = Read-JsonFile (Join-Path $repoRoot "package.json")
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = [string] $rootPackage.version
 }
+
+Assert-SupportedRevitYears
 
 $packageName = "revit-mcp-next-$Version-windows"
 $outputRootFull = Get-FullPath $OutputRoot
@@ -408,7 +422,11 @@ $manifest = [ordered] @{
         gitCommit = $gitCommit
         gitDirty = -not [string]::IsNullOrWhiteSpace($gitStatus)
         nodeModulesBundled = (Test-Path -LiteralPath (Join-Path $payloadRoot "broker\node_modules") -PathType Container)
-        integrationsIncluded = (Test-Path -LiteralPath (Join-Path $stageRoot "integrations\python\revit_mcp_next_client.py") -PathType Leaf)
+        integrationsIncluded = (
+            (Test-Path -LiteralPath (Join-Path $stageRoot "integrations\python\revit_mcp_next_client.py") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $stageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $stageRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") -PathType Leaf)
+        )
     }
     signing = [ordered] @{
         requested = [bool] $Sign

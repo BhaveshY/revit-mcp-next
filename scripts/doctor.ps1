@@ -104,13 +104,14 @@ function Test-ManifestIdentity($ManifestPath, $ExpectedId) {
     }
 
     $manifestText = Get-Content -LiteralPath $ManifestPath -Raw
-    if ($manifestText.Contains("<AddInId>$ExpectedId</AddInId>")) {
-        Write-Host "[ok] Revit manifest uses AddInId for add-in identity"
+    if ($manifestText.Contains("<ClientId>$ExpectedId</ClientId>")) {
+        Write-Host "[ok] Revit application manifest uses ClientId for add-in identity"
         return
     }
 
-    if ($manifestText.Contains("<ClientId>$ExpectedId</ClientId>")) {
-        Write-Host "[ok] Revit manifest uses legacy ClientId for add-in identity"
+    if ($manifestText.Contains("<AddInId>$ExpectedId</AddInId>")) {
+        Write-Host "[missing] Revit application manifest uses AddInId; expected ClientId"
+        $failures.Add("Revit manifest uses AddInId instead of ClientId: $ManifestPath")
     } else {
         Write-Host "[missing] Revit manifest does not contain the expected add-in identity"
         $failures.Add("Revit manifest identity missing: $ManifestPath")
@@ -240,9 +241,13 @@ $addinPdb = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.pdb"
 $contractsPdb = Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.pdb"
 $pythonClient = Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py"
 $pythonInProcessHelper = Join-Path $InstallRoot "integrations\python\revit_mcp_next_inprocess.py"
+$pythonHostSmokeHelper = Join-Path $InstallRoot "integrations\python\revit_mcp_next_host_smoke.py"
 $pyRevitStatusCommand = Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py"
+$pyRevitHostSmokeCommand = Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py"
 $pyRevitCreateLevelCommand = Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Examples.panel\Create Level.pushbutton\script.py"
 $dynamoStatusNode = Join-Path $InstallRoot "integrations\dynamo\status_node.py"
+$dynamoHostSmokeNode = Join-Path $InstallRoot "integrations\dynamo\host_smoke_node.py"
+$dynamoHostSmokeGraph = Join-Path $InstallRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn"
 $dynamoCreateLevelNode = Join-Path $InstallRoot "integrations\dynamo\create_level_node.py"
 $manifest = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext.addin"
 $logs = Join-Path $InstallRoot "logs"
@@ -258,9 +263,13 @@ Test-RequiredFile $addinDll "Revit add-in DLL" | Out-Null
 Test-RequiredFile $contractsDll "Revit contracts DLL" | Out-Null
 Test-RequiredFile $pythonClient "Python MCP integration client" | Out-Null
 Test-RequiredFile $pythonInProcessHelper "Python in-process integration helper" | Out-Null
+Test-RequiredFile $pythonHostSmokeHelper "Python host-smoke evidence helper" | Out-Null
 Test-RequiredFile $pyRevitStatusCommand "pyRevit status command example" | Out-Null
+Test-RequiredFile $pyRevitHostSmokeCommand "pyRevit host-smoke evidence command" | Out-Null
 Test-RequiredFile $pyRevitCreateLevelCommand "pyRevit preview/apply create-level example" | Out-Null
 Test-RequiredFile $dynamoStatusNode "Dynamo status node example" | Out-Null
+Test-RequiredFile $dynamoHostSmokeNode "Dynamo host-smoke evidence node" | Out-Null
+Test-RequiredFile $dynamoHostSmokeGraph "Dynamo host-smoke graph" | Out-Null
 Test-RequiredFile $dynamoCreateLevelNode "Dynamo preview/apply create-level node example" | Out-Null
 Test-RequiredFile $manifest "Revit add-in manifest" | Out-Null
 Test-RequiredDirectory (Join-Path $InstallRoot "broker\node_modules") "broker production node_modules" | Out-Null

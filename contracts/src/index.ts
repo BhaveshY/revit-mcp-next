@@ -19,6 +19,11 @@ export interface Point3 {
   z: UnitValue;
 }
 
+export interface Point2 {
+  x: UnitValue;
+  y: UnitValue;
+}
+
 export interface AngleValue {
   value: number;
   unit: "degrees" | "radians";
@@ -130,6 +135,8 @@ export interface LevelSummary {
 }
 
 export interface QueryFilter {
+  elementIds?: ElementId[];
+  uniqueIds?: UniqueId[];
   categories?: string[];
   classes?: string[];
   viewId?: ElementId;
@@ -305,6 +312,68 @@ export interface MaterialQuantitiesResult {
   source: string;
 }
 
+export type RoomPreset = "idOnly" | "summary" | "schedule";
+
+export interface RoomFilter {
+  elementIds?: ElementId[];
+  uniqueIds?: UniqueId[];
+  levelIds?: ElementId[];
+  phaseIds?: ElementId[];
+  numbers?: string[];
+  numberContains?: string;
+  nameContains?: string;
+  departmentContains?: string;
+}
+
+export interface RoomsRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: RoomFilter;
+  fields?: string[];
+  preset?: RoomPreset;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+  includeUnplaced?: boolean;
+}
+
+export interface RoomSummary {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  number?: string;
+  name?: string;
+  levelId?: ElementId;
+  levelName?: string;
+  phaseId?: ElementId;
+  phaseName?: string;
+  area?: UnitValue;
+  volume?: UnitValue;
+  perimeter?: UnitValue;
+  location?: Point3;
+  isPlaced?: boolean;
+  isEnclosed?: boolean;
+  department?: string;
+  fields?: Record<string, unknown>;
+}
+
+export interface RoomsResult {
+  document: DocumentReference;
+  items: RoomSummary[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  fields: string[];
+  units: {
+    area: "m2";
+    volume: "m3";
+    location: "mm";
+  };
+  scope: string;
+  source: string;
+}
+
 export type CatalogKind = "elementTypes" | "familySymbols" | "titleBlocks" | "viewFamilyTypes";
 export type CatalogPreset = "idOnly" | "compact" | "typeChange" | "placement" | "sheet";
 
@@ -389,7 +458,9 @@ export type ChangeOperationType =
   | "change_element_type"
   | "set_element_pinned"
   | "create_grid"
-  | "create_floor";
+  | "create_floor"
+  | "create_room"
+  | "delete_element";
 export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
@@ -471,6 +542,24 @@ export interface CreateFloorOperation extends ChangeOperationBase {
   structural?: boolean;
 }
 
+export interface CreateRoomOperation extends ChangeOperationBase {
+  type: "create_room";
+  levelId: ElementId;
+  location: Point2;
+  name?: string;
+  number?: string;
+  department?: string;
+  allowDuplicateNumber?: boolean;
+}
+
+export interface DeleteElementOperation extends ChangeOperationBase {
+  type: "delete_element";
+  elementId: ElementId;
+  expectedUniqueId?: UniqueId;
+  expectedPinned?: boolean;
+  allowPinned?: boolean;
+}
+
 export type ChangeOperation =
   | SetParameterChangeOperation
   | CreateLevelChangeOperation
@@ -481,7 +570,9 @@ export type ChangeOperation =
   | ChangeElementTypeOperation
   | SetElementPinnedOperation
   | CreateGridOperation
-  | CreateFloorOperation;
+  | CreateFloorOperation
+  | CreateRoomOperation
+  | DeleteElementOperation;
 
 export interface ChangeSetSafetyFields {
   documentFingerprint?: string;

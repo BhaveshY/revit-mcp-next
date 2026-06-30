@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
@@ -18,6 +18,7 @@ const REQUIRED_TOOLS = [
   "revit.get_selection",
   "revit.analyze_model",
   "revit.get_material_quantities",
+  "revit.get_rooms",
   "revit.catalog",
   "revit.query",
   "revit.preview_change_set",
@@ -59,6 +60,12 @@ async function main() {
   console.log(`Move Y: ${options.moveYMm} mm`);
   console.log(`Transaction prefix: ${options.transactionPrefix}`);
   console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
+  if (options.expectedRevitYear) {
+    console.log(`Expected Revit year: ${options.expectedRevitYear}`);
+  }
+  if (options.summaryPath) {
+    console.log(`Smoke summary: ${path.resolve(options.summaryPath)}`);
+  }
   if (options.statusOnly) {
     console.log("Mode: status-only");
   }
@@ -76,6 +83,23 @@ async function main() {
   }
 
   const client = new Client({ name: "revit-mcp-next-live-smoke", version: "0.1.0" });
+  const summary = {
+    schemaVersion: 1,
+    status: "failed",
+    startedAtUtc: new Date().toISOString(),
+    completedAtUtc: null,
+    launcherPath,
+    mode: options.statusOnly ? "status-only" : "full",
+    expectedRevitYear: options.expectedRevitYear ?? null,
+    revit: null,
+    activeDocument: null,
+    documentFingerprint: options.documentFingerprint ?? null,
+    coveredTools: [],
+    coveredOperations: [],
+    skippedOperations: [],
+    result: null,
+    error: null,
+  };
 
   try {
     console.log("Connecting to MCP server over stdio...");
@@ -84,11 +108,21 @@ async function main() {
     await verifyRequiredTools(client);
 
     const status = await callRequiredTool(client, "revit.status", {});
+    summary.coveredTools.push("revit.status");
     assert(status.connected === true, "revit.status did not report a connected Revit bridge.");
     assert(status.activeDocument, "Revit is connected but there is no active project document.");
+    summary.revit = status.revit ?? null;
+    assertExpectedRevitYear(status, options.expectedRevitYear);
 
     const activeDocument = status.activeDocument;
+    summary.activeDocument = compactObject({
+      title: activeDocument.title,
+      fingerprint: activeDocument.fingerprint,
+      generation: activeDocument.generation,
+      path: activeDocument.path,
+    });
     const documentFingerprint = options.documentFingerprint ?? activeDocument.fingerprint;
+    summary.documentFingerprint = documentFingerprint ?? null;
     assert(
       documentFingerprint,
       "No document fingerprint was supplied and revit.status did not return one for the active document."
@@ -110,6 +144,8 @@ async function main() {
     );
 
     if (options.statusOnly) {
+      summary.status = "passed";
+      summary.coveredTools = ["revit.status"];
       console.log("Status-only smoke passed.");
       return;
     }
@@ -315,7 +351,116 @@ async function main() {
     const queriedWall = await queryWallById(client, wallId);
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
 
-    const parameterGeneration = numericOrUndefined(createApply.generation);
+    const roomOriginX = 0;
+    const roomOriginY = options.wallLengthMm + 1500;
+    const roomWidthMm = options.wallLengthMm;
+    const roomDepthMm = Math.max(2500, Math.min(options.wallLengthMm, 5000));
+    const roomMinX = roomOriginX;
+    const roomMaxX = roomOriginX + roomWidthMm;
+    const roomMinY = roomOriginY;
+    const roomMaxY = roomOriginY + roomDepthMm;
+    const roomBoundaryOperations = [
+      {
+        id: "create-room-boundary-south",
+        type: "create_wall",
+        levelId: String(smokeLevelId),
+        start: pointMm(roomMinX, roomMinY, smokeLevelElevationMm),
+        end: pointMm(roomMaxX, roomMinY, smokeLevelElevationMm),
+        height: unitMm(options.wallHeightMm),
+        structural: false,
+        flip: false,
+      },
+      {
+        id: "create-room-boundary-east",
+        type: "create_wall",
+        levelId: String(smokeLevelId),
+        start: pointMm(roomMaxX, roomMinY, smokeLevelElevationMm),
+        end: pointMm(roomMaxX, roomMaxY, smokeLevelElevationMm),
+        height: unitMm(options.wallHeightMm),
+        structural: false,
+        flip: false,
+      },
+      {
+        id: "create-room-boundary-north",
+        type: "create_wall",
+        levelId: String(smokeLevelId),
+        start: pointMm(roomMaxX, roomMaxY, smokeLevelElevationMm),
+        end: pointMm(roomMinX, roomMaxY, smokeLevelElevationMm),
+        height: unitMm(options.wallHeightMm),
+        structural: false,
+        flip: false,
+      },
+      {
+        id: "create-room-boundary-west",
+        type: "create_wall",
+        levelId: String(smokeLevelId),
+        start: pointMm(roomMinX, roomMaxY, smokeLevelElevationMm),
+        end: pointMm(roomMinX, roomMinY, smokeLevelElevationMm),
+        height: unitMm(options.wallHeightMm),
+        structural: false,
+        flip: false,
+      },
+    ];
+    const roomBoundaryTransaction = makeTransactionName(options.transactionPrefix, "create room boundary", runId);
+    const roomBoundaryChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: numericOrUndefined(createApply.generation),
+      transactionName: roomBoundaryTransaction,
+      operations: roomBoundaryOperations,
+    });
+
+    const roomBoundaryPreview = await previewChangeSet(client, roomBoundaryChangeSet, "create room boundary walls");
+    const roomBoundaryApply = await applyChangeSet(client, roomBoundaryChangeSet, roomBoundaryPreview, "create room boundary walls");
+    const roomBoundaryWallIds = roomBoundaryOperations.map((operation) => {
+      const change = findChangeByOperationId(roomBoundaryApply, operation.id, "create_wall");
+      const createdId = getCreatedElementId(change);
+      assert(createdId, `create_wall ${operation.id} applied but did not return a created wall ID.`);
+      return createdId;
+    });
+    console.log(`Create room boundary OK: ${roomBoundaryWallIds.length} wall(s)`);
+
+    const roomNumber = `MCP-${runId}`;
+    const roomName = `MCP Room ${runId}`;
+    const roomDepartment = "MCP Smoke";
+    const roomOperation = {
+      id: "create-smoke-room",
+      type: "create_room",
+      levelId: String(smokeLevelId),
+      location: point2Mm((roomMinX + roomMaxX) / 2, (roomMinY + roomMaxY) / 2),
+      number: roomNumber,
+      name: roomName,
+      department: roomDepartment,
+    };
+    const roomTransaction = makeTransactionName(options.transactionPrefix, "create room", runId);
+    const roomChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: numericOrUndefined(roomBoundaryApply.generation),
+      transactionName: roomTransaction,
+      operations: [roomOperation],
+    });
+
+    const roomPreview = await previewChangeSet(client, roomChangeSet, "create_room");
+    const roomApply = await applyChangeSet(client, roomChangeSet, roomPreview, "create_room");
+    const roomChange = findChange(roomApply, "create_room");
+    const roomId = getCreatedElementId(roomChange);
+    assert(roomId, "create_room applied but the created room element ID was not returned.");
+    assert(unitValueNumber(roomChange?.after?.area) > 0, "create_room applied but the room area was not greater than zero.");
+    assert(roomChange?.after?.isPlaced === true, "create_room applied but did not report isPlaced=true.");
+
+    const createdRoom = await getRoomByNumber(client, {
+      documentFingerprint,
+      levelId: String(smokeLevelId),
+      number: roomNumber,
+    });
+    assert(String(createdRoom.id) === String(roomId), "revit.get_rooms did not return the room created by create_room.");
+    assert(createdRoom.name === roomName, `revit.get_rooms returned room name ${String(createdRoom.name)}, expected ${roomName}.`);
+    assert(createdRoom.department === roomDepartment, "revit.get_rooms did not return the created room department.");
+    assert(unitValueNumber(createdRoom.area) > 0, "revit.get_rooms returned the created room without positive area.");
+    assert(createdRoom.isPlaced === true, "revit.get_rooms returned the created room without isPlaced=true.");
+    assert(createdRoom.isEnclosed === true, "revit.get_rooms returned the created room without isEnclosed=true.");
+    console.log(`Create/read room OK: room ${roomNumber} (${roomId})`);
+
+    const parameterGeneration = numericOrUndefined(roomApply.generation);
     const parameterValue = `MCP-${runId}`;
     const parameterResult = await applyFirstReadySetParameter(client, {
       documentFingerprint,
@@ -446,7 +591,7 @@ async function main() {
     const copyChange = findChange(copyApply, "copy_element");
     const copiedWallId = getCopiedElementId(copyChange);
     assert(copiedWallId, "copy_element applied but no copied element ID was returned.");
-    await queryWallById(client, copiedWallId);
+    const copiedWall = await queryWallById(client, copiedWallId);
     console.log(`Copy wall OK: source ${wallId} copied to ${copiedWallId}`);
 
     const pinGeneration = numericOrUndefined(copyApply.generation);
@@ -515,8 +660,67 @@ async function main() {
     const unpinApply = await applyChangeSet(client, unpinChangeSet, unpinPreview, "set_element_pinned");
     assertPinnedState(findChange(unpinApply, "set_element_pinned"), false);
     console.log(`Unpin wall OK: element ${copiedWallId} unpinned`);
+
+    const deleteGeneration = numericOrUndefined(unpinApply.generation);
+    const deleteOperation = compactObject({
+      id: "delete-copied-smoke-wall",
+      type: "delete_element",
+      elementId: copiedWallId,
+      expectedUniqueId: copiedWall.uniqueId,
+      expectedPinned: false,
+    });
+    const deleteTransaction = makeTransactionName(options.transactionPrefix, "delete copied wall", runId);
+    const deleteChangeSet = compactObject({
+      documentFingerprint,
+      expectedGeneration: deleteGeneration,
+      transactionName: deleteTransaction,
+      operations: [deleteOperation],
+    });
+
+    const deletePreview = await previewChangeSet(client, deleteChangeSet, "delete_element");
+    const deleteApply = await applyChangeSet(client, deleteChangeSet, deletePreview, "delete_element");
+    assertDeletedState(findChange(deleteApply, "delete_element"), copiedWallId);
+    await assertElementDeletedById(client, copiedWallId);
+    console.log(`Delete copied wall OK: element ${copiedWallId} removed`);
+
+    summary.status = "passed";
+    summary.coveredTools = REQUIRED_TOOLS.slice();
+    summary.coveredOperations = [
+      "create_level",
+      "create_grid",
+      "create_floor",
+      "create_wall",
+      "create_room",
+      "set_parameter",
+      ...(changeTypeApply ? ["change_element_type"] : []),
+      "move_element",
+      "rotate_element",
+      "copy_element",
+      "set_element_pinned",
+      "delete_element",
+    ];
+    if (!changeTypeApply) {
+      summary.skippedOperations.push({
+        type: "change_element_type",
+        reason: "No alternate compatible wall type was available in this project.",
+      });
+    }
+    summary.result = compactObject({
+      runId,
+      createdElementIds: {
+        level: smokeLevelId,
+        grid: gridId,
+        floor: floorId,
+        wall: wallId,
+        roomBoundaryWalls: roomBoundaryWallIds,
+        room: roomId,
+        copiedWall: copiedWallId,
+      },
+      finalGeneration: numericOrUndefined(deleteApply.generation),
+    });
     console.log("Live smoke passed.");
   } catch (error) {
+    summary.error = formatError(error);
     if (stderr.length > 0) {
       console.error("");
       console.error("MCP server stderr:");
@@ -524,6 +728,8 @@ async function main() {
     }
     throw error;
   } finally {
+    summary.completedAtUtc = new Date().toISOString();
+    writeSmokeSummary(options.summaryPath, summary);
     await closeQuietly(client);
   }
 }
@@ -536,6 +742,8 @@ function parseArgs(args) {
     wallHeightMm: DEFAULT_WALL_HEIGHT_MM,
     transactionPrefix: DEFAULT_TRANSACTION_PREFIX,
     launcherPath: undefined,
+    expectedRevitYear: undefined,
+    summaryPath: undefined,
     requireTypeChange: false,
     statusOnly: false,
     help: false,
@@ -574,6 +782,16 @@ function parseArgs(args) {
       case "--launcher":
       case "--launcher-path":
         options.launcherPath = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--expected-revit-year":
+      case "--revit-year":
+        options.expectedRevitYear = readExpectedRevitYear(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--summary-path":
+      case "--smoke-summary-path":
+        options.summaryPath = readValue(args, ++index, inlineValue, name);
         if (inlineValue !== undefined) index--;
         break;
       case "--require-type-change":
@@ -616,6 +834,14 @@ function readNumber(args, index, inlineValue, name) {
   return parsed;
 }
 
+function readExpectedRevitYear(args, index, inlineValue, name) {
+  const raw = readValue(args, index, inlineValue, name);
+  if (!/^\d{4}$/.test(raw)) {
+    throw new Error(`${name} must be a four-digit Revit year. Received: ${raw}`);
+  }
+  return raw;
+}
+
 function validateOptions(options) {
   assert(options.wallLengthMm > 0, "--wall-length-mm must be greater than zero.");
   assert(options.wallHeightMm > 0, "--wall-height-mm must be greater than zero.");
@@ -624,6 +850,28 @@ function validateOptions(options) {
     typeof options.transactionPrefix === "string" && options.transactionPrefix.trim().length >= 3,
     "--transaction-prefix must contain at least 3 non-whitespace characters."
   );
+}
+
+function assertExpectedRevitYear(status, expectedRevitYear) {
+  if (!expectedRevitYear) return;
+  const actualVersion = String(status.revit?.version ?? "");
+  const match = actualVersion.match(/\b(20\d{2})\b/);
+  const actualYear = match?.[1] ?? actualVersion.slice(0, 4);
+  assert(
+    actualYear === expectedRevitYear,
+    [
+      "Connected Revit version does not match the expected smoke year.",
+      `Expected: ${expectedRevitYear}`,
+      `Actual revit.status.revit.version: ${actualVersion || "(missing)"}`,
+    ].join("\n")
+  );
+}
+
+function writeSmokeSummary(summaryPath, summary) {
+  if (!summaryPath) return;
+  const resolved = path.resolve(summaryPath);
+  mkdirSync(path.dirname(resolved), { recursive: true });
+  writeFileSync(resolved, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
 }
 
 function resolveLauncherPath(launcherPath) {
@@ -903,6 +1151,58 @@ async function queryElementByParameter(client, className, elementId, parameterNa
   );
 }
 
+async function getRoomByNumber(client, { documentFingerprint, levelId, number }) {
+  const rooms = await callRequiredTool(client, "revit.get_rooms", {
+    documentFingerprint,
+    filter: {
+      levelIds: [levelId],
+      numbers: [number],
+    },
+    fields: [
+      "id",
+      "uniqueId",
+      "number",
+      "name",
+      "levelId",
+      "levelName",
+      "area",
+      "volume",
+      "location",
+      "department",
+      "isPlaced",
+      "isEnclosed",
+    ],
+    preset: "schedule",
+    limit: 10,
+    includeTotalCount: true,
+  });
+
+  assert(Array.isArray(rooms.items), "revit.get_rooms did not return an items array.");
+  assert(rooms.returnedCount === rooms.items.length, "revit.get_rooms returnedCount did not match items length.");
+  assert(
+    rooms.units?.area === "m2" && rooms.units?.volume === "m3",
+    "revit.get_rooms did not return normalized room units."
+  );
+  const match = rooms.items.find((item) => String(item.number) === String(number) && String(item.levelId) === String(levelId));
+  assert(match, `revit.get_rooms did not return room number ${number} on level ${levelId}.`);
+  return match;
+}
+
+async function assertElementDeletedById(client, elementId) {
+  const query = await callRequiredTool(client, "revit.query", {
+    filter: { elementIds: [elementId] },
+    fields: ["id", "uniqueId", "category", "class", "name"],
+    limit: 10,
+    includeTotalCount: true,
+  });
+
+  const items = Array.isArray(query.items) ? query.items : [];
+  assert(
+    !items.some((item) => String(item.id) === String(elementId)),
+    `delete_element reported success, but revit.query still returned element ${elementId}.`
+  );
+}
+
 function chooseLevel(levels) {
   const buildingStory = levels.find((level) => level?.isBuildingStory);
   return buildingStory ?? levels[0];
@@ -919,6 +1219,12 @@ function chooseSmokeLevelElevationMm(levels, fallbackElevationMm) {
 function findChange(result, type) {
   const change = result.changes.find((item) => item.type === type);
   assert(change, `${type} result did not include a matching change item.`);
+  return change;
+}
+
+function findChangeByOperationId(result, operationId, type) {
+  const change = result.changes.find((item) => item.operationId === operationId && (!type || item.type === type));
+  assert(change, `${type ?? "change"} result did not include operation ${operationId}.`);
   return change;
 }
 
@@ -941,6 +1247,16 @@ function assertPinnedState(change, expectedPinned) {
   assert(
     change.after.pinned === expectedPinned,
     `Expected pinned=${expectedPinned} but observed pinned=${String(change.after.pinned)}.`
+  );
+}
+
+function assertDeletedState(change, expectedElementId) {
+  assert(change?.after, "delete_element apply did not include after state.");
+  assert(change.after.deleted === true, "delete_element apply did not report deleted=true.");
+  const deletedElementIds = Array.isArray(change.after.deletedElementIds) ? change.after.deletedElementIds.map(String) : [];
+  assert(
+    deletedElementIds.includes(String(expectedElementId)),
+    `delete_element did not report expected deleted element id ${expectedElementId}.`
   );
 }
 
@@ -1010,6 +1326,13 @@ function pointMm(x, y, z) {
     x: unitMm(x),
     y: unitMm(y),
     z: unitMm(z),
+  };
+}
+
+function point2Mm(x, y) {
+  return {
+    x: unitMm(x),
+    y: unitMm(y),
   };
 }
 
@@ -1112,17 +1435,20 @@ Runs a live Revit MCP smoke against the active Revit project:
   8. preview/apply create_floor
   9. preview/apply create_wall
   10. revit.query for created elements
-  11. preview/apply set_parameter on the created wall
-  12. revit.catalog for compatible wall type changes
-  13. preview/apply change_element_type when an alternate valid type exists
-  14. preview/apply move_element
-  15. assert the wall Y location changed by --move-y-mm
-  16. preview/apply rotate_element
-  17. preview/apply copy_element
-  18. preview/apply set_element_pinned true
-  19. blocked preview for moving a pinned element
-  20. rejected apply for mismatched changeSetHash
-  21. preview/apply set_element_pinned false
+  11. preview/apply room boundary walls
+  12. preview/apply create_room, then revit.get_rooms read-back with positive area
+  13. preview/apply set_parameter on the created wall
+  14. revit.catalog for compatible wall type changes
+  15. preview/apply change_element_type when an alternate valid type exists
+  16. preview/apply move_element
+  17. assert the wall Y location changed by --move-y-mm
+  18. preview/apply rotate_element
+  19. preview/apply copy_element
+  20. preview/apply set_element_pinned true
+  21. blocked preview for moving a pinned element
+  22. rejected apply for mismatched changeSetHash
+  23. preview/apply set_element_pinned false
+  24. preview/apply delete_element for the copied smoke wall
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
@@ -1132,6 +1458,8 @@ Options:
   --transaction-prefix <text>     Prefix for Revit transaction names. Default: "${DEFAULT_TRANSACTION_PREFIX}"
   --launcher-path <path>          MCP launcher path. Default: %LOCALAPPDATA%\\RevitMcpNext\\launch-revit-mcp-next.cmd
   --launcher <path>               Alias for --launcher-path.
+  --expected-revit-year <year>    Fail unless revit.status reports this Revit major year.
+  --summary-path <path>           Write machine-readable smoke-summary.json evidence.
   --require-type-change           Fail when no alternate valid wall type is available for change_element_type.
   --skip-type-change              Allow type-change coverage to be skipped when no alternate type exists. Default.
   --status-only                   Only verify tool discovery, revit.status, and active document readiness.

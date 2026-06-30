@@ -13,11 +13,64 @@ except NameError:
 BRIDGE_PROTOCOL_VERSION = "2026-06-23"
 
 
-def default_addin_path():
+def _candidate_install_roots():
+    roots = []
+
+    explicit_root = os.environ.get("REVIT_MCP_NEXT_INSTALL_ROOT")
+    if explicit_root:
+        roots.append(explicit_root)
+
+    auth_config = os.environ.get("REVIT_MCP_NEXT_AUTH_CONFIG")
+    if auth_config:
+        roots.append(os.path.dirname(os.path.dirname(auth_config)))
+
+    current = os.path.abspath(os.path.dirname(__file__))
+    for _ in range(6):
+        if os.path.basename(current).lower() == "revitmcpnext":
+            roots.append(current)
+            break
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
     local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        raise RuntimeError("LOCALAPPDATA is not set.")
-    return os.path.join(local_app_data, "RevitMcpNext", "addin", "RevitMcpNext.Addin.dll")
+    if local_app_data:
+        roots.append(os.path.join(local_app_data, "RevitMcpNext"))
+
+    app_data = os.environ.get("APPDATA")
+    if app_data:
+        for year in ("2024", "2025", "2026"):
+            roots.append(os.path.join(app_data, "Autodesk", "Revit", "Addins", year, "RevitMcpNext"))
+
+    unique = []
+    seen = set()
+    for root in roots:
+        if not root:
+            continue
+        normalized = os.path.normcase(os.path.abspath(root))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(root)
+    return unique
+
+
+def _candidate_addin_paths():
+    paths = []
+    for root in _candidate_install_roots():
+        paths.append(os.path.join(root, "addin", "RevitMcpNext.Addin.dll"))
+    return paths
+
+
+def default_addin_path():
+    candidates = _candidate_addin_paths()
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    if candidates:
+        return candidates[0]
+    raise RuntimeError("Unable to resolve a Revit MCP Next add-in path.")
 
 
 def load_bridge(addin_path=None):

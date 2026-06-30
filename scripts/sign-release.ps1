@@ -1,3 +1,4 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string] $PackageRoot = "",
     [string[]] $Path = @(),
@@ -113,8 +114,10 @@ foreach ($target in (Get-PackageTargets $PackageRoot)) {
     $targets.Add($target) | Out-Null
 }
 foreach ($targetPattern in $Path) {
-    foreach ($target in (Resolve-SignTarget $targetPattern)) {
-        $targets.Add($target) | Out-Null
+    foreach ($pattern in ([string] $targetPattern).Split(",", [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        foreach ($target in (Resolve-SignTarget $pattern.Trim())) {
+            $targets.Add($target) | Out-Null
+        }
     }
 }
 

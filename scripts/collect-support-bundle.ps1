@@ -287,9 +287,13 @@ $inventoryTargets.Add((Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll")) |
 $inventoryTargets.Add((Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.dll")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_inprocess.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_host_smoke.py")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Examples.panel\Create Level.pushbutton\script.py")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\dynamo\status_node.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\dynamo\host_smoke_node.py")) | Out-Null
+$inventoryTargets.Add((Join-Path $InstallRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\dynamo\create_level_node.py")) | Out-Null
 foreach ($year in $RevitYears) {
     $inventoryTargets.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year\RevitMcpNext.addin")) | Out-Null

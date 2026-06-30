@@ -7,7 +7,7 @@ const bannedPatterns = [
   /npm\s+install\s+-g/i,
 ];
 
-const checkedExtensions = new Set([".json", ".toml", ".md", ".cmd", ".ps1", ".yml", ".yaml"]);
+const checkedExtensions = new Set([".json", ".toml", ".md", ".cmd", ".ps1", ".yml", ".yaml", ".dyn"]);
 const failures = [];
 
 for (const file of walk(root)) {
@@ -38,4 +38,3 @@ function* walk(dir) {
     }
   }
 }
-

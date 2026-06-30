@@ -1,0 +1,134 @@
+{
+  "Uuid": "907b21dc-9f1a-4b28-8e8d-6d8458a98319",
+  "IsCustomNode": false,
+  "Description": "Runs the Revit MCP Next hosted Dynamo smoke inside Dynamo for Revit and writes JSON evidence.",
+  "Name": "Revit MCP Next Host Smoke",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "NodeLibraryDependencies": [],
+  "Author": "Revit MCP Next",
+  "Thumbnail": null,
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [],
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "00000000-0000-0000-0000-000000000000",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "NodeType": "PythonScriptNode",
+      "Code": "import os\nimport sys\n\n\ndef candidate_python_dirs():\n    dirs = []\n    auth_config = os.environ.get(\"REVIT_MCP_NEXT_AUTH_CONFIG\")\n    if auth_config:\n        dirs.append(os.path.join(os.path.dirname(os.path.dirname(auth_config)), \"integrations\", \"python\"))\n\n    install_root = os.environ.get(\"REVIT_MCP_NEXT_INSTALL_ROOT\")\n    if install_root:\n        dirs.append(os.path.join(install_root, \"integrations\", \"python\"))\n\n    local_app_data = os.environ.get(\"LOCALAPPDATA\")\n    if local_app_data:\n        dirs.append(os.path.join(local_app_data, \"RevitMcpNext\", \"integrations\", \"python\"))\n\n    app_data = os.environ.get(\"APPDATA\")\n    if app_data:\n        for year in (\"2024\", \"2025\", \"2026\"):\n            dirs.append(os.path.join(app_data, \"Autodesk\", \"Revit\", \"Addins\", year, \"RevitMcpNext\", \"integrations\", \"python\"))\n\n    return dirs\n\n\ndef add_installed_python_client_to_path():\n    for python_dir in candidate_python_dirs():\n        if os.path.exists(os.path.join(python_dir, \"revit_mcp_next_host_smoke.py\")):\n            if python_dir not in sys.path:\n                sys.path.insert(0, python_dir)\n            return python_dir\n    raise RuntimeError(\"Unable to find installed Revit MCP Next Python integration helper.\")\n\n\ndef add_revit_services_reference():\n    try:\n        import clr\n\n        clr.AddReference(\"RevitServices\")\n    except Exception:\n        pass\n\n\ntry:\n    add_installed_python_client_to_path()\n    add_revit_services_reference()\n    from RevitServices.Persistence import DocumentManager\n    from revit_mcp_next_host_smoke import run_host_smoke\n\n    uiapp = DocumentManager.Instance.CurrentUIApplication\n    evidence_path = os.environ.get(\"REVIT_MCP_NEXT_DYNAMO_EVIDENCE\")\n    model_path = os.environ.get(\"REVIT_MCP_NEXT_DYNAMO_MODEL\")\n    OUT = run_host_smoke(uiapp, \"dynamo\", evidence_path=evidence_path, model_path=model_path, raise_on_failure=False)\nexcept Exception as error:\n    OUT = {\"schemaVersion\": 1, \"status\": \"failed\", \"host\": \"dynamo\", \"error\": str(error)}",
+      "Engine": "CPython3",
+      "EngineName": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "48d52dfaa6fb4ce0b7c5f6e785eeaf1a",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "b82d6e9d747346e3b4b0c410e3035e9e",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Watch, CoreNodeModels",
+      "NodeType": "ExtensionNode",
+      "Id": "6a9bc6d1696645bd9b764c6e06e6311c",
+      "Inputs": [
+        {
+          "Id": "e11df7637bbb4f3f9e2dd22e8d51d7c7",
+          "Name": "",
+          "Description": "Node to evaluate.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "0910de573d55447b90714b4cf83a35fc",
+          "Name": "",
+          "Description": "Watch contents.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Visualize the output of node."
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "b82d6e9d747346e3b4b0c410e3035e9e",
+      "End": "e11df7637bbb4f3f9e2dd22e8d51d7c7",
+      "Id": "4d3a746591c94e71866c75c1a548a3c8",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [],
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": false,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 35.0,
+      "LookX": 0.0,
+      "LookY": 0.0,
+      "LookZ": 0.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "NodeViews": [
+      {
+        "ShowGeometry": false,
+        "Name": "Revit MCP Next Host Smoke",
+        "Id": "48d52dfaa6fb4ce0b7c5f6e785eeaf1a",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "X": 0.0,
+        "Y": 0.0
+      },
+      {
+        "ShowGeometry": false,
+        "Name": "Watch",
+        "Id": "6a9bc6d1696645bd9b764c6e06e6311c",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "X": 440.0,
+        "Y": 0.0
+      }
+    ],
+    "Annotations": [],
+    "X": 120.0,
+    "Y": 140.0,
+    "Zoom": 1.0
+  }
+}

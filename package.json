@@ -19,12 +19,19 @@
     "doctor:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor.ps1",
     "smoke:revit": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-smoke-revit.ps1",
     "smoke:release-local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local-release-smoke.ps1",
+    "smoke:pyrevit-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-pyrevit-host-smoke.ps1",
+    "smoke:dynamo-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-dynamo-host-smoke.ps1",
+    "smoke:host-integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-host-integrations-smoke.ps1",
     "sign:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-release.ps1",
     "evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-release-evidence.ps1",
+    "evidence:host-integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-host-integration-evidence.ps1",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "package:windows:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -DryRun",
     "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1",
-    "dev-cert:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-dev-signing-certificate.ps1"
+    "dev-cert:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-dev-signing-certificate.ps1",
+    "revit:trust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-revit-addin-trust.ps1",
+    "pyrevit:hosts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-pyrevit-hosts-cache.ps1",
+    "mcp:config": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/print-mcp-config.ps1"
   },
   "engines": {
     "node": ">=24 <25"
