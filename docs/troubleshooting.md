@@ -57,9 +57,11 @@ Client config:
 
 ```powershell
 npm run mcp:config
+npm run doctor:clients
 ```
 
 This prints Claude Code, Claude Desktop, and Codex MCP config snippets from the installed `config\client-discovery.json` without printing the local auth token.
+The client doctor validates those generated snippets, launcher paths and quoting, stale install roots, existing Claude Desktop/Codex config entries when present, token leakage risk, and MCP `initialize` plus `tools/list` startup without requiring Revit to be connected.
 
 Common states:
 

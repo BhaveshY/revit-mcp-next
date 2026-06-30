@@ -447,11 +447,47 @@ export interface CatalogResult {
   units: Record<string, string>;
 }
 
+export type ModelReadinessScenarioName =
+  | "levels"
+  | "wallCreation"
+  | "floorCreation"
+  | "roomCreation"
+  | "roomReadback"
+  | "typeChange"
+  | "familyPlacement"
+  | "selection"
+  | "annotations";
+
+export interface ModelReadinessRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  scenarios?: ModelReadinessScenarioName[];
+  includeHints?: boolean;
+}
+
+export interface ModelReadinessScenario {
+  name: ModelReadinessScenarioName | string;
+  ready: boolean;
+  missing: string[];
+  nextAction?: string;
+  hints?: Record<string, unknown>;
+}
+
+export interface ModelReadinessResult {
+  document: DocumentReference;
+  activeView?: RevitDocumentSummary["activeView"];
+  scenarios: ModelReadinessScenario[];
+  readyCount: number;
+  totalCount: number;
+  source: string;
+}
+
 export type ChangeRiskLevel = "low" | "medium" | "high";
 export type ChangeOperationType =
   | "set_parameter"
   | "create_level"
   | "create_wall"
+  | "place_family_instance"
   | "move_element"
   | "rotate_element"
   | "copy_element"
@@ -492,6 +528,18 @@ export interface CreateWallChangeOperation extends ChangeOperationBase {
   height?: UnitValue;
   structural?: boolean;
   flip?: boolean;
+}
+
+export interface PlaceFamilyInstanceOperation extends ChangeOperationBase {
+  type: "place_family_instance";
+  familySymbolId: ElementId;
+  hostElementId?: ElementId;
+  levelId?: ElementId;
+  location: Point3;
+  rotation?: AngleValue;
+  flipFacing?: boolean;
+  flipHand?: boolean;
+  allowPinnedHost?: boolean;
 }
 
 export interface MoveElementChangeOperation extends ChangeOperationBase {
@@ -564,6 +612,7 @@ export type ChangeOperation =
   | SetParameterChangeOperation
   | CreateLevelChangeOperation
   | CreateWallChangeOperation
+  | PlaceFamilyInstanceOperation
   | MoveElementChangeOperation
   | RotateElementChangeOperation
   | CopyElementChangeOperation

@@ -87,6 +87,28 @@ const modelStatisticsSchema = {
     .describe("Maximum non-type elements to scan for grouped statistics before returning partial results."),
 };
 
+const readinessScenarioSchema = z.enum([
+  "levels",
+  "wallCreation",
+  "floorCreation",
+  "roomCreation",
+  "roomReadback",
+  "typeChange",
+  "familyPlacement",
+  "selection",
+  "annotations",
+]);
+
+const modelReadinessSchema = {
+  ...documentGuardSchema,
+  scenarios: z
+    .array(readinessScenarioSchema)
+    .max(16)
+    .optional()
+    .describe("Optional subset of readiness scenarios to return. Omit for the common agent workflow set."),
+  includeHints: z.boolean().default(true).describe("Include compact candidate IDs and next actions when available."),
+};
+
 const materialQuantitiesSchema = {
   ...documentGuardSchema,
   filter: queryFilterSchema.optional().describe("Optional model scope. Use selectionOnly or viewId for focused takeoffs."),
@@ -221,6 +243,21 @@ const createWallOperationSchema = operationBaseSchema
     flip: z.boolean().optional().describe("Whether to flip the wall orientation after creation."),
   })
   .strict();
+const placeFamilyInstanceOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("place_family_instance"),
+    familySymbolId: boundedId.describe("FamilySymbol ID from revit.catalog with kind=familySymbols and preset=placement."),
+    hostElementId: boundedId
+      .optional()
+      .describe("Required for wall-hosted doors/windows and other hosted families. Use a valid host element ID."),
+    levelId: boundedId.optional().describe("Required for level-based furniture, equipment, and fixture symbols; useful for hosted placement validation."),
+    location: changePoint3Schema.describe("Insertion point with explicit units."),
+    rotation: changeAngleValueSchema.optional().describe("Optional rotation around the family insertion point vertical axis."),
+    flipFacing: z.boolean().optional().describe("Optionally flip facing after placement when supported."),
+    flipHand: z.boolean().optional().describe("Optionally flip hand after placement when supported."),
+    allowPinnedHost: z.boolean().optional().describe("Allow hosted placement on a pinned wall after explicit review. Defaults to false."),
+  })
+  .strict();
 const moveElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("move_element"),
@@ -304,6 +341,7 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   setParameterOperationSchema,
   createLevelOperationSchema,
   createWallOperationSchema,
+  placeFamilyInstanceOperationSchema,
   moveElementOperationSchema,
   rotateElementOperationSchema,
   copyElementOperationSchema,
@@ -549,6 +587,37 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
   );
 
   server.registerTool(
+    "revit.get_model_readiness",
+    {
+      title: "Get Revit Model Readiness",
+      description:
+        "Return compact scenario readiness for common agent workflows: levels, walls, floors, rooms, type changes, family placement, selection, and annotations.",
+      inputSchema: modelReadinessSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        scenarios: args.scenarios,
+        includeHints: args.includeHints ?? true,
+      };
+      const request = makeRequest(context.sessionId, "get_model_readiness", "read", payload, 30000);
+      const response = await context.bridge.getModelReadiness(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) => `${result.readyCount} of ${result.totalCount} Revit agent workflow scenario(s) ready.`
+      );
+    }
+  );
+
+  server.registerTool(
     "revit.get_material_quantities",
     {
       title: "Get Material Quantities",
@@ -698,7 +767,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {

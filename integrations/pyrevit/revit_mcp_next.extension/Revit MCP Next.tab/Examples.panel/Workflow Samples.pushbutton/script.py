@@ -18,7 +18,7 @@ def candidate_python_dirs():
     current = os.path.abspath(os.path.dirname(__file__))
     for _ in range(8):
         candidate = os.path.join(current, "integrations", "python")
-        if os.path.exists(os.path.join(candidate, "revit_mcp_next_inprocess.py")):
+        if os.path.exists(os.path.join(candidate, "revit_mcp_next_workflow_examples.py")):
             dirs.append(candidate)
         parent = os.path.dirname(current)
         if parent == current:
@@ -39,20 +39,22 @@ def candidate_python_dirs():
 
 def add_installed_python_client_to_path():
     for python_dir in candidate_python_dirs():
-        if os.path.exists(os.path.join(python_dir, "revit_mcp_next_host_smoke.py")):
+        if os.path.exists(os.path.join(python_dir, "revit_mcp_next_workflow_examples.py")):
             if python_dir not in sys.path:
                 sys.path.insert(0, python_dir)
             return python_dir
-    raise RuntimeError("Unable to find installed Revit MCP Next Python integration helper.")
+    raise RuntimeError("Unable to find installed Revit MCP Next workflow example helper.")
 
 
 add_installed_python_client_to_path()
 
-from revit_mcp_next_host_smoke import run_host_smoke  # noqa: E402
+from revit_mcp_next_workflow_examples import env_flag, run_workflow_examples  # noqa: E402
 
 
-evidence_path = os.environ.get("REVIT_MCP_NEXT_PYREVIT_EVIDENCE")
-model_path = os.environ.get("REVIT_MCP_NEXT_PYREVIT_MODEL")
-evidence = run_host_smoke(__revit__, "pyrevit", evidence_path=evidence_path, model_path=model_path)
+evidence = run_workflow_examples(
+    __revit__,
+    apply_writes=env_flag("REVIT_MCP_NEXT_EXAMPLE_APPLY_WRITES"),
+    apply_placement=env_flag("REVIT_MCP_NEXT_EXAMPLE_APPLY_PLACEMENT"),
+)
 
 print(json.dumps(evidence, indent=2, sort_keys=True))

@@ -15,6 +15,8 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelReadinessRequest,
+  ModelReadinessResult,
   ModelStatisticsRequest,
   ModelStatisticsResult,
   QueryRequest,
@@ -92,6 +94,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<ModelStatisticsRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<ModelStatisticsResult>> {
+    return this.send(request, options);
+  }
+
+  getModelReadiness(
+    request: BridgeRequest<ModelReadinessRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelReadinessResult>> {
     return this.send(request, options);
   }
 

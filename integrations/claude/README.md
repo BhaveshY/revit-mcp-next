@@ -21,3 +21,9 @@ npm run mcp:config -- -Client claude-desktop
 Merge the printed `mcpServers.revit-mcp-next` entry into `claude_desktop_config.json`.
 
 The launcher must resolve to an absolute installed path. Do not use a network package runner, a relative command, or a bare runtime command in release snippets.
+
+Validate the generated snippets and any installed Claude Desktop entry:
+
+```powershell
+npm run doctor:clients -- -Client claude-desktop
+```

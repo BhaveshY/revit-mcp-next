@@ -17,6 +17,7 @@ const REQUIRED_TOOLS = [
   "revit.get_current_view_elements",
   "revit.get_selection",
   "revit.analyze_model",
+  "revit.get_model_readiness",
   "revit.get_material_quantities",
   "revit.get_rooms",
   "revit.catalog",
@@ -192,6 +193,18 @@ async function main() {
     assert(Number.isInteger(modelStats?.scannedElements), "revit.analyze_model did not return scannedElements.");
     console.log(`Model analysis OK: scanned ${modelStats.scannedElements} element(s)`);
 
+    const modelReadiness = await callRequiredTool(client, "revit.get_model_readiness", {
+      ...documentGuard,
+      includeHints: true,
+    });
+    assert(Array.isArray(modelReadiness.scenarios), "revit.get_model_readiness did not return a scenarios array.");
+    assert(Number.isInteger(modelReadiness.readyCount), "revit.get_model_readiness did not return readyCount.");
+    assert(
+      modelReadiness.scenarios.some((scenario) => scenario.name === "familyPlacement"),
+      "revit.get_model_readiness did not include familyPlacement scenario."
+    );
+    console.log(`Model readiness OK: ${modelReadiness.readyCount} of ${modelReadiness.totalCount} scenario(s) ready`);
+
     const materialQuantities = await callRequiredTool(client, "revit.get_material_quantities", {
       ...documentGuard,
       limit: 5,
@@ -351,6 +364,26 @@ async function main() {
     const queriedWall = await queryWallById(client, wallId);
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
 
+    const familyPlacementResult = await tryPlaceFamilyInstance(client, {
+      documentFingerprint,
+      expectedGeneration: numericOrUndefined(createApply.generation),
+      transactionPrefix: options.transactionPrefix,
+      runId,
+      wallId,
+      levelId: String(smokeLevelId),
+      levelElevationMm: smokeLevelElevationMm,
+      wallLengthMm: options.wallLengthMm,
+    });
+    const familyPlacementApply = familyPlacementResult.apply;
+    const familyInstanceId = familyPlacementApply ? getCreatedElementId(findChange(familyPlacementApply, "place_family_instance")) : undefined;
+    if (familyPlacementApply) {
+      assert(familyInstanceId, "place_family_instance applied but the created family instance ID was not returned.");
+      await queryElementById(client, "FamilyInstance", familyInstanceId);
+      console.log(`Place family instance OK: element ${familyInstanceId}`);
+    } else {
+      console.log(`Place family instance skipped: ${familyPlacementResult.reason}`);
+    }
+
     const roomOriginX = 0;
     const roomOriginY = options.wallLengthMm + 1500;
     const roomWidthMm = options.wallLengthMm;
@@ -404,7 +437,7 @@ async function main() {
     const roomBoundaryTransaction = makeTransactionName(options.transactionPrefix, "create room boundary", runId);
     const roomBoundaryChangeSet = compactObject({
       documentFingerprint,
-      expectedGeneration: numericOrUndefined(createApply.generation),
+      expectedGeneration: numericOrUndefined(familyPlacementApply?.generation ?? createApply.generation),
       transactionName: roomBoundaryTransaction,
       operations: roomBoundaryOperations,
     });
@@ -690,6 +723,7 @@ async function main() {
       "create_grid",
       "create_floor",
       "create_wall",
+      ...(familyPlacementApply ? ["place_family_instance"] : []),
       "create_room",
       "set_parameter",
       ...(changeTypeApply ? ["change_element_type"] : []),
@@ -705,6 +739,12 @@ async function main() {
         reason: "No alternate compatible wall type was available in this project.",
       });
     }
+    if (!familyPlacementApply) {
+      summary.skippedOperations.push({
+        type: "place_family_instance",
+        reason: familyPlacementResult.reason,
+      });
+    }
     summary.result = compactObject({
       runId,
       createdElementIds: {
@@ -712,6 +752,7 @@ async function main() {
         grid: gridId,
         floor: floorId,
         wall: wallId,
+        familyInstance: familyInstanceId,
         roomBoundaryWalls: roomBoundaryWallIds,
         room: roomId,
         copiedWall: copiedWallId,
@@ -1097,6 +1138,149 @@ async function applyFirstReadySetParameter(
       "Tried: " + candidateNames.join(", "),
       blockedMessages.join("\n"),
     ].join("\n")
+  );
+}
+
+async function tryPlaceFamilyInstance(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, wallId, levelId, levelElevationMm, wallLengthMm }
+) {
+  const hostedSymbols = await catalog(client, {
+    kind: "familySymbols",
+    filter: { categories: ["OST_Doors", "OST_Windows"] },
+    preset: "placement",
+    limit: 50,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(hostedSymbols, "familySymbols");
+
+  const hostedResult = await tryFamilyPlacementCandidates(
+    client,
+    {
+      documentFingerprint,
+      expectedGeneration,
+      transactionPrefix,
+      runId,
+      operationLabel: "hosted family instance",
+    },
+    hostedSymbols.items.filter(isWallHostedPlacementSymbol),
+    (symbol, index) => ({
+      id: `place-hosted-family-${index + 1}`,
+      type: "place_family_instance",
+      familySymbolId: String(symbol.id),
+      hostElementId: wallId,
+      levelId,
+      location: pointMm(Math.max(600, Math.min(wallLengthMm / 2, wallLengthMm - 600)), 0, levelElevationMm),
+      rotation: { value: 0, unit: "degrees" },
+    })
+  );
+  if (hostedResult.apply || hostedResult.tried > 0) return hostedResult;
+
+  const levelBasedSymbols = await catalog(client, {
+    kind: "familySymbols",
+    filter: {
+      categories: [
+        "OST_Furniture",
+        "OST_ElectricalEquipment",
+        "OST_MechanicalEquipment",
+        "OST_PlumbingFixtures",
+        "OST_ElectricalFixtures",
+        "OST_LightingFixtures",
+        "OST_SpecialityEquipment",
+      ],
+    },
+    preset: "placement",
+    limit: 50,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(levelBasedSymbols, "familySymbols");
+
+  return tryFamilyPlacementCandidates(
+    client,
+    {
+      documentFingerprint,
+      expectedGeneration,
+      transactionPrefix,
+      runId,
+      operationLabel: "level-based family instance",
+    },
+    levelBasedSymbols.items.filter(isLevelBasedPlacementSymbol),
+    (symbol, index) => ({
+      id: `place-level-family-${index + 1}`,
+      type: "place_family_instance",
+      familySymbolId: String(symbol.id),
+      levelId,
+      location: pointMm(wallLengthMm + 1500, 1500 + index * 300, levelElevationMm),
+      rotation: { value: 0, unit: "degrees" },
+    })
+  );
+}
+
+async function tryFamilyPlacementCandidates(client, context, candidates, buildOperation) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return {
+      apply: undefined,
+      tried: 0,
+      reason: `No compatible ${context.operationLabel} symbols were returned by revit.catalog.`,
+    };
+  }
+
+  const blockedMessages = [];
+  for (let index = 0; index < candidates.length; index++) {
+    const symbol = candidates[index];
+    const operation = buildOperation(symbol, index);
+    const changeSet = compactObject({
+      documentFingerprint: context.documentFingerprint,
+      expectedGeneration: context.expectedGeneration,
+      transactionName: makeTransactionName(context.transactionPrefix, context.operationLabel, context.runId),
+      operations: [operation],
+    });
+
+    const preview = await callRequiredTool(client, "revit.preview_change_set", changeSet);
+    assert(Array.isArray(preview.changes), "place_family_instance preview did not return changes.");
+    if (preview.ready === true && preview.changes.every((change) => change.status === "ready")) {
+      assert(preview.previewId, "place_family_instance preview did not return previewId.");
+      assert(preview.changeSetHash, "place_family_instance preview did not return changeSetHash.");
+      console.log(`Preview OK: place_family_instance (${preview.previewId}) using ${symbol.familyName ?? symbol.name ?? symbol.id}`);
+      const apply = await applyChangeSet(client, changeSet, preview, "place_family_instance");
+      return {
+        apply,
+        tried: index + 1,
+        symbol,
+        reason: undefined,
+      };
+    }
+
+    blockedMessages.push(`${symbol.familyName ?? symbol.name ?? symbol.id}: ${formatChanges(preview.changes)}`);
+  }
+
+  return {
+    apply: undefined,
+    tried: candidates.length,
+    reason: `All ${context.operationLabel} candidates were blocked: ${blockedMessages.join(" | ")}`,
+  };
+}
+
+function isWallHostedPlacementSymbol(item) {
+  const placementType = String(item?.placementType ?? "");
+  const builtInCategory = String(item?.builtInCategory ?? item?.category ?? "");
+  return placementType.includes("Hosted") && ["OST_Doors", "OST_Windows"].includes(builtInCategory);
+}
+
+function isLevelBasedPlacementSymbol(item) {
+  const placementType = String(item?.placementType ?? "");
+  const builtInCategory = String(item?.builtInCategory ?? item?.category ?? "");
+  return (
+    placementType === "OneLevelBased" &&
+    [
+      "OST_Furniture",
+      "OST_ElectricalEquipment",
+      "OST_MechanicalEquipment",
+      "OST_PlumbingFixtures",
+      "OST_ElectricalFixtures",
+      "OST_LightingFixtures",
+      "OST_SpecialityEquipment",
+    ].includes(builtInCategory)
   );
 }
 

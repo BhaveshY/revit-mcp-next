@@ -17,7 +17,7 @@ npm run install:windows
 
 2. Open Revit and load the Revit MCP Next add-in.
 3. Add a Dynamo Python node.
-4. Paste the contents of `status_node.py` for diagnostics or `create_level_node.py` for a preview/apply write example. For release-candidate hosted integration evidence, open `revit_mcp_next_host_smoke.dyn` from the installed package and run the graph inside Dynamo for Revit. The nodes search for the installed in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext`.
+4. Paste the contents of `status_node.py` for diagnostics, `create_level_node.py` for a preview/apply write example, or `workflow_examples_node.py` for status, scoped read, catalog, room read, wall/floor/room preview, blocked preview, and optional family-placement preview examples. For release-candidate hosted integration evidence, open `revit_mcp_next_host_smoke.dyn` from the installed package and run the graph inside Dynamo for Revit. The nodes search for the installed in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext`.
 
 Common installed helper path:
 
@@ -28,6 +28,10 @@ Common installed helper path:
 The nodes return compact bridge data. For writes, build a change set, call
 `preview_change_set`, inspect every change, then call `apply_preview` or
 `apply_change_set` only when the preview is ready and explicitly confirmed.
+`workflow_examples_node.py` previews model-changing operations without applying
+them by default. Set `REVIT_MCP_NEXT_EXAMPLE_APPLY_WRITES=1` to apply the grid
+sample and `REVIT_MCP_NEXT_EXAMPLE_APPLY_PLACEMENT=1` to apply family placement
+when the model and add-in return a ready preview.
 
 For release candidates, run `revit_mcp_next_host_smoke.dyn` against the installed package and set `REVIT_MCP_NEXT_DYNAMO_EVIDENCE` before launching Revit when you need a specific JSON output path. If Dynamo starts without an active document, set `REVIT_MCP_NEXT_DYNAMO_MODEL` to a disposable RVT. Archive the Dynamo evidence JSON and include it in `host-integrations-summary.json` together with the pyRevit host smoke result.
 

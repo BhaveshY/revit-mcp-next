@@ -40,7 +40,7 @@ def _candidate_install_roots():
 
     app_data = os.environ.get("APPDATA")
     if app_data:
-        for year in ("2024", "2025", "2026"):
+        for year in ("2024",):
             roots.append(os.path.join(app_data, "Autodesk", "Revit", "Addins", year, "RevitMcpNext"))
 
     unique = []

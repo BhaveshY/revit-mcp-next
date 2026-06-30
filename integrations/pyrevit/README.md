@@ -22,7 +22,7 @@ npm run install:windows
 3. Reload pyRevit. Open Revit with the Revit MCP Next add-in loaded and an
    active project document.
 
-The example commands search for the in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext`.
+The example commands search for the in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext`.
 
 Common installed helper path:
 
@@ -35,6 +35,7 @@ Included commands:
 - `Diagnostics.panel\Status.pushbutton`: calls `status` through the in-process bridge.
 - `Diagnostics.panel\Host Smoke.pushbutton`: runs a compact hosted integration smoke, previews and applies a `create_level` operation, and writes JSON evidence. Set `REVIT_MCP_NEXT_PYREVIT_EVIDENCE` to choose the output path; otherwise evidence is written under the install root logs when discoverable.
 - `Examples.panel\Create Level.pushbutton`: builds a `create_level` change set, previews it, checks that the preview is ready, then applies the exact preview token.
+- `Examples.panel\Workflow Samples.pushbutton`: runs status, current-view scoped read, wall/floor/family catalog lookup, room read, wall/floor/room previews, a blocked preview example, and an optional family-placement preview. By default it does not apply these workflow writes; set `REVIT_MCP_NEXT_EXAMPLE_APPLY_WRITES=1` to apply the grid sample and `REVIT_MCP_NEXT_EXAMPLE_APPLY_PLACEMENT=1` to apply family placement when preview-ready.
 
 For release candidates, archive the pyRevit evidence JSON and include it in `host-integrations-summary.json` together with the Dynamo host smoke result.
 

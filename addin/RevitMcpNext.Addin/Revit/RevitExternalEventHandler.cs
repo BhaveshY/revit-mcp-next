@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Contracts;
@@ -122,6 +123,8 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleGetSelection(app, request, sw);
                         case "analyze_model":
                             return HandleAnalyzeModel(app, request, sw);
+                        case "get_model_readiness":
+                            return HandleGetModelReadiness(app, request, sw);
                         case "get_material_quantities":
                             return HandleGetMaterialQuantities(app, request, sw);
                         case "get_rooms":
@@ -436,6 +439,35 @@ namespace RevitMcpNext.Addin.Revit
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = elements.Count,
                     TotalCount = truncated ? (int?)null : elements.Count
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetModelReadiness(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_model_readiness.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> data = BuildModelReadiness(app, document, generation, request.Payload);
+            collectorSw.Stop();
+
+            return Success(
+                request,
+                data,
+                sw,
+                metrics: new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = 1,
+                    TotalCount = 1
                 },
                 generation: generation);
         }
@@ -833,6 +865,7 @@ namespace RevitMcpNext.Addin.Revit
                     string.Equals(operationType, "create_grid", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_floor", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_room", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "place_family_instance", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "copy_element", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1018,6 +1051,8 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewCreateFloor(document, operation, index);
                 case "create_room":
                     return PreviewCreateRoom(document, operation, index, validationContext);
+                case "place_family_instance":
+                    return PreviewPlaceFamilyInstance(document, operation, index);
                 case "delete_element":
                     return PreviewDeleteElement(document, operation, index);
                 default:
@@ -1052,6 +1087,8 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyCreateFloor(document, operation, index);
                 case "create_room":
                     return ApplyCreateRoom(document, operation, index);
+                case "place_family_instance":
+                    return ApplyPlaceFamilyInstance(document, operation, index);
                 case "delete_element":
                     return ApplyDeleteElement(document, operation, index);
                 default:
@@ -1530,6 +1567,382 @@ namespace RevitMcpNext.Addin.Revit
                 after: RoomSnapshot(room));
         }
 
+        private static Dictionary<string, object> PreviewPlaceFamilyInstance(Document document, Dictionary<string, object> operation, int index)
+        {
+            FamilyPlacementRequest placement;
+            string error;
+            if (!TryBuildFamilyPlacementRequest(document, operation, out placement, out error))
+            {
+                return BlockedChange(operation, index, error);
+            }
+
+            return Change(operation, index, "ready",
+                target: FamilyPlacementTarget(document, placement),
+                before: null,
+                after: FamilyPlacementPreviewSnapshot(placement));
+        }
+
+        private static Dictionary<string, object> ApplyPlaceFamilyInstance(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewPlaceFamilyInstance(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "place_family_instance preview failed.");
+            }
+
+            FamilyPlacementRequest placement;
+            string error;
+            if (!TryBuildFamilyPlacementRequest(document, operation, out placement, out error))
+            {
+                throw new InvalidOperationException(error ?? "place_family_instance validation failed.");
+            }
+
+            bool activatedSymbol = false;
+            if (!placement.Symbol.IsActive)
+            {
+                placement.Symbol.Activate();
+                document.Regenerate();
+                activatedSymbol = true;
+            }
+
+            FamilyInstance instance;
+            if (string.Equals(placement.PlacementMode, "wallHosted", StringComparison.OrdinalIgnoreCase))
+            {
+                instance = placement.Level == null
+                    ? document.Create.NewFamilyInstance(placement.Location, placement.Symbol, placement.Host, StructuralType.NonStructural)
+                    : document.Create.NewFamilyInstance(placement.Location, placement.Symbol, placement.Host, placement.Level, StructuralType.NonStructural);
+            }
+            else
+            {
+                instance = document.Create.NewFamilyInstance(placement.Location, placement.Symbol, placement.Level, StructuralType.NonStructural);
+            }
+
+            if (instance == null)
+            {
+                throw new InvalidOperationException("Revit did not create a family instance for place_family_instance.");
+            }
+
+            ApplyFamilyInstancePostPlacementTransforms(document, instance, placement);
+            document.Regenerate();
+            FamilyInstance created = document.GetElement(instance.Id) as FamilyInstance ?? instance;
+            Dictionary<string, object> snapshot = FamilyInstanceSnapshot(created);
+            snapshot["activatedSymbol"] = activatedSymbol;
+            snapshot["placementMode"] = placement.PlacementMode;
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(created, null),
+                before: null,
+                after: snapshot);
+        }
+
+        private static bool TryBuildFamilyPlacementRequest(
+            Document document,
+            Dictionary<string, object> operation,
+            out FamilyPlacementRequest placement,
+            out string error)
+        {
+            placement = null;
+            error = null;
+
+            string familySymbolId = GetString(operation, "familySymbolId");
+            if (string.IsNullOrWhiteSpace(familySymbolId))
+            {
+                error = "place_family_instance requires familySymbolId.";
+                return false;
+            }
+
+            FamilySymbol symbol = ResolveElement(document, familySymbolId) as FamilySymbol;
+            if (symbol == null)
+            {
+                error = "FamilySymbol " + familySymbolId + " was not found.";
+                return false;
+            }
+
+            if (symbol.Family == null)
+            {
+                error = "FamilySymbol " + familySymbolId + " does not expose a parent family.";
+                return false;
+            }
+
+            Dictionary<string, object> locationValue = GetDictionary(operation, "location");
+            if (locationValue == null)
+            {
+                error = "place_family_instance requires location.";
+                return false;
+            }
+
+            string hostElementId = GetString(operation, "hostElementId");
+            string levelId = GetString(operation, "levelId");
+            bool hasHost = !string.IsNullOrWhiteSpace(hostElementId);
+            bool allowPinnedHost = GetBool(operation, "allowPinnedHost", false);
+            bool flipFacing = GetBool(operation, "flipFacing", false) || GetBool(operation, "facingFlipped", false);
+            bool flipHand = GetBool(operation, "flipHand", false) || GetBool(operation, "handFlipped", false);
+
+            double rotationRadians = 0;
+            bool hasRotation = false;
+            Dictionary<string, object> rotationValue = GetDictionary(operation, "rotation") ?? GetDictionary(operation, "angle");
+            if (rotationValue != null)
+            {
+                try
+                {
+                    rotationRadians = ToInternalAngle(rotationValue);
+                    if (!IsFinite(rotationRadians))
+                    {
+                        error = "place_family_instance rotation must be a finite angle.";
+                        return false;
+                    }
+
+                    hasRotation = true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
+            FamilyPlacementType placementType = symbol.Family.FamilyPlacementType;
+            if (IsWallHostedDoorWindowCategory(symbol))
+            {
+                if (placementType != FamilyPlacementType.OneLevelBasedHosted)
+                {
+                    error = "FamilySymbol " + familySymbolId + " is a door/window symbol but has unsupported placementType " + placementType + ". Expected OneLevelBasedHosted.";
+                    return false;
+                }
+
+                if (!hasHost)
+                {
+                    error = "place_family_instance requires hostElementId for wall-hosted door/window symbols.";
+                    return false;
+                }
+
+                Element host = ResolveElement(document, hostElementId);
+                Wall hostWall = host as Wall;
+                if (hostWall == null)
+                {
+                    error = "hostElementId " + hostElementId + " must reference a Wall for wall-hosted door/window placement.";
+                    return false;
+                }
+
+                string hostError = ValidateWallFamilyInstanceHost(document, hostWall);
+                if (!string.IsNullOrWhiteSpace(hostError))
+                {
+                    error = hostError;
+                    return false;
+                }
+
+                if (hostWall.Pinned && !allowPinnedHost)
+                {
+                    error = "Host wall " + hostElementId + " is pinned. Pass allowPinnedHost=true only after explicitly reviewing the host modification.";
+                    return false;
+                }
+
+                Level level = null;
+                string levelSource = null;
+                if (!string.IsNullOrWhiteSpace(levelId))
+                {
+                    level = ResolveElement(document, levelId) as Level;
+                    if (level == null)
+                    {
+                        error = "Level " + levelId + " was not found.";
+                        return false;
+                    }
+
+                    levelSource = "explicit";
+                }
+                else
+                {
+                    level = ResolveHostLevel(document, hostWall);
+                    levelSource = level == null ? null : "host";
+                }
+
+                XYZ location;
+                try
+                {
+                    location = ToInternalPlacementPoint(locationValue, "location", level?.Elevation);
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+
+                placement = new FamilyPlacementRequest(
+                    "wallHosted",
+                    symbol,
+                    placementType,
+                    hostWall,
+                    level,
+                    levelSource,
+                    location,
+                    hasRotation,
+                    rotationRadians,
+                    flipFacing,
+                    flipHand,
+                    allowPinnedHost);
+                return true;
+            }
+
+            if (IsLevelBasedFurnitureEquipmentFixtureCategory(symbol))
+            {
+                if (placementType != FamilyPlacementType.OneLevelBased)
+                {
+                    error = "FamilySymbol " + familySymbolId + " has placementType " + placementType + ". Level-based furniture/equipment/fixture placement requires OneLevelBased.";
+                    return false;
+                }
+
+                if (hasHost)
+                {
+                    error = "hostElementId is only supported for wall-hosted door/window placement in place_family_instance.";
+                    return false;
+                }
+
+                if (flipFacing || flipHand)
+                {
+                    error = "flipFacing and flipHand are only supported for wall-hosted door/window placement.";
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(levelId))
+                {
+                    error = "place_family_instance requires levelId for level-based furniture/equipment/fixture symbols.";
+                    return false;
+                }
+
+                Level level = ResolveElement(document, levelId) as Level;
+                if (level == null)
+                {
+                    error = "Level " + levelId + " was not found.";
+                    return false;
+                }
+
+                XYZ location;
+                try
+                {
+                    location = ToInternalPlacementPoint(locationValue, "location", level.Elevation);
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+
+                placement = new FamilyPlacementRequest(
+                    "levelBased",
+                    symbol,
+                    placementType,
+                    null,
+                    level,
+                    "explicit",
+                    location,
+                    hasRotation,
+                    rotationRadians,
+                    false,
+                    false,
+                    allowPinnedHost);
+                return true;
+            }
+
+            string categoryName = symbol.Category == null ? "(none)" : symbol.Category.Name;
+            error = "FamilySymbol " + familySymbolId + " category '" + categoryName + "' is not supported by place_family_instance. First supported cases are wall-hosted doors/windows and level-based furniture/equipment/fixtures.";
+            return false;
+        }
+
+        private static void ApplyFamilyInstancePostPlacementTransforms(Document document, FamilyInstance instance, FamilyPlacementRequest placement)
+        {
+            if (placement.HasRotation && Math.Abs(placement.RotationRadians) > 0.000000001)
+            {
+                Line axis = Line.CreateBound(placement.Location, placement.Location + XYZ.BasisZ);
+                ElementTransformUtils.RotateElement(document, instance.Id, axis, placement.RotationRadians);
+                instance = document.GetElement(instance.Id) as FamilyInstance ?? instance;
+            }
+
+            if (placement.FlipFacing)
+            {
+                if (!instance.CanFlipFacing)
+                {
+                    throw new InvalidOperationException("Created family instance does not support flipFacing.");
+                }
+
+                instance.flipFacing();
+            }
+
+            if (placement.FlipHand)
+            {
+                if (!instance.CanFlipHand)
+                {
+                    throw new InvalidOperationException("Created family instance does not support flipHand.");
+                }
+
+                instance.flipHand();
+            }
+        }
+
+        private static Dictionary<string, object> FamilyPlacementTarget(Document document, FamilyPlacementRequest placement)
+        {
+            var target = new Dictionary<string, object>
+            {
+                ["document"] = document.Title,
+                ["placementMode"] = placement.PlacementMode,
+                ["familySymbol"] = ElementSummary(document, placement.Symbol)
+            };
+
+            if (placement.Level != null)
+            {
+                target["level"] = BuildLevelSummary(placement.Level);
+                if (!string.IsNullOrWhiteSpace(placement.LevelSource)) target["levelSource"] = placement.LevelSource;
+            }
+
+            if (placement.Host != null)
+            {
+                Dictionary<string, object> host = ElementSummary(document, placement.Host);
+                host["pinned"] = placement.Host.Pinned;
+                target["host"] = host;
+            }
+
+            return target;
+        }
+
+        private static Dictionary<string, object> FamilyPlacementPreviewSnapshot(FamilyPlacementRequest placement)
+        {
+            var after = new Dictionary<string, object>
+            {
+                ["familySymbolId"] = ToElementIdString(placement.Symbol.Id),
+                ["familySymbolName"] = SafeElementName(placement.Symbol),
+                ["familyName"] = GetFamilyName(placement.Symbol),
+                ["placementType"] = placement.PlacementType.ToString(),
+                ["placementMode"] = placement.PlacementMode,
+                ["location"] = PointValue(placement.Location),
+                ["activationRequired"] = !placement.Symbol.IsActive,
+                ["structuralType"] = StructuralType.NonStructural.ToString()
+            };
+
+            string builtInCategory = GetBuiltInCategoryName(placement.Symbol);
+            if (!string.IsNullOrWhiteSpace(builtInCategory)) after["builtInCategory"] = builtInCategory;
+            if (placement.Symbol.Category != null) after["category"] = placement.Symbol.Category.Name;
+
+            if (placement.Level != null)
+            {
+                after["levelId"] = ToElementIdString(placement.Level.Id);
+                after["levelName"] = placement.Level.Name;
+                if (!string.IsNullOrWhiteSpace(placement.LevelSource)) after["levelSource"] = placement.LevelSource;
+            }
+
+            if (placement.Host != null)
+            {
+                after["hostElementId"] = ToElementIdString(placement.Host.Id);
+                after["hostName"] = SafeElementName(placement.Host);
+                after["hostPinned"] = placement.Host.Pinned;
+                after["allowPinnedHost"] = placement.AllowPinnedHost;
+            }
+
+            if (placement.HasRotation) after["rotation"] = AngleValue(placement.RotationRadians);
+            if (placement.FlipFacing) after["flipFacing"] = true;
+            if (placement.FlipHand) after["flipHand"] = true;
+
+            return after;
+        }
+
         private static Dictionary<string, object> PreviewMoveElement(Document document, Dictionary<string, object> operation, int index)
         {
             string elementId = GetString(operation, "elementId");
@@ -1955,6 +2368,50 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private sealed class FamilyPlacementRequest
+        {
+            public FamilyPlacementRequest(
+                string placementMode,
+                FamilySymbol symbol,
+                FamilyPlacementType placementType,
+                Element host,
+                Level level,
+                string levelSource,
+                XYZ location,
+                bool hasRotation,
+                double rotationRadians,
+                bool flipFacing,
+                bool flipHand,
+                bool allowPinnedHost)
+            {
+                PlacementMode = placementMode;
+                Symbol = symbol;
+                PlacementType = placementType;
+                Host = host;
+                Level = level;
+                LevelSource = levelSource;
+                Location = location;
+                HasRotation = hasRotation;
+                RotationRadians = rotationRadians;
+                FlipFacing = flipFacing;
+                FlipHand = flipHand;
+                AllowPinnedHost = allowPinnedHost;
+            }
+
+            public string PlacementMode { get; }
+            public FamilySymbol Symbol { get; }
+            public FamilyPlacementType PlacementType { get; }
+            public Element Host { get; }
+            public Level Level { get; }
+            public string LevelSource { get; }
+            public XYZ Location { get; }
+            public bool HasRotation { get; }
+            public double RotationRadians { get; }
+            public bool FlipFacing { get; }
+            public bool FlipHand { get; }
+            public bool AllowPinnedHost { get; }
+        }
+
         private static Dictionary<string, object> ElementTarget(Element element, string parameterName)
         {
             var target = new Dictionary<string, object>
@@ -2062,6 +2519,34 @@ namespace RevitMcpNext.Addin.Revit
                 .FirstOrDefault();
         }
 
+        private static Level ResolveHostLevel(Document document, Element host)
+        {
+            if (host == null) return null;
+
+            ElementId levelId = GetLevelId(host);
+            if (IsValidElementId(levelId))
+            {
+                Level level = document.GetElement(levelId) as Level;
+                if (level != null) return level;
+            }
+
+            try
+            {
+                Parameter baseConstraint = host.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT);
+                ElementId baseLevelId = baseConstraint?.AsElementId();
+                if (IsValidElementId(baseLevelId))
+                {
+                    return document.GetElement(baseLevelId) as Level;
+                }
+            }
+            catch
+            {
+                // Non-wall hosts or unusual wall variants may not expose a base constraint.
+            }
+
+            return null;
+        }
+
         private static double ToInternalElevation(Dictionary<string, object> elevation)
         {
             return ToInternalLength(elevation, "Elevation");
@@ -2116,6 +2601,31 @@ namespace RevitMcpNext.Addin.Revit
                 ToInternalLength(GetDictionary(point, "z"), fieldName + ".z"));
         }
 
+        private static XYZ ToInternalPlacementPoint(Dictionary<string, object> point, string fieldName, double? defaultZ)
+        {
+            if (point == null) throw new ArgumentException(fieldName + " is required.");
+
+            double z;
+            Dictionary<string, object> zValue = GetDictionary(point, "z");
+            if (zValue != null)
+            {
+                z = ToInternalLength(zValue, fieldName + ".z");
+            }
+            else if (defaultZ.HasValue)
+            {
+                z = defaultZ.Value;
+            }
+            else
+            {
+                throw new ArgumentException(fieldName + ".z is required when no level elevation can be inferred.");
+            }
+
+            return new XYZ(
+                ToInternalLength(GetDictionary(point, "x"), fieldName + ".x"),
+                ToInternalLength(GetDictionary(point, "y"), fieldName + ".y"),
+                z);
+        }
+
         private static UV ToInternalUv(Dictionary<string, object> point, string fieldName)
         {
             if (point == null) throw new ArgumentException(fieldName + " is required.");
@@ -2147,6 +2657,25 @@ namespace RevitMcpNext.Addin.Revit
             if (length <= minimumLength)
             {
                 return "create_wall baseline is shorter than Revit's minimum curve length.";
+            }
+
+            return null;
+        }
+
+        private static string ValidateWallFamilyInstanceHost(Document document, Wall wall)
+        {
+            if (wall == null) return "hostElementId must reference a Wall.";
+
+            LocationCurve locationCurve = wall.Location as LocationCurve;
+            if (locationCurve?.Curve == null)
+            {
+                return "Host wall " + ToElementIdString(wall.Id) + " does not expose a valid location curve.";
+            }
+
+            WallType wallType = document.GetElement(wall.GetTypeId()) as WallType;
+            if (wallType != null && wallType.Kind == WallKind.Curtain)
+            {
+                return "Curtain wall hosts are not supported by place_family_instance for door/window family placement.";
             }
 
             return null;
@@ -2242,6 +2771,11 @@ namespace RevitMcpNext.Addin.Revit
         private static double VectorLength(XYZ vector)
         {
             return Math.Sqrt(vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z);
+        }
+
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         private static Dictionary<string, object> LengthValue(double internalLength)
@@ -2496,6 +3030,95 @@ namespace RevitMcpNext.Addin.Revit
             return snapshot;
         }
 
+        private static Dictionary<string, object> FamilyInstanceSnapshot(FamilyInstance instance)
+        {
+            var snapshot = ElementSummary(instance.Document, instance);
+            snapshot["pinned"] = instance.Pinned;
+
+            FamilySymbol symbol = instance.Symbol;
+            if (symbol != null)
+            {
+                snapshot["familySymbolId"] = ToElementIdString(symbol.Id);
+                snapshot["familySymbolName"] = SafeElementName(symbol);
+                snapshot["familyName"] = GetFamilyName(symbol);
+                string placementType = GetPlacementType(symbol);
+                if (!string.IsNullOrWhiteSpace(placementType)) snapshot["placementType"] = placementType;
+                snapshot["symbolIsActive"] = symbol.IsActive;
+
+                string builtInCategory = GetBuiltInCategoryName(symbol);
+                if (!string.IsNullOrWhiteSpace(builtInCategory)) snapshot["builtInCategory"] = builtInCategory;
+            }
+
+            ElementId levelId = GetLevelId(instance);
+            if (IsValidElementId(levelId))
+            {
+                snapshot["levelId"] = ToElementIdString(levelId);
+                Element level = instance.Document.GetElement(levelId);
+                if (level != null) snapshot["levelName"] = SafeElementName(level);
+            }
+
+            Element host = null;
+            try
+            {
+                host = instance.Host;
+            }
+            catch
+            {
+                host = null;
+            }
+
+            if (host != null)
+            {
+                snapshot["hostElementId"] = ToElementIdString(host.Id);
+                snapshot["hostCategory"] = host.Category?.Name;
+                snapshot["host"] = ElementSummary(instance.Document, host);
+            }
+
+            Dictionary<string, object> location = LocationSnapshot(instance);
+            if (location != null) snapshot["location"] = location;
+
+            TryAddFamilyInstanceBool(snapshot, instance, "CanFlipFacing");
+            TryAddFamilyInstanceBool(snapshot, instance, "FacingFlipped");
+            TryAddFamilyInstanceBool(snapshot, instance, "CanFlipHand");
+            TryAddFamilyInstanceBool(snapshot, instance, "HandFlipped");
+
+            try
+            {
+                snapshot["facingOrientation"] = PointValue(instance.FacingOrientation);
+            }
+            catch
+            {
+                // Optional family instance metadata varies by placement type.
+            }
+
+            try
+            {
+                snapshot["handOrientation"] = PointValue(instance.HandOrientation);
+            }
+            catch
+            {
+                // Optional family instance metadata varies by placement type.
+            }
+
+            return snapshot;
+        }
+
+        private static void TryAddFamilyInstanceBool(Dictionary<string, object> snapshot, FamilyInstance instance, string propertyName)
+        {
+            try
+            {
+                System.Reflection.PropertyInfo property = instance.GetType().GetProperty(propertyName);
+                if (property != null && property.GetValue(instance, null) is bool value)
+                {
+                    snapshot[char.ToLowerInvariant(propertyName[0]) + propertyName.Substring(1)] = value;
+                }
+            }
+            catch
+            {
+                // Optional family instance metadata varies by placement type.
+            }
+        }
+
         private static Dictionary<string, object> DeleteSnapshot(Document document, Element element)
         {
             var snapshot = ElementSummary(document, element);
@@ -2664,6 +3287,236 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static Dictionary<string, object> BuildModelReadiness(UIApplication app, Document document, long generation, Dictionary<string, object> payload)
+        {
+            Level[] levels = new FilteredElementCollector(document)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .OrderBy(level => level.Elevation)
+                .ToArray();
+
+            int wallCount = CountCollectorElements(new FilteredElementCollector(document)
+                .OfCategory(BuiltInCategory.OST_Walls)
+                .WhereElementIsNotElementType());
+            int wallTypeCount = CountCollectorElements(new FilteredElementCollector(document)
+                .OfClass(typeof(WallType)));
+            int floorTypeCount = CountCollectorElements(new FilteredElementCollector(document)
+                .OfClass(typeof(FloorType)));
+            int roomCount = CountCollectorElements(new FilteredElementCollector(document)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType());
+            int textNoteTypeCount = CountCollectorElements(new FilteredElementCollector(document)
+                .OfClass(typeof(TextNoteType)));
+
+            FamilySymbol[] familySymbols = new FilteredElementCollector(document)
+                .OfClass(typeof(FamilySymbol))
+                .Cast<FamilySymbol>()
+                .ToArray();
+            FamilySymbol[] wallHostedSymbols = familySymbols
+                .Where(IsSupportedWallHostedFamilySymbol)
+                .ToArray();
+            FamilySymbol[] levelBasedSymbols = familySymbols
+                .Where(IsSupportedLevelBasedFamilySymbol)
+                .ToArray();
+
+            int typeChangeScanned;
+            bool typeChangeScanTruncated;
+            int typeChangeCandidateCount = CountTypeChangeCandidates(document, 250, out typeChangeScanned, out typeChangeScanTruncated);
+
+            UIDocument uidocument = app.ActiveUIDocument;
+            bool selectionAvailable = uidocument != null && ReferenceEquals(uidocument.Document, document);
+            int selectionCount = selectionAvailable ? uidocument.Selection.GetElementIds().Count : 0;
+            View activeView = SafeActiveView(document);
+            bool activeGraphicalView = IsGraphicalView(activeView);
+
+            var scenarios = new List<Dictionary<string, object>>
+            {
+                ScenarioReadiness(
+                    "levels",
+                    levels.Length > 0,
+                    levels.Length > 0 ? Array.Empty<string>() : new[] { "At least one project level." },
+                    levels.Length > 0 ? "Use revit.get_levels to pick exact level IDs." : "Create a level before level-based model operations.",
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["defaultLevelId"] = levels.FirstOrDefault() == null ? null : ToElementIdString(levels.First().Id) }),
+                ScenarioReadiness(
+                    "wall",
+                    levels.Length > 0 && wallTypeCount > 0,
+                    MissingPrerequisites(
+                        levels.Length > 0 ? null : "At least one project level.",
+                        wallTypeCount > 0 ? null : "At least one wall type."),
+                    "Use create_wall with levelId, start, end, and optional wallTypeId discovered from revit.catalog.",
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["wallTypeCount"] = wallTypeCount, ["wallCount"] = wallCount }),
+                ScenarioReadiness(
+                    "floor",
+                    levels.Length > 0 && floorTypeCount > 0,
+                    MissingPrerequisites(
+                        levels.Length > 0 ? null : "At least one project level.",
+                        floorTypeCount > 0 ? null : "At least one floor type."),
+                    "Use create_floor with a closed outline on the target level elevation.",
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["floorTypeCount"] = floorTypeCount }),
+                ScenarioReadiness(
+                    "room",
+                    levels.Length > 0,
+                    levels.Length > 0 ? Array.Empty<string>() : new[] { "At least one project level." },
+                    wallCount > 0
+                        ? "Create or reuse an enclosed room-bounding region, then preview create_room."
+                        : "Create room-bounding walls or separators before expecting room area and enclosure.",
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["roomCount"] = roomCount, ["wallCount"] = wallCount }),
+                ScenarioReadiness(
+                    "roomReadback",
+                    roomCount > 0,
+                    roomCount > 0 ? Array.Empty<string>() : new[] { "At least one placed room." },
+                    "Use revit.get_rooms with preset=schedule for compact room export.",
+                    new Dictionary<string, object> { ["roomCount"] = roomCount }),
+                ScenarioReadiness(
+                    "typeChange",
+                    typeChangeCandidateCount > 0,
+                    typeChangeCandidateCount > 0 ? Array.Empty<string>() : new[] { "A non-pinned model element with compatible alternate types." },
+                    "Use revit.catalog with kind=elementTypes and filter.forElementId before change_element_type.",
+                    new Dictionary<string, object> { ["sampledElements"] = typeChangeScanned, ["candidateElements"] = typeChangeCandidateCount, ["scanTruncated"] = typeChangeScanTruncated }),
+                ScenarioReadiness(
+                    "familyPlacement",
+                    levels.Length > 0 && (levelBasedSymbols.Length > 0 || (wallCount > 0 && wallHostedSymbols.Length > 0)),
+                    MissingPrerequisites(
+                        levels.Length > 0 ? null : "At least one project level.",
+                        levelBasedSymbols.Length > 0 || wallHostedSymbols.Length > 0 ? null : "At least one supported door/window/furniture/equipment/fixture FamilySymbol.",
+                        wallHostedSymbols.Length == 0 || wallCount > 0 ? null : "At least one wall host for hosted door/window placement."),
+                    "Use revit.catalog kind=familySymbols preset=placement to discover familySymbolId and placementType.",
+                    new Dictionary<string, object>
+                    {
+                        ["wallHostedDoorWindowSymbols"] = wallHostedSymbols.Length,
+                        ["levelBasedFurnitureEquipmentFixtureSymbols"] = levelBasedSymbols.Length,
+                        ["wallHostedReady"] = levels.Length > 0 && wallCount > 0 && wallHostedSymbols.Length > 0,
+                        ["levelBasedReady"] = levels.Length > 0 && levelBasedSymbols.Length > 0,
+                        ["sampleHostedFamilySymbolId"] = wallHostedSymbols.FirstOrDefault() == null ? null : ToElementIdString(wallHostedSymbols.First().Id),
+                        ["sampleLevelBasedFamilySymbolId"] = levelBasedSymbols.FirstOrDefault() == null ? null : ToElementIdString(levelBasedSymbols.First().Id)
+                    }),
+                ScenarioReadiness(
+                    "selection",
+                    selectionAvailable && selectionCount > 0,
+                    selectionAvailable
+                        ? selectionCount > 0 ? Array.Empty<string>() : new[] { "At least one selected element." }
+                        : new[] { "The requested document must be the active UI document." },
+                    "Use revit.query filters when no active selection is available.",
+                    new Dictionary<string, object> { ["available"] = selectionAvailable, ["selectionCount"] = selectionCount }),
+                ScenarioReadiness(
+                    "annotation",
+                    activeGraphicalView,
+                    activeGraphicalView ? Array.Empty<string>() : new[] { "An active graphical non-template view." },
+                    "Annotation operations should be scoped to an explicit graphical view and valid references.",
+                    new Dictionary<string, object> { ["activeGraphicalView"] = activeGraphicalView, ["textNoteTypeCount"] = textNoteTypeCount })
+            };
+            IReadOnlyList<string> requestedScenarios = GetStringList(payload, "scenarios");
+            if (requestedScenarios.Count > 0)
+            {
+                scenarios = scenarios
+                    .Where(scenario => requestedScenarios.Contains(GetString(scenario, "name"), StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+            }
+
+            if (!GetBool(payload, "includeHints", true))
+            {
+                foreach (Dictionary<string, object> scenario in scenarios)
+                {
+                    scenario.Remove("hints");
+                }
+            }
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["levels"] = new Dictionary<string, object>
+                {
+                    ["count"] = levels.Length,
+                    ["sample"] = levels.Take(8).Select(BuildLevelSummary).ToArray()
+                },
+                ["activeView"] = activeView == null ? null : BuildViewSummary(activeView),
+                ["scenarios"] = scenarios,
+                ["readyCount"] = scenarios.Count(scenario => GetBool(scenario, "ready", false)),
+                ["totalCount"] = scenarios.Count,
+                ["source"] = "revit-addin"
+            };
+
+            return data;
+        }
+
+        private static Dictionary<string, object> ScenarioReadiness(
+            string name,
+            bool ready,
+            IEnumerable<string> missingPrerequisites,
+            string nextAction,
+            Dictionary<string, object> hints)
+        {
+            string[] missing = (missingPrerequisites ?? Enumerable.Empty<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToArray();
+
+            var scenario = new Dictionary<string, object>
+            {
+                ["name"] = name,
+                ["ready"] = ready,
+                ["missing"] = missing,
+                ["missingPrerequisites"] = missing
+            };
+            if (!string.IsNullOrWhiteSpace(nextAction)) scenario["nextAction"] = nextAction;
+            if (hints != null && hints.Count > 0) scenario["hints"] = hints;
+            return scenario;
+        }
+
+        private static IEnumerable<string> MissingPrerequisites(params string[] values)
+        {
+            return values == null ? Enumerable.Empty<string>() : values.Where(value => !string.IsNullOrWhiteSpace(value));
+        }
+
+        private static int CountTypeChangeCandidates(Document document, int maxScan, out int scanned, out bool truncated)
+        {
+            int candidates = 0;
+            scanned = 0;
+            truncated = false;
+
+            foreach (Element element in new FilteredElementCollector(document).WhereElementIsNotElementType())
+            {
+                if (scanned >= maxScan)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                scanned++;
+                if (element == null || element.Pinned) continue;
+                ElementId currentTypeId = element.GetTypeId();
+                if (!IsValidElementId(currentTypeId)) continue;
+
+                try
+                {
+                    ICollection<ElementId> validTypeIds = element.GetValidTypes();
+                    if (validTypeIds != null && validTypeIds.Count(id => IsValidElementId(id) && !string.Equals(ToElementIdString(id), ToElementIdString(currentTypeId), StringComparison.Ordinal)) > 0)
+                    {
+                        candidates++;
+                    }
+                }
+                catch
+                {
+                    // Some element classes do not expose valid type sets; ignore them for readiness.
+                }
+            }
+
+            return candidates;
+        }
+
+        private static bool IsGraphicalView(View view)
+        {
+            if (view == null || view.IsTemplate) return false;
+
+            try
+            {
+                return view.CanBePrinted;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private Dictionary<string, object> BuildStatus(UIApplication app)
         {
             UIDocument activeUiDocument = app.ActiveUIDocument;
@@ -2693,6 +3546,7 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.get_current_view_elements",
                     "revit.get_selection",
                     "revit.analyze_model",
+                    "revit.get_model_readiness",
                     "revit.get_material_quantities",
                     "revit.get_rooms",
                     "revit.catalog",
@@ -4200,6 +5054,48 @@ namespace RevitMcpNext.Addin.Revit
         {
             FamilySymbol symbol = element as FamilySymbol;
             return symbol?.Family?.FamilyPlacementType.ToString() ?? string.Empty;
+        }
+
+        private static bool IsSupportedWallHostedFamilySymbol(FamilySymbol symbol)
+        {
+            return symbol != null &&
+                   symbol.Family != null &&
+                   symbol.Family.FamilyPlacementType == FamilyPlacementType.OneLevelBasedHosted &&
+                   IsWallHostedDoorWindowCategory(symbol);
+        }
+
+        private static bool IsSupportedLevelBasedFamilySymbol(FamilySymbol symbol)
+        {
+            return symbol != null &&
+                   symbol.Family != null &&
+                   symbol.Family.FamilyPlacementType == FamilyPlacementType.OneLevelBased &&
+                   IsLevelBasedFurnitureEquipmentFixtureCategory(symbol);
+        }
+
+        private static bool IsWallHostedDoorWindowCategory(FamilySymbol symbol)
+        {
+            return IsBuiltInCategory(symbol, BuiltInCategory.OST_Doors, BuiltInCategory.OST_Windows);
+        }
+
+        private static bool IsLevelBasedFurnitureEquipmentFixtureCategory(FamilySymbol symbol)
+        {
+            return IsBuiltInCategory(
+                symbol,
+                BuiltInCategory.OST_Furniture,
+                BuiltInCategory.OST_FurnitureSystems,
+                BuiltInCategory.OST_ElectricalEquipment,
+                BuiltInCategory.OST_MechanicalEquipment,
+                BuiltInCategory.OST_PlumbingFixtures,
+                BuiltInCategory.OST_ElectricalFixtures,
+                BuiltInCategory.OST_LightingFixtures,
+                BuiltInCategory.OST_SpecialityEquipment);
+        }
+
+        private static bool IsBuiltInCategory(Element element, params BuiltInCategory[] categories)
+        {
+            string builtInCategory = GetBuiltInCategoryName(element);
+            return categories != null && categories.Any(category =>
+                string.Equals(category.ToString(), builtInCategory, StringComparison.OrdinalIgnoreCase));
         }
 
         private static string GetViewFamily(Element element)

@@ -27,7 +27,7 @@ The package is written under `artifacts\release\revit-mcp-next-<version>-windows
 
 - `payload\broker`, `payload\contracts`, and `payload\addin` runtime files.
 - Packaged broker production `node_modules` unless `-SkipDependencyInstall` is used.
-- `installer\install-windows.ps1`, `scripts\doctor.ps1`, and `scripts\collect-support-bundle.ps1`.
+- `installer\install-windows.ps1`, `scripts\doctor.ps1`, `scripts\doctor-clients.ps1`, and `scripts\collect-support-bundle.ps1`.
 - `integrations\python`, `integrations\pyrevit`, and `integrations\dynamo` examples for external Revit automation clients.
 - `release-manifest.json` with file inventory, build metadata, and signing status.
 - `CHECKSUMS.sha256` for installer-side integrity verification.
@@ -140,7 +140,7 @@ Useful installer switches:
 
 Each install generates or reuses a local pipe auth token at `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The token is generated on the target machine, is not included in release packages, and is loaded by the generated `launch-revit-mcp-next.cmd` as `REVIT_MCP_NEXT_AUTH_TOKEN`. The installer attempts to restrict the auth config and launcher ACLs to the installing user, Administrators, and SYSTEM.
 
-The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.json`. It includes install paths, launcher path, schema path, integration helper paths, tool names, catalog kinds, and write-operation names. Tool discovery includes compact read/analysis tools for current view, active-view elements, selection, model statistics, and material quantities. It does not include the auth token.
+The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.json`. It includes install paths, launcher path, schema path, integration helper paths, tool names, catalog kinds, and write-operation names. Tool discovery includes compact read/analysis tools for current view, active-view elements, selection, model statistics, model readiness, rooms, material quantities, catalogs, and bounded preview/apply write operations including `place_family_instance`. It does not include the auth token.
 
 Print Claude Code, Claude Desktop, or Codex MCP config snippets from that discovery file:
 
@@ -148,7 +148,10 @@ Print Claude Code, Claude Desktop, or Codex MCP config snippets from that discov
 npm run mcp:config
 npm run mcp:config -- -Client claude-code
 npm run mcp:config -- -Client codex
+npm run doctor:clients
 ```
+
+`npm run doctor:clients` checks generated Claude/Codex snippets, existing user config entries when present, stale launcher roots, launcher quoting, token leakage risk, and MCP `initialize` plus `tools/list` startup without requiring an active Revit connection.
 
 Support bundle:
 

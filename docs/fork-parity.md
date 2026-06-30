@@ -14,14 +14,16 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | `ai_element_filter` | Covered by `revit.query` filters and compact presets. |
 | `analyze_model_statistics` | Covered by `revit.analyze_model`. |
 | `get_material_quantities` | Covered by `revit.get_material_quantities` with normalized metric units. |
-| `export_room_data` | Covered by `revit.get_rooms` for compact, paginated room export/schedule data. Live room smoke evidence is still required before treating this as production-proven. |
+| `export_room_data` | Covered by `revit.get_rooms` for compact, paginated room export/schedule data, with live smoke coverage in the Revit 2024 smoke workflow. |
 | `create_level` | Covered as guarded `create_level` preview/apply operation. |
 | `create_grid` | Covered as guarded `create_grid` preview/apply operation. |
 | Wall subset of `create_line_based_element` | Covered as guarded `create_wall` preview/apply operation. |
 | Floor subset of `create_surface_based_element` | Covered as guarded `create_floor` preview/apply operation. |
-| `create_room` | Covered as guarded `create_room` preview/apply operation with level/location input and duplicate-number protection by default. Live room smoke evidence is still required before treating this as production-proven. |
+| `create_room` | Covered as guarded `create_room` preview/apply operation with level/location input and duplicate-number protection by default, with live smoke coverage in the Revit 2024 smoke workflow. |
+| Door/window/furniture subset of `create_point_based_element` | Covered for first production cases as guarded `place_family_instance` preview/apply operation. It supports wall-hosted doors/windows and level-based furniture/equipment/fixtures discovered through `revit.catalog kind=familySymbols preset=placement`, with symbol, host, level, pinned-host, activation, rotation, and flip validation. |
 | Parts of `operate_element` | Covered by guarded `set_parameter`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, and `set_element_pinned`. |
 | `delete_element` | Covered as high-risk guarded `delete_element` preview/apply operation with optional `expectedUniqueId`, `expectedPinned`, and `allowPinned` guards. |
+| Agent readiness preflight | Better than the fork: `revit.get_model_readiness` returns bounded scenario readiness for levels, wall/floor/room creation, type changes, family placement, selection workflows, and annotation prerequisites. |
 
 ## Missing Or Partial
 
@@ -29,7 +31,6 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | --- | --- | --- |
 | `create_dimensions` | Missing. | Add scoped dimension creation only after reliable reference discovery and preview messages. |
 | `create_structural_framing_system` | Missing. | Add as a dedicated structural operation after catalog support for beam symbols and levels is validated. |
-| Door/window/furniture subset of `create_point_based_element` | Missing. | Add `place_family_instance` with `familySymbolId`, host guards, activation checks, and level/workplane validation. |
 | Beam/pipe/duct/conduit subsets of `create_line_based_element` | Missing. | Add separate operations per domain rather than one overloaded tool. |
 | Ceiling/roof subsets of `create_surface_based_element` | Missing. | Add separate `create_ceiling` and `create_roof` operations after type/catalog and host constraints are validated. |
 | `tag_walls` / `tag_rooms` | Missing. | Add view-scoped annotation operations with selected/current-view limits. |
@@ -40,8 +41,7 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 
 ## Current Priority Order
 
-1. Prove signed no-prompt loading, live Revit 2024 smoke, pyRevit smoke, and Dynamo smoke from the exact release package.
-2. Capture live room smoke evidence for `revit.get_rooms` and guarded `create_room` from the exact installed package.
-3. Add `place_family_instance` for doors/windows/furniture with explicit family symbol catalog discovery.
-4. Add dimension and tagging operations after robust view/reference validation.
-5. Keep `store_project_data`, `store_room_data`, `query_stored_data`, and `send_code_to_revit` explicitly deferred unless separate designs are approved.
+1. Prove signed no-prompt loading, live Revit 2024 smoke, pyRevit smoke, and Dynamo smoke from the exact release package for each public release candidate.
+2. Add dimension and tagging operations after robust view/reference validation.
+3. Add beam/pipe/duct/conduit and ceiling/roof operations as separate typed operations after catalog and host constraints are validated.
+4. Keep `store_project_data`, `store_room_data`, `query_stored_data`, and `send_code_to_revit` explicitly deferred unless separate designs are approved.

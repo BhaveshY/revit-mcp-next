@@ -42,6 +42,7 @@ Revit 2024-only production-candidate slice, not yet a signed production release:
 - `scripts/ensure-revit-addin-trust.ps1`: supplemental helper that inspects/seeds/removes Revit's per-user `Always Load` trust entry for the add-in `ClientId`.
 - `scripts/ensure-pyrevit-hosts-cache.ps1`: optional self-hosted runner helper for pyRevit CLI builds that lag Autodesk Revit build metadata.
 - `scripts/print-mcp-config.ps1`: token-safe Claude Code, Claude Desktop, and Codex config snippets from the installed client discovery file.
+- `scripts/doctor-clients.ps1`: token-safe client config doctor for generated Claude/Codex snippets, installed config files, launcher quoting, stale roots, and MCP startup/tool-list checks.
 - `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
 - `scripts/collect-host-integration-evidence.ps1`: validates raw pyRevit/Dynamo host-smoke JSON and writes release-ready `host-integrations-summary.json`.
 - `scripts/collect-release-evidence.ps1`: release evidence bundle that ties one package, checksums, signing status, validation logs, support diagnostics, live-smoke evidence, and hosted pyRevit/Dynamo evidence or skip reasons together.
@@ -60,6 +61,7 @@ npm run test:integrations:python
 npm run install:windows
 npm run doctor:windows
 npm run mcp:config
+npm run doctor:clients
 npm run smoke:revit
 npm run smoke:release-local
 npm run package:windows:dry-run
@@ -68,7 +70,7 @@ npm run test:evidence:release:windows
 
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
 
-`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document by creating and moving a smoke-test wall. Use a disposable model.
+`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It creates test geometry, a room, optional family placement when the model has suitable symbols, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
 `npm run smoke:release-local` is the one-command disposable-machine path: it builds, installs to a stable per-year root under `%APPDATA%\Autodesk\Revit\Addins`, copies a sample RVT, launches Revit when needed, waits for `revit.status` readiness, runs doctor/live smoke, closes and relaunches its own Revit process for a second status-only no-prompt probe, collects support output, and attempts release evidence collection. Evidence and package work directories default to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
 
 Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`. The application manifest now uses `<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>`, but the durable no-prompt path is trusted Authenticode signing. `npm run smoke:release-local` creates/trusts a disposable CurrentUser dev certificate, signs the package, and verifies trusted signatures before launch. Production releases still need a real release certificate and archived signature verification evidence.
@@ -125,9 +127,10 @@ After install, print ready-to-use MCP client entries without exposing the auth t
 npm run mcp:config
 npm run mcp:config -- -Client claude-code
 npm run mcp:config -- -Client codex
+npm run doctor:clients
 ```
 
-Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token.
+Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token. `npm run doctor:clients` verifies the generated snippets, existing Claude Desktop/Codex config files when present, launcher quoting, stale install roots, raw token leakage risk, and basic MCP startup plus `tools/list` without requiring a Revit connection.
 
 ## pyRevit, Dynamo, And Python
 
@@ -172,15 +175,18 @@ Examples:
 - Python stdio client: `integrations/python/revit_mcp_next_client.py`
 - Python in-process helper: `integrations/python/revit_mcp_next_inprocess.py`
 - Python hosted-smoke helper: `integrations/python/revit_mcp_next_host_smoke.py`
+- Python workflow examples helper: `integrations/python/revit_mcp_next_workflow_examples.py`
 - pyRevit extension: `integrations/pyrevit/revit_mcp_next.extension`
 - pyRevit safe write command: `integrations/pyrevit/revit_mcp_next.extension/Revit MCP Next.tab/Examples.panel/Create Level.pushbutton/script.py`
+- pyRevit workflow examples command: `integrations/pyrevit/revit_mcp_next.extension/Revit MCP Next.tab/Examples.panel/Workflow Samples.pushbutton/script.py`
 - pyRevit host-smoke command: `integrations/pyrevit/revit_mcp_next.extension/Revit MCP Next.tab/Diagnostics.panel/Host Smoke.pushbutton/script.py`
 - Dynamo status node: `integrations/dynamo/status_node.py`
 - Dynamo safe write node: `integrations/dynamo/create_level_node.py`
+- Dynamo workflow examples node: `integrations/dynamo/workflow_examples_node.py`
 - Dynamo host-smoke node: `integrations/dynamo/host_smoke_node.py`
 - Dynamo host-smoke graph: `integrations/dynamo/revit_mcp_next_host_smoke.dyn`
 
-After install, examples can import the helpers from the package install root. The included scripts search the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext`.
+After install, examples can import the helpers from the package install root. The included scripts search the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext`.
 
 ## MVP Tool Surface
 
@@ -191,6 +197,7 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.get_current_view_elements`
 - `revit.get_selection`
 - `revit.analyze_model`
+- `revit.get_model_readiness`
 - `revit.get_material_quantities`
 - `revit.get_rooms`
 - `revit.catalog`
@@ -199,7 +206,7 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
-Read tools are intentionally compact and paginated where results can grow. Use `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.analyze_model` for bounded model statistics, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields.
+Read tools are intentionally compact and paginated where results can grow. Use `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields.
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 
@@ -209,6 +216,7 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place a room by `levelId` and 2D `location`, with optional `name`, `number`, `department`, and `allowDuplicateNumber`.
+- `place_family_instance`: place first-case wall-hosted door/window symbols by `familySymbolId`, `hostElementId`, and `location`, or level-based furniture/equipment/fixture symbols by `familySymbolId`, `levelId`, and `location`.
 - `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
 - `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
 - `copy_element`: copy one model element by an explicit 3D translation vector.
@@ -219,6 +227,8 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 `revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
 
 Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, and `viewFamilyTypes`. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
+
+See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences covering model audit, room/wall/floor creation, family placement preview, selected element updates, and blocked preview recovery.
 
 ## Production Readiness And Remaining Blockers
 
@@ -232,6 +242,5 @@ Remaining blockers:
 - Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, room read/write support, and preview/apply flows.
 - Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json`.
 - Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, live-smoke output, and hosted integration output for that build.
-- Live room smoke evidence for `revit.get_rooms` and `create_room`; the smoke script now exercises room workflows, but final release evidence still needs a real Revit run from the exact installed package.
 - More real-model write-operation and failure-mode evidence before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target. Revit 2025/2026 remain intentionally out of scope until year-specific add-in artifacts are built, packaged, installed, and smoked.

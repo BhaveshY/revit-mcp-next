@@ -45,6 +45,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.get_current_view_elements",
       "revit.get_selection",
       "revit.analyze_model",
+      "revit.get_model_readiness",
       "revit.get_material_quantities",
       "revit.get_rooms",
       "revit.catalog",
@@ -108,6 +109,28 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(modelStats.structuredContent?.data?.totals?.elements, 42);
     assert.equal(modelStats.structuredContent?.data?.totals?.materials, 2);
     assert.equal(modelStats.structuredContent?.data?.byCategory?.[0]?.key, "OST_Walls");
+
+    const readinessTool = tools.tools.find((tool) => tool.name === "revit.get_model_readiness");
+    assert.ok(readinessTool?.inputSchema, "revit.get_model_readiness should declare inputSchema");
+    assert.match(JSON.stringify(readinessTool.inputSchema), /familyPlacement/);
+    const readiness = (await client.callTool({
+      name: "revit.get_model_readiness",
+      arguments: { scenarios: ["familyPlacement", "selection"], includeHints: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          readyCount?: number;
+          totalCount?: number;
+          scenarios?: Array<{ name?: string; ready?: boolean; hints?: { hostedFamilySymbolId?: string } }>;
+        };
+      };
+    };
+    assert.equal(readiness.isError, undefined);
+    assert.equal(readiness.structuredContent?.data?.readyCount, 2);
+    assert.equal(readiness.structuredContent?.data?.totalCount, 2);
+    assert.equal(readiness.structuredContent?.data?.scenarios?.[0]?.name, "familyPlacement");
+    assert.equal(readiness.structuredContent?.data?.scenarios?.[0]?.hints?.hostedFamilySymbolId, "9200");
 
     const materialQuantities = (await client.callTool({
       name: "revit.get_material_quantities",
@@ -255,6 +278,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "set_parameter",
       "create_level",
       "create_wall",
+      "place_family_instance",
       "move_element",
       "rotate_element",
       "copy_element",
@@ -268,6 +292,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "start",
       "end",
       "wallTypeId",
+      "familySymbolId",
+      "hostElementId",
       "height",
       "structural",
       "flip",
@@ -275,6 +301,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "axisStart",
       "axisEnd",
       "angle",
+      "rotation",
       "typeId",
       "pinned",
       "expectedPinned",
@@ -286,6 +313,9 @@ test("broker exposes annotated tools with output schemas and callable structured
       "number",
       "department",
       "allowDuplicateNumber",
+      "flipFacing",
+      "flipHand",
+      "allowPinnedHost",
       "changeSetHash",
       "documentFingerprint",
       "expectedGeneration",
@@ -325,6 +355,20 @@ test("broker exposes annotated tools with output schemas and callable structured
         height: { value: 3000, unit: "mm", system: "metric" },
         structural: false,
         flip: true,
+      },
+      {
+        type: "place_family_instance",
+        familySymbolId: "9200",
+        hostElementId: "501",
+        levelId: "311",
+        location: {
+          x: { value: 1200, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+        rotation: { value: 0, unit: "degrees" },
+        flipFacing: true,
+        flipHand: false,
       },
       {
         type: "move_element",
@@ -473,7 +517,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 11);
+    assert.equal(apply.structuredContent?.data?.changedCount, 12);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

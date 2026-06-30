@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PROTOCOL_VERSION, type ChangeApplyRequest, type ChangeSetRequest } from "@revit-mcp-next/contracts";
+import {
+  PROTOCOL_VERSION,
+  type ChangeApplyRequest,
+  type ChangeSetRequest,
+  type ModelReadinessRequest,
+} from "@revit-mcp-next/contracts";
 import { FakeRevitBridgeClient } from "../src/ipc/FakeRevitBridgeClient.js";
 import { makeRequest } from "../src/ipc/RequestFactory.js";
 
@@ -73,6 +78,28 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   if (!model.ok) return;
   assert.equal(model.data.totals.elements, 42);
   assert.equal(model.data.byCategory?.[0]?.key, "OST_Walls");
+
+  const readiness = await bridge.getModelReadiness(
+    makeRequest(
+      "test",
+      "get_model_readiness",
+      "read",
+      { scenarios: ["levels", "familyPlacement", "annotations"], includeHints: true } satisfies ModelReadinessRequest,
+      30000
+    )
+  );
+  assert.equal(readiness.ok, true);
+  if (!readiness.ok) return;
+  assert.equal(readiness.data.readyCount, 3);
+  assert.equal(readiness.data.totalCount, 3);
+  assert.deepEqual(
+    readiness.data.scenarios.map((scenario) => scenario.name),
+    ["levels", "familyPlacement", "annotations"]
+  );
+  const familyPlacement = readiness.data.scenarios.find((scenario) => scenario.name === "familyPlacement");
+  assert.equal(familyPlacement?.ready, true);
+  assert.equal(familyPlacement?.hints?.hostedFamilySymbolId, "9200");
+  assert.equal(familyPlacement?.hints?.levelBasedFamilySymbolId, "9201");
 
   const materials = await bridge.getMaterialQuantities(
     makeRequest(
@@ -226,12 +253,37 @@ test("fake bridge previews and applies a bounded change set", async () => {
       },
       {
         id: "op-4",
+        type: "place_family_instance" as const,
+        familySymbolId: "9200",
+        hostElementId: "501",
+        levelId: "311",
+        location: {
+          x: { value: 1200, unit: "mm", system: "metric" as const },
+          y: { value: 0, unit: "mm", system: "metric" as const },
+          z: { value: 0, unit: "mm", system: "metric" as const },
+        },
+        flipFacing: true,
+      },
+      {
+        id: "op-5",
+        type: "place_family_instance" as const,
+        familySymbolId: "9201",
+        levelId: "311",
+        location: {
+          x: { value: 1600, unit: "mm", system: "metric" as const },
+          y: { value: 900, unit: "mm", system: "metric" as const },
+          z: { value: 0, unit: "mm", system: "metric" as const },
+        },
+        rotation: { value: 90, unit: "degrees" as const },
+      },
+      {
+        id: "op-6",
         type: "move_element" as const,
         elementId: "501",
         translation,
       },
       {
-        id: "op-5",
+        id: "op-7",
         type: "rotate_element" as const,
         elementId: "501",
         axisStart: start,
@@ -243,7 +295,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         angle: { value: 90, unit: "degrees" as const },
       },
       {
-        id: "op-6",
+        id: "op-8",
         type: "copy_element" as const,
         elementId: "501",
         translation: {
@@ -253,27 +305,27 @@ test("fake bridge previews and applies a bounded change set", async () => {
         },
       },
       {
-        id: "op-7",
+        id: "op-9",
         type: "change_element_type" as const,
         elementId: "501",
         typeId: "9002",
       },
       {
-        id: "op-8",
+        id: "op-10",
         type: "set_element_pinned" as const,
         elementId: "501",
         pinned: true,
         expectedPinned: false,
       },
       {
-        id: "op-9",
+        id: "op-11",
         type: "create_grid" as const,
         name: "A",
         start,
         end,
       },
       {
-        id: "op-10",
+        id: "op-12",
         type: "create_floor" as const,
         levelId: "311",
         floorTypeId: "9100",
@@ -294,7 +346,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         ],
       },
       {
-        id: "op-11",
+        id: "op-13",
         type: "create_room" as const,
         levelId: "311",
         location: roomLocation,
@@ -309,7 +361,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 11);
+  assert.equal(preview.data.operationCount, 13);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -323,44 +375,65 @@ test("fake bridge previews and applies a bounded change set", async () => {
   });
   assert.deepEqual(preview.data.changes[2]?.after?.start, start);
   assert.deepEqual(preview.data.changes[2]?.after?.end, end);
+  assert.equal(preview.data.changes[3]?.type, "place_family_instance");
   assert.deepEqual(preview.data.changes[3]?.target, {
+    document: "Sample.rvt",
+    familySymbolId: "9200",
+    hostElementId: "501",
+    levelId: "311",
+  });
+  assert.deepEqual(preview.data.changes[3]?.after?.location, {
+    x: { value: 1200, unit: "mm", system: "metric" },
+    y: { value: 0, unit: "mm", system: "metric" },
+    z: { value: 0, unit: "mm", system: "metric" },
+  });
+  assert.equal(preview.data.changes[3]?.after?.flipFacing, true);
+  assert.equal(preview.data.changes[4]?.type, "place_family_instance");
+  assert.deepEqual(preview.data.changes[4]?.target, {
+    document: "Sample.rvt",
+    familySymbolId: "9201",
+    hostElementId: undefined,
+    levelId: "311",
+  });
+  assert.deepEqual(preview.data.changes[4]?.after?.rotation, { value: 90, unit: "degrees" });
+  assert.deepEqual(preview.data.changes[5]?.target, {
     elementId: "501",
   });
-  assert.deepEqual(preview.data.changes[3]?.after, {
+  assert.deepEqual(preview.data.changes[5]?.after, {
     translation,
   });
-  assert.equal(preview.data.changes[4]?.type, "rotate_element");
-  assert.deepEqual(preview.data.changes[4]?.after?.angle, { value: 90, unit: "degrees" });
-  assert.deepEqual(preview.data.changes[5]?.target, {
+  assert.equal(preview.data.changes[6]?.type, "rotate_element");
+  assert.deepEqual(preview.data.changes[6]?.after?.angle, { value: 90, unit: "degrees" });
+  assert.deepEqual(preview.data.changes[7]?.target, {
     sourceElementId: "501",
   });
-  assert.equal(preview.data.changes[6]?.type, "change_element_type");
-  assert.deepEqual(preview.data.changes[6]?.target, {
+  assert.equal(preview.data.changes[8]?.type, "change_element_type");
+  assert.deepEqual(preview.data.changes[8]?.target, {
     elementId: "501",
     typeId: "9002",
   });
-  assert.equal(preview.data.changes[7]?.type, "set_element_pinned");
-  assert.deepEqual(preview.data.changes[7]?.after, {
+  assert.equal(preview.data.changes[9]?.type, "set_element_pinned");
+  assert.deepEqual(preview.data.changes[9]?.after, {
     pinned: true,
     expectedPinned: false,
   });
-  assert.equal(preview.data.changes[8]?.type, "create_grid");
-  assert.deepEqual(preview.data.changes[8]?.target, {
+  assert.equal(preview.data.changes[10]?.type, "create_grid");
+  assert.deepEqual(preview.data.changes[10]?.target, {
     document: "Sample.rvt",
     name: "A",
   });
-  assert.equal(preview.data.changes[9]?.type, "create_floor");
-  assert.deepEqual(preview.data.changes[9]?.target, {
+  assert.equal(preview.data.changes[11]?.type, "create_floor");
+  assert.deepEqual(preview.data.changes[11]?.target, {
     document: "Sample.rvt",
     levelId: "311",
     floorTypeId: "9100",
   });
-  assert.equal(preview.data.changes[10]?.type, "create_room");
-  assert.deepEqual(preview.data.changes[10]?.target, {
+  assert.equal(preview.data.changes[12]?.type, "create_room");
+  assert.deepEqual(preview.data.changes[12]?.target, {
     document: "Sample.rvt",
     levelId: "311",
   });
-  assert.deepEqual(preview.data.changes[10]?.after?.location, roomLocation);
+  assert.deepEqual(preview.data.changes[12]?.after?.location, roomLocation);
 
   const applyPayload = {
     ...changeSet,
@@ -377,16 +450,18 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 11);
+  assert.equal(applied.data.changedCount, 13);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
-  assert.equal(applied.data.changes[3]?.type, "move_element");
-  assert.equal(applied.data.changes[4]?.type, "rotate_element");
-  assert.equal(applied.data.changes[5]?.type, "copy_element");
-  assert.equal(applied.data.changes[6]?.type, "change_element_type");
-  assert.equal(applied.data.changes[7]?.type, "set_element_pinned");
-  assert.equal(applied.data.changes[8]?.type, "create_grid");
-  assert.equal(applied.data.changes[9]?.type, "create_floor");
-  assert.equal(applied.data.changes[10]?.type, "create_room");
+  assert.equal(applied.data.changes[3]?.type, "place_family_instance");
+  assert.equal(applied.data.changes[4]?.type, "place_family_instance");
+  assert.equal(applied.data.changes[5]?.type, "move_element");
+  assert.equal(applied.data.changes[6]?.type, "rotate_element");
+  assert.equal(applied.data.changes[7]?.type, "copy_element");
+  assert.equal(applied.data.changes[8]?.type, "change_element_type");
+  assert.equal(applied.data.changes[9]?.type, "set_element_pinned");
+  assert.equal(applied.data.changes[10]?.type, "create_grid");
+  assert.equal(applied.data.changes[11]?.type, "create_floor");
+  assert.equal(applied.data.changes[12]?.type, "create_room");
 });

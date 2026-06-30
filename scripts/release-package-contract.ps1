@@ -375,7 +375,7 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
 
 function Assert-PackagedNpmAliases($PackageRoot) {
     $package = Read-JsonFile (Join-Path $PackageRoot "package.json")
-    foreach ($alias in @("smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations")) {
+    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations")) {
         if (-not $package.scripts.PSObject.Properties[$alias]) {
             throw "Packaged package.json is missing npm alias: $alias"
         }
@@ -495,10 +495,13 @@ try {
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_client.py") "packaged Python integration client"
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_inprocess.py") "packaged Python in-process integration helper"
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_host_smoke.py") "packaged Python host-smoke evidence helper"
+    Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_workflow_examples.py") "packaged Python workflow examples helper"
     Assert-FileExists (Join-Path $packageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py") "packaged pyRevit status command"
     Assert-FileExists (Join-Path $packageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py") "packaged pyRevit host-smoke command"
+    Assert-FileExists (Join-Path $packageRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Examples.panel\Workflow Samples.pushbutton\script.py") "packaged pyRevit workflow examples command"
     Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\status_node.py") "packaged Dynamo status node"
     Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\host_smoke_node.py") "packaged Dynamo host-smoke node"
+    Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\workflow_examples_node.py") "packaged Dynamo workflow examples node"
     Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "packaged Dynamo host-smoke graph"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
@@ -516,13 +519,17 @@ try {
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_client.py") "installed Python integration client"
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_inprocess.py") "installed Python in-process integration helper"
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_host_smoke.py") "installed Python host-smoke evidence helper"
+    Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_workflow_examples.py") "installed Python workflow examples helper"
     Assert-FileExists (Join-Path $installRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Status.pushbutton\script.py") "installed pyRevit status command"
     Assert-FileExists (Join-Path $installRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Diagnostics.panel\Host Smoke.pushbutton\script.py") "installed pyRevit host-smoke command"
+    Assert-FileExists (Join-Path $installRoot "integrations\pyrevit\revit_mcp_next.extension\Revit MCP Next.tab\Examples.panel\Workflow Samples.pushbutton\script.py") "installed pyRevit workflow examples command"
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\status_node.py") "installed Dynamo status node"
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\host_smoke_node.py") "installed Dynamo host-smoke node"
+    Assert-FileExists (Join-Path $installRoot "integrations\dynamo\workflow_examples_node.py") "installed Dynamo workflow examples node"
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "installed Dynamo host-smoke graph"
     Assert-FileExists (Join-Path $installRoot "config\client-discovery.json") "installed client discovery config"
     Assert-FileExists (Join-Path $packageRoot "scripts\print-mcp-config.ps1") "packaged MCP config printer"
+    Assert-FileExists (Join-Path $packageRoot "scripts\doctor-clients.ps1") "packaged client doctor"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-revit-addin-trust.ps1") "packaged Revit trust helper"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-pyrevit-hosts-cache.ps1") "packaged pyRevit hosts cache helper"
     Assert-FileExists (Join-Path $packageRoot "scripts\run-pyrevit-host-smoke.ps1") "packaged pyRevit host-smoke runner"
@@ -551,6 +558,16 @@ try {
     }
     if (-not $clientDiscovery.addinAssemblyPaths.PSObject.Properties["2024"]) {
         throw "Client discovery did not record a year-specific add-in assembly path."
+    }
+    foreach ($expectedTool in @("revit.get_model_readiness", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set")) {
+        if (@($clientDiscovery.tools) -notcontains $expectedTool) {
+            throw "Client discovery did not advertise expected tool: $expectedTool"
+        }
+    }
+    foreach ($expectedOperation in @("place_family_instance", "create_room", "delete_element")) {
+        if (@($clientDiscovery.writeOperations) -notcontains $expectedOperation) {
+            throw "Client discovery did not advertise expected write operation: $expectedOperation"
+        }
     }
 
     $configOutput = Invoke-RepoScriptCapture (Join-Path $packageRoot "scripts\print-mcp-config.ps1") @(

@@ -18,6 +18,8 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelReadinessRequest,
+  ModelReadinessResult,
   ModelStatisticsRequest,
   ModelStatisticsResult,
   QueryRequest,
@@ -76,6 +78,7 @@ const capabilities = [
   "revit.get_current_view_elements",
   "revit.get_selection",
   "revit.analyze_model",
+  "revit.get_model_readiness",
   "revit.get_material_quantities",
   "revit.get_rooms",
   "revit.catalog",
@@ -169,6 +172,19 @@ const catalogItems: FakeCatalogItem[] = [
     familyId: "9199",
     isActive: true,
     placementType: "OneLevelBasedHosted",
+  },
+  {
+    kind: "familySymbols",
+    id: "9201",
+    uniqueId: "family-symbol-9201",
+    category: "OST_Furniture",
+    builtInCategory: "OST_Furniture",
+    class: "FamilySymbol",
+    name: "1200 x 600mm",
+    familyName: "Desk",
+    familyId: "9202",
+    isActive: false,
+    placementType: "OneLevelBased",
   },
   {
     kind: "titleBlocks",
@@ -302,6 +318,26 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       byLevel: request.payload.includeLevelBreakdown === false ? undefined : [
         { key: "311", name: "Level 1", count: 1 },
       ],
+      source: "fake-bridge",
+    });
+  }
+
+  async getModelReadiness(
+    request: BridgeRequest<ModelReadinessRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelReadinessResult>> {
+    maybeAbort(options);
+    const requested = request.payload.scenarios;
+    const requestedSet = new Set<string>(requested ?? []);
+    const scenarios = buildReadinessScenarios(request.payload.includeHints !== false).filter(
+      (scenario) => requestedSet.size === 0 || requestedSet.has(scenario.name)
+    );
+    return ok(request, {
+      document: documentReference(),
+      activeView: activeDocument.activeView,
+      scenarios,
+      readyCount: scenarios.filter((scenario) => scenario.ready).length,
+      totalCount: scenarios.length,
       source: "fake-bridge",
     });
   }
@@ -572,6 +608,127 @@ function buildCatalogTarget(elementId?: string) {
   };
 }
 
+function buildReadinessScenarios(includeHints: boolean): ModelReadinessResult["scenarios"] {
+  const wallTypeIds = catalogItems
+    .filter((item) => item.kind === "elementTypes" && item.class === "WallType")
+    .map((item) => item.id);
+  const floorTypeIds = catalogItems
+    .filter((item) => item.kind === "elementTypes" && item.class === "FloorType")
+    .map((item) => item.id);
+  const hostedFamilySymbolIds = catalogItems
+    .filter((item) => item.kind === "familySymbols" && item.placementType?.includes("Hosted"))
+    .map((item) => item.id);
+  const levelBasedFamilySymbolIds = catalogItems
+    .filter((item) => item.kind === "familySymbols" && item.placementType === "OneLevelBased")
+    .map((item) => item.id);
+  const wallHostIds = fakeQueryItems.filter((item) => item.class === "Wall").map((item) => item.id);
+  const target = buildCatalogTarget("501");
+  const activeView = activeDocument.activeView;
+
+  return [
+    readinessScenario(
+      "levels",
+      levels.length > 0,
+      levels.length > 0 ? [] : ["level"],
+      "Create or open a model with at least one level.",
+      { levelCount: levels.length, defaultLevelId: levels[0]?.id },
+      includeHints
+    ),
+    readinessScenario(
+      "wallCreation",
+      levels.length > 0 && wallTypeIds.length > 0,
+      [...(levels.length > 0 ? [] : ["level"]), ...(wallTypeIds.length > 0 ? [] : ["wallType"])],
+      "Use revit.get_levels and revit.catalog kind=elementTypes before create_wall.",
+      { levelCount: levels.length, wallTypeIds },
+      includeHints
+    ),
+    readinessScenario(
+      "floorCreation",
+      levels.length > 0 && floorTypeIds.length > 0,
+      [...(levels.length > 0 ? [] : ["level"]), ...(floorTypeIds.length > 0 ? [] : ["floorType"])],
+      "Use revit.get_levels and revit.catalog kind=elementTypes before create_floor.",
+      { levelCount: levels.length, floorTypeIds },
+      includeHints
+    ),
+    readinessScenario(
+      "roomCreation",
+      levels.length > 0,
+      levels.length > 0 ? [] : ["level"],
+      "Use revit.get_levels before create_room.",
+      { levelCount: levels.length, defaultLevelId: levels[0]?.id },
+      includeHints
+    ),
+    readinessScenario(
+      "roomReadback",
+      fakeRooms.some((room) => room.isPlaced !== false),
+      fakeRooms.some((room) => room.isPlaced !== false) ? [] : ["placedRoom"],
+      "Use revit.get_rooms with includeUnplaced=false to verify placed rooms.",
+      { placedRoomCount: fakeRooms.filter((room) => room.isPlaced !== false).length },
+      includeHints
+    ),
+    readinessScenario(
+      "typeChange",
+      target?.canChangeType === true && (target.validTypeCount ?? 0) > 0,
+      target?.canChangeType === true && (target.validTypeCount ?? 0) > 0 ? [] : ["typeChangeTarget"],
+      "Use revit.catalog kind=elementTypes with filter.forElementId before change_element_type.",
+      { targetElementId: target?.elementId, validTypeCount: target?.validTypeCount },
+      includeHints
+    ),
+    readinessScenario(
+      "familyPlacement",
+      levels.length > 0 && wallHostIds.length > 0 && hostedFamilySymbolIds.length > 0 && levelBasedFamilySymbolIds.length > 0,
+      [
+        ...(levels.length > 0 ? [] : ["level"]),
+        ...(wallHostIds.length > 0 ? [] : ["wallHost"]),
+        ...(hostedFamilySymbolIds.length > 0 ? [] : ["hostedFamilySymbol"]),
+        ...(levelBasedFamilySymbolIds.length > 0 ? [] : ["levelBasedFamilySymbol"]),
+      ],
+      "Use revit.catalog kind=familySymbols preset=placement before place_family_instance.",
+      {
+        hostedFamilySymbolId: hostedFamilySymbolIds[0],
+        levelBasedFamilySymbolId: levelBasedFamilySymbolIds[0],
+        hostedFamilySymbolIds,
+        levelBasedFamilySymbolIds,
+        wallHostIds,
+        defaultLevelId: levels[0]?.id,
+      },
+      includeHints
+    ),
+    readinessScenario(
+      "selection",
+      fakeQueryItems.length > 0,
+      fakeQueryItems.length > 0 ? [] : ["selection"],
+      "Select elements in Revit or query by explicit element IDs.",
+      { selectionCount: fakeQueryItems.length },
+      includeHints
+    ),
+    readinessScenario(
+      "annotations",
+      activeView?.isGraphical === true,
+      activeView?.isGraphical === true ? [] : ["graphicalActiveView"],
+      "Switch to a graphical view before annotation workflows.",
+      { activeViewId: activeView?.id, activeViewType: activeView?.type, annotationTypesDetectable: false },
+      includeHints
+    ),
+  ];
+}
+
+function readinessScenario(
+  name: ModelReadinessResult["scenarios"][number]["name"],
+  ready: boolean,
+  missing: string[],
+  nextAction: string,
+  hints: Record<string, unknown>,
+  includeHints: boolean
+): ModelReadinessResult["scenarios"][number] {
+  return {
+    name,
+    ready,
+    missing,
+    ...(includeHints ? { nextAction, hints } : {}),
+  };
+}
+
 function roomFieldsForPreset(preset?: string): string[] {
   switch (preset) {
     case "idOnly":
@@ -716,6 +873,13 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         levelId: operation.levelId,
         wallTypeId: operation.wallTypeId,
       };
+    case "place_family_instance":
+      return {
+        document: activeDocument.title,
+        familySymbolId: operation.familySymbolId,
+        hostElementId: operation.hostElementId,
+        levelId: operation.levelId,
+      };
     case "move_element":
       return {
         elementId: operation.elementId,
@@ -783,6 +947,17 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         structural: operation.structural,
         flip: operation.flip,
       };
+    case "place_family_instance":
+      return {
+        familySymbolId: operation.familySymbolId,
+        hostElementId: operation.hostElementId,
+        levelId: operation.levelId,
+        location: operation.location,
+        rotation: operation.rotation,
+        flipFacing: operation.flipFacing,
+        flipHand: operation.flipHand,
+        allowPinnedHost: operation.allowPinnedHost,
+      };
     case "move_element":
       return {
         translation: operation.translation,
@@ -847,6 +1022,7 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
   return (
     operation.type === "create_level" ||
     operation.type === "create_wall" ||
+    operation.type === "place_family_instance" ||
     operation.type === "create_grid" ||
     operation.type === "create_floor" ||
     operation.type === "create_room" ||

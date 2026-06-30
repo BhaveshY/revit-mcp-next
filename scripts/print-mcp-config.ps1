@@ -11,16 +11,54 @@ function Get-FullPath($Path) {
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
 }
 
+function Add-TrailingSeparator($Path) {
+    if ($Path.EndsWith("\") -or $Path.EndsWith("/")) {
+        return $Path
+    }
+
+    return "$Path\"
+}
+
+function Test-SamePath($Left, $Right) {
+    return [string]::Equals((Get-FullPath $Left), (Get-FullPath $Right), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-PathChild($Root, $Path) {
+    $rootFull = Get-FullPath $Root
+    $pathFull = Get-FullPath $Path
+    $rootWithSeparator = Add-TrailingSeparator $rootFull
+
+    return $pathFull -eq $rootFull -or $pathFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Resolve-InstallRoot {
     if (-not [string]::IsNullOrWhiteSpace($InstallRoot)) {
         return Get-FullPath $InstallRoot
     }
 
-    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        throw "LOCALAPPDATA is not set. Pass -InstallRoot with the installed Revit MCP Next root."
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($env:REVIT_MCP_NEXT_INSTALL_ROOT)) {
+        $candidates.Add($env:REVIT_MCP_NEXT_INSTALL_ROOT) | Out-Null
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $candidates.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext")) | Out-Null
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "RevitMcpNext")) | Out-Null
     }
 
-    return Get-FullPath (Join-Path $env:LOCALAPPDATA "RevitMcpNext")
+    foreach ($candidate in $candidates) {
+        $full = Get-FullPath $candidate
+        if (Test-Path -LiteralPath (Join-Path $full "config\client-discovery.json") -PathType Leaf) {
+            return $full
+        }
+    }
+
+    if ($candidates.Count -gt 0) {
+        return Get-FullPath $candidates[$candidates.Count - 1]
+    }
+
+    throw "Could not infer an install root. Pass -InstallRoot with the installed Revit MCP Next root."
 }
 
 function Read-ClientDiscovery($Root) {
@@ -35,6 +73,43 @@ function Read-ClientDiscovery($Root) {
     }
 
     return $discovery
+}
+
+function Assert-DiscoveryMatchesInstallRoot($Discovery, $Root) {
+    if ([string]::IsNullOrWhiteSpace([string] $Discovery.installRoot)) {
+        throw "Client discovery config does not contain installRoot."
+    }
+
+    if (-not (Test-SamePath ([string] $Discovery.installRoot) $Root)) {
+        throw "Client discovery installRoot is stale. Expected $Root, found $($Discovery.installRoot)."
+    }
+
+    foreach ($entry in @(
+        @{ Name = "launcherPath"; Value = [string] $Discovery.launcherPath },
+        @{ Name = "authConfigPath"; Value = [string] $Discovery.authConfigPath },
+        @{ Name = "brokerEntryPath"; Value = [string] $Discovery.brokerEntryPath },
+        @{ Name = "pythonClientPath"; Value = [string] $Discovery.pythonClientPath },
+        @{ Name = "pythonInProcessHelperPath"; Value = [string] $Discovery.pythonInProcessHelperPath },
+        @{ Name = "contractSchemasPath"; Value = [string] $Discovery.contractSchemasPath },
+        @{ Name = "integrationsPath"; Value = [string] $Discovery.integrationsPath }
+    )) {
+        if ([string]::IsNullOrWhiteSpace($entry.Value)) {
+            continue
+        }
+
+        if (-not (Test-PathChild $Root $entry.Value)) {
+            throw "Client discovery $($entry.Name) points outside installRoot: $($entry.Value)."
+        }
+    }
+
+    $supportedYears = @()
+    if ($Discovery.PSObject.Properties["supportedRevitYears"] -and $null -ne $Discovery.supportedRevitYears) {
+        $supportedYears = @($Discovery.supportedRevitYears | ForEach-Object { [int] $_ })
+    }
+    $unsupportedYears = @($supportedYears | Where-Object { $_ -ne 2024 })
+    if ($supportedYears.Count -gt 0 -and $unsupportedYears.Count -gt 0) {
+        throw "Client discovery advertises unsupported Revit years: $($supportedYears -join ', '). Revit MCP Next packages are Revit 2024-only."
+    }
 }
 
 function Escape-TomlBasicString($Value) {
@@ -99,6 +174,7 @@ function Write-TextConfig($Payload) {
 
 $installRootFull = Resolve-InstallRoot
 $discovery = Read-ClientDiscovery $installRootFull
+Assert-DiscoveryMatchesInstallRoot $discovery $installRootFull
 $payload = New-ConfigPayload $discovery
 
 if ($Json) {
