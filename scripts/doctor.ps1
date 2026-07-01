@@ -231,10 +231,12 @@ if ($node) {
 }
 
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
+$revitCtlLauncher = Join-Path $InstallRoot "revitctl.cmd"
 $authConfig = Join-Path $InstallRoot "config\auth.env"
 $clientDiscovery = Join-Path $InstallRoot "config\client-discovery.json"
 $brokerEntry = Join-Path $InstallRoot "broker\dist\src\index.js"
 $brokerServer = Join-Path $InstallRoot "broker\dist\src\server.js"
+$brokerRevitCtl = Join-Path $InstallRoot "broker\dist\src\cli\revitctl.js"
 $addinDll = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll"
 $contractsDll = Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.dll"
 $addinPdb = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.pdb"
@@ -258,10 +260,12 @@ $receipt = Join-Path $InstallRoot "install-receipt.json"
 $releaseManifest = Join-Path $InstallRoot "release-manifest.json"
 
 $launcherOk = Test-RequiredFile $launcher "MCP launcher"
+$revitCtlLauncherOk = Test-RequiredFile $revitCtlLauncher "revitctl launcher"
 $authConfigOk = Test-RequiredFile $authConfig "auth token config"
 Test-RequiredFile $clientDiscovery "client discovery config" | Out-Null
 Test-RequiredFile $brokerEntry "broker entry" | Out-Null
 Test-RequiredFile $brokerServer "broker server module" | Out-Null
+Test-RequiredFile $brokerRevitCtl "revitctl entry" | Out-Null
 Test-RequiredFile $addinDll "Revit add-in DLL" | Out-Null
 Test-RequiredFile $contractsDll "Revit contracts DLL" | Out-Null
 Test-RequiredFile $pythonClient "Python MCP integration client" | Out-Null
@@ -321,11 +325,40 @@ if ($launcherOk) {
     }
 }
 
+if ($revitCtlLauncherOk) {
+    $revitCtlText = Get-Content -LiteralPath $revitCtlLauncher -Raw
+    if ($revitCtlText.Contains($brokerRevitCtl)) {
+        Write-Host "[ok] revitctl launcher points at staged CLI entry"
+    } else {
+        Write-Host "[missing] revitctl launcher does not point at staged CLI entry"
+        $failures.Add("revitctl launcher target mismatch: $revitCtlLauncher")
+    }
+
+    if ($revitCtlText.Contains($clientDiscovery) -and $revitCtlText.Contains($authConfig)) {
+        Write-Host "[ok] revitctl launcher uses installed discovery and auth config"
+    } else {
+        Write-Host "[missing] revitctl launcher does not pass installed discovery/auth config"
+        $failures.Add("revitctl launcher config setup missing: $revitCtlLauncher")
+    }
+
+    if ($revitCtlText -match 'REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*[A-Za-z0-9_-]{20,}') {
+        Write-Host "[warn] revitctl launcher appears to contain an inline auth token; reinstall to use the config-backed launcher"
+    }
+}
+
 if ($node -and (Test-Path -LiteralPath $brokerServer -PathType Leaf)) {
     $script = "const p = process.argv[1]; import('file:///' + p.replace(/\\/g,'/')).then(() => console.log('[ok] broker imports')).catch((error) => { console.error(error); process.exit(1); });"
     & $node.Source -e $script $brokerServer
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("broker import failed")
+    }
+}
+
+if ($node -and (Test-Path -LiteralPath $brokerRevitCtl -PathType Leaf)) {
+    $script = "const p = process.argv[1]; import('file:///' + p.replace(/\\/g,'/')).then(() => console.log('[ok] revitctl imports')).catch((error) => { console.error(error); process.exit(1); });"
+    & $node.Source -e $script $brokerRevitCtl
+    if ($LASTEXITCODE -ne 0) {
+        $failures.Add("revitctl import failed")
     }
 }
 

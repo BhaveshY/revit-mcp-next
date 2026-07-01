@@ -375,7 +375,7 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
 
 function Assert-PackagedNpmAliases($PackageRoot) {
     $package = Read-JsonFile (Join-Path $PackageRoot "package.json")
-    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations")) {
+    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "revitctl")) {
         if (-not $package.scripts.PSObject.Properties[$alias]) {
             throw "Packaged package.json is missing npm alias: $alias"
         }
@@ -481,6 +481,7 @@ try {
     Assert-FileExists "$packageRoot.zip" "package zip"
     Assert-FileExists (Join-Path $packageRoot "release-manifest.json") "release manifest"
     Assert-FileExists (Join-Path $packageRoot "CHECKSUMS.sha256") "package checksums"
+    Assert-FileExists (Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js") "packaged revitctl CLI"
 
     $manifest = Read-JsonFile (Join-Path $packageRoot "release-manifest.json")
     if ($manifest.signing.requested -ne $false) {
@@ -528,6 +529,7 @@ try {
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\workflow_examples_node.py") "installed Dynamo workflow examples node"
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "installed Dynamo host-smoke graph"
     Assert-FileExists (Join-Path $installRoot "config\client-discovery.json") "installed client discovery config"
+    Assert-FileExists (Join-Path $installRoot "revitctl.cmd") "installed revitctl launcher"
     Assert-FileExists (Join-Path $packageRoot "scripts\print-mcp-config.ps1") "packaged MCP config printer"
     Assert-FileExists (Join-Path $packageRoot "scripts\doctor-clients.ps1") "packaged client doctor"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-revit-addin-trust.ps1") "packaged Revit trust helper"
@@ -559,7 +561,10 @@ try {
     if (-not $clientDiscovery.addinAssemblyPaths.PSObject.Properties["2024"]) {
         throw "Client discovery did not record a year-specific add-in assembly path."
     }
-    foreach ($expectedTool in @("revit.get_model_readiness", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set")) {
+    if ([string]::IsNullOrWhiteSpace([string] $clientDiscovery.revitctlPath) -or -not (Test-Path -LiteralPath ([string] $clientDiscovery.revitctlPath) -PathType Leaf)) {
+        throw "Client discovery did not record an installed revitctl launcher path."
+    }
+    foreach ($expectedTool in @("revit.get_views", "revit.get_sheets", "revit.describe_parameters", "revit.get_model_readiness", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set")) {
         if (@($clientDiscovery.tools) -notcontains $expectedTool) {
             throw "Client discovery did not advertise expected tool: $expectedTool"
         }

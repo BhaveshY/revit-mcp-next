@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "revit-mcp-next": "./dist/src/index.js"
+    "revit-mcp-next": "./dist/src/index.js",
+    "revitctl": "./dist/src/cli/revitctl.js"
   },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",

@@ -42,6 +42,8 @@ test("broker exposes annotated tools with output schemas and callable structured
 
     for (const expected of [
       "revit.get_current_view",
+      "revit.get_views",
+      "revit.get_sheets",
       "revit.get_current_view_elements",
       "revit.get_selection",
       "revit.analyze_model",
@@ -50,6 +52,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.get_rooms",
       "revit.catalog",
       "revit.query",
+      "revit.describe_parameters",
       "revit.preview_change_set",
       "revit.apply_change_set",
       "revit.cancel_request",
@@ -72,6 +75,38 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(currentView.isError, undefined);
     assert.equal(currentView.structuredContent?.data?.view?.id, "1024");
     assert.equal(currentView.structuredContent?.data?.view?.uniqueId, "view-1024");
+
+    const viewsTool = tools.tools.find((tool) => tool.name === "revit.get_views");
+    assert.ok(viewsTool?.inputSchema, "revit.get_views should declare inputSchema");
+    assert.match(JSON.stringify(viewsTool.inputSchema), /sheetPlacement/);
+    const views = (await client.callTool({
+      name: "revit.get_views",
+      arguments: { filter: { viewTypes: ["FloorPlan"] }, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { returnedCount?: number; totalCount?: number; items?: Array<{ id?: string; type?: string }> } };
+    };
+    assert.equal(views.isError, undefined);
+    assert.equal(views.structuredContent?.data?.returnedCount, 1);
+    assert.equal(views.structuredContent?.data?.items?.[0]?.id, "1024");
+    assert.equal(views.structuredContent?.data?.items?.[0]?.type, "FloorPlan");
+
+    const sheetsTool = tools.tools.find((tool) => tool.name === "revit.get_sheets");
+    assert.ok(sheetsTool?.inputSchema, "revit.get_sheets should declare inputSchema");
+    assert.match(JSON.stringify(sheetsTool.inputSchema), /includePlacedViews/);
+    const sheets = (await client.callTool({
+      name: "revit.get_sheets",
+      arguments: { includePlacedViews: true, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: { returnedCount?: number; items?: Array<{ id?: string; sheetNumber?: string; placedViews?: Array<{ viewId?: string }> }> };
+      };
+    };
+    assert.equal(sheets.isError, undefined);
+    assert.equal(sheets.structuredContent?.data?.returnedCount, 1);
+    assert.equal(sheets.structuredContent?.data?.items?.[0]?.sheetNumber, "A-101");
+    assert.equal(sheets.structuredContent?.data?.items?.[0]?.placedViews?.[0]?.viewId, "1024");
 
     const viewElements = (await client.callTool({
       name: "revit.get_current_view_elements",
@@ -218,6 +253,28 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.uniqueId, "wall-501");
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.class, "Wall");
 
+    const parametersTool = tools.tools.find((tool) => tool.name === "revit.describe_parameters");
+    assert.ok(parametersTool?.inputSchema, "revit.describe_parameters should declare inputSchema");
+    assert.match(JSON.stringify(parametersTool.inputSchema), /includeTypeParameters/);
+    const parameters = (await client.callTool({
+      name: "revit.describe_parameters",
+      arguments: {
+        filter: { elementIds: ["501"] },
+        includeTypeParameters: true,
+        includeReadOnly: true,
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: { returnedCount?: number; items?: Array<{ id?: string; parameters?: Array<{ name?: string; isReadOnly?: boolean; source?: string }> }> };
+      };
+    };
+    assert.equal(parameters.isError, undefined);
+    assert.equal(parameters.structuredContent?.data?.returnedCount, 1);
+    assert.equal(parameters.structuredContent?.data?.items?.[0]?.id, "501");
+    assert.ok(parameters.structuredContent?.data?.items?.[0]?.parameters?.some((parameter) => parameter.name === "Mark" && parameter.isReadOnly === false));
+
     const catalogTool = tools.tools.find((tool) => tool.name === "revit.catalog");
     assert.ok(catalogTool?.inputSchema, "revit.catalog should declare inputSchema");
     assert.equal(catalogTool.annotations?.readOnlyHint, true);
@@ -228,11 +285,15 @@ test("broker exposes annotated tools with output schemas and callable structured
       "familySymbols",
       "titleBlocks",
       "viewFamilyTypes",
+      "textNoteTypes",
+      "dimensionTypes",
+      "tagTypes",
       "forElementId",
       "typeChange",
       "familyNameContains",
       "nameContains",
       "viewFamily",
+      "annotation",
     ]) {
       assert.match(catalogSchema, new RegExp(expectedCatalogSchemaTerm));
     }
@@ -270,6 +331,23 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(catalog.structuredContent?.data?.cursor, "1");
     assert.equal(catalog.structuredContent?.data?.items?.[0]?.validForTarget, true);
     assert.equal(catalog.structuredContent?.data?.items?.[0]?.isCurrentType, true);
+
+    const tagCatalog = (await client.callTool({
+      name: "revit.catalog",
+      arguments: {
+        kind: "tagTypes",
+        preset: "annotation",
+        limit: 1,
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { kind?: string; returnedCount?: number; items?: Array<{ id?: string; class?: string }> } };
+    };
+    assert.equal(tagCatalog.isError, undefined);
+    assert.equal(tagCatalog.structuredContent?.data?.kind, "tagTypes");
+    assert.equal(tagCatalog.structuredContent?.data?.returnedCount, 1);
+    assert.equal(tagCatalog.structuredContent?.data?.items?.[0]?.class, "FamilySymbol");
 
     const previewTool = tools.tools.find((tool) => tool.name === "revit.preview_change_set");
     assert.ok(previewTool?.inputSchema, "revit.preview_change_set should declare inputSchema");

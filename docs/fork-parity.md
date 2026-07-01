@@ -8,10 +8,13 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | --- | --- |
 | `get_revit_connection_status` | Covered by `revit.status` with broker/add-in versions, active document, capabilities, and warnings. |
 | `get_current_view_info` | Covered by `revit.get_current_view` with compact document/view metadata. |
+| View and sheet inventory beyond the old fork's current-view focus | Better than the fork: `revit.get_views` and `revit.get_sheets` provide bounded view/sheet planning data, including optional placed view metadata. |
 | `get_current_view_elements` | Covered by `revit.get_current_view_elements` with bounded paging and projections. |
 | `get_selected_elements` | Covered by `revit.get_selection`. |
 | `get_available_family_types` | Covered more generally by `revit.catalog` for element types, family symbols, title blocks, and view family types. |
 | `ai_element_filter` | Covered by `revit.query` filters and compact presets. |
+| Parameter discovery before edits | Better than the fork: `revit.describe_parameters` returns bounded writable/read-only parameter metadata and optional type parameters before `set_parameter`. |
+| Annotation type discovery | Better than the fork: `revit.catalog` supports `textNoteTypes`, `dimensionTypes`, and `tagTypes` for bounded annotation planning. |
 | `analyze_model_statistics` | Covered by `revit.analyze_model`. |
 | `get_material_quantities` | Covered by `revit.get_material_quantities` with normalized metric units. |
 | `export_room_data` | Covered by `revit.get_rooms` for compact, paginated room export/schedule data, with live smoke coverage in the Revit 2024 smoke workflow. |

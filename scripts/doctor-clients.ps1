@@ -498,6 +498,7 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
     }
 
     $launcherPath = Get-FullPath ([string] $discovery.launcherPath)
+    $revitCtlPath = Get-FullPath ([string] $discovery.revitctlPath)
     $authConfigPath = Get-FullPath ([string] $discovery.authConfigPath)
     $brokerEntryPath = Get-FullPath ([string] $discovery.brokerEntryPath)
     $pythonClientPath = Get-FullPath ([string] $discovery.pythonClientPath)
@@ -505,6 +506,7 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
     $schemasPath = Get-FullPath ([string] $discovery.contractSchemasPath)
 
     Test-RequiredFile $launcherPath "MCP launcher" | Out-Null
+    Test-RequiredFile $revitCtlPath "revitctl launcher" | Out-Null
     Test-RequiredFile $authConfigPath "auth token config" | Out-Null
     Test-RequiredFile $brokerEntryPath "broker entry" | Out-Null
     Test-RequiredFile $pythonClientPath "Python stdio client helper" | Out-Null
@@ -513,6 +515,7 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
 
     foreach ($pathCheck in @(
         @{ Path = $launcherPath; Label = "launcherPath" },
+        @{ Path = $revitCtlPath; Label = "revitctlPath" },
         @{ Path = $authConfigPath; Label = "authConfigPath" },
         @{ Path = $brokerEntryPath; Label = "brokerEntryPath" },
         @{ Path = $pythonClientPath; Label = "pythonClientPath" },
@@ -558,6 +561,16 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
             Write-Check "ok" "MCP launcher quotes the staged broker entry"
         } else {
             Add-Failure "MCP launcher does not quote the staged broker entry"
+        }
+    }
+
+    if (Test-Path -LiteralPath $revitCtlPath -PathType Leaf) {
+        $revitCtlText = Get-Content -LiteralPath $revitCtlPath -Raw
+        Assert-NoTokenLeak $revitCtlText "revitctl launcher" $token
+        if ($revitCtlText.Contains("`"$authConfigPath`"") -and $revitCtlText.Contains("`"$discoveryPath`"")) {
+            Write-Check "ok" "revitctl launcher quotes installed discovery and auth config"
+        } else {
+            Add-Failure "revitctl launcher does not quote the installed discovery/auth config paths"
         }
     }
 

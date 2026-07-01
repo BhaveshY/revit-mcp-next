@@ -32,7 +32,8 @@
     "revit:trust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-revit-addin-trust.ps1",
     "pyrevit:hosts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-pyrevit-hosts-cache.ps1",
     "mcp:config": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/print-mcp-config.ps1",
-    "doctor:clients": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor-clients.ps1"
+    "doctor:clients": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor-clients.ps1",
+    "revitctl": "node broker/dist/src/cli/revitctl.js"
   },
   "engines": {
     "node": ">=24 <25"

@@ -10,9 +10,10 @@ The doctor checks:
 
 - Node is available.
 - The staged MCP launcher exists.
+- The staged `revitctl` launcher exists.
 - The local auth token config exists, contains a strong token, and does not print the token.
 - The staged MCP launcher exports `REVIT_MCP_NEXT_AUTH_TOKEN` from the local config.
-- The staged broker imports successfully.
+- The staged broker and `revitctl` entry points import successfully.
 - Revit add-in DLLs are staged.
 - The Revit `.addin` manifest is installed.
 - The Revit `.addin` manifest points at the staged add-in DLL.
@@ -51,7 +52,7 @@ Revit unsigned add-in prompt:
 - Use `npm run dev-cert:windows -- -StatusOnly` to inspect the local dev certificate state.
 - Use `npm run dev-cert:windows -- -Remove -DryRun`, then `npm run dev-cert:windows -- -Remove`, to remove this repo's local dev certificate from CurrentUser `My`, `Root`, and `TrustedPublisher`.
 - If the dialog names `mcp-servers-for-revit`, the old fork is still installed. Disable `%APPDATA%\Autodesk\Revit\Addins\2024\mcp-servers-for-revit.addin` before testing Revit MCP Next.
-- Production releases still require a real release signing certificate and archived verification evidence.
+- Unsigned external preview packages should be clearly labeled and shipped with checksums plus smoke/evidence artifacts. Only claim a signed release when signature verification evidence exists for that exact build.
 
 Client config:
 
@@ -62,6 +63,15 @@ npm run doctor:clients
 
 This prints Claude Code, Claude Desktop, and Codex MCP config snippets from the installed `config\client-discovery.json` without printing the local auth token.
 The client doctor validates those generated snippets, launcher paths and quoting, stale install roots, existing Claude Desktop/Codex config entries when present, token leakage risk, and MCP `initialize` plus `tools/list` startup without requiring Revit to be connected.
+
+Bridge debug CLI:
+
+```powershell
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
+```
+
+Use this to separate MCP client configuration problems from Revit/add-in/named-pipe problems. `BRIDGE_UNAVAILABLE` from `revitctl status` means Revit is closed, the add-in did not load, the auth config does not match the running add-in environment, or the named pipe is not listening.
 
 Common states:
 

@@ -22,6 +22,8 @@ import type {
   ModelReadinessResult,
   ModelStatisticsRequest,
   ModelStatisticsResult,
+  ParameterDescribeRequest,
+  ParameterDescribeResult,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
@@ -31,6 +33,11 @@ import type {
   RoomsResult,
   ScopedElementListRequest,
   ScopedElementListResult,
+  SheetSummary,
+  SheetsRequest,
+  SheetsResult,
+  ViewsRequest,
+  ViewsResult,
 } from "@revit-mcp-next/contracts";
 import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
@@ -70,10 +77,62 @@ const levels: LevelSummary[] = [
   },
 ];
 
+const fakeViews: ViewsResult["items"] = [
+  {
+    id: "1024",
+    uniqueId: "view-1024",
+    name: "Level 1",
+    type: "FloorPlan",
+    isGraphical: true,
+    isTemplate: false,
+    canBePrinted: true,
+    scale: 100,
+    detailLevel: "Medium",
+    discipline: "Coordination",
+    associatedLevelId: "311",
+    associatedLevelName: "Level 1",
+  },
+  {
+    id: "1025",
+    uniqueId: "view-1025",
+    name: "Working 3D",
+    type: "ThreeD",
+    isGraphical: true,
+    isTemplate: false,
+    canBePrinted: true,
+    scale: 100,
+  },
+];
+
+const fakeSheets: SheetSummary[] = [
+  {
+    id: "1101",
+    uniqueId: "sheet-1101",
+    sheetNumber: "A-101",
+    name: "Plans",
+    titleBlockIds: ["9300"],
+    placedViews: [
+      {
+        viewportId: "1201",
+        viewId: "1024",
+        viewName: "Level 1",
+        viewType: "FloorPlan",
+        center: {
+          x: { value: 250, unit: "mm", system: "metric" },
+          y: { value: 180, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+      },
+    ],
+  },
+];
+
 const capabilities = [
   "revit.status",
   "revit.list_documents",
   "revit.get_levels",
+  "revit.get_views",
+  "revit.get_sheets",
   "revit.get_current_view",
   "revit.get_current_view_elements",
   "revit.get_selection",
@@ -83,6 +142,7 @@ const capabilities = [
   "revit.get_rooms",
   "revit.catalog",
   "revit.query",
+  "revit.describe_parameters",
   "revit.preview_change_set",
   "revit.apply_change_set",
   "revit.cancel_request",
@@ -208,6 +268,36 @@ const catalogItems: FakeCatalogItem[] = [
     familyName: "FloorPlan",
     viewFamily: "FloorPlan",
   },
+  {
+    kind: "textNoteTypes",
+    id: "9500",
+    uniqueId: "text-note-type-9500",
+    class: "TextNoteType",
+    category: "Text Notes",
+    name: "2.5mm Arial",
+    familyName: "Text",
+  },
+  {
+    kind: "dimensionTypes",
+    id: "9600",
+    uniqueId: "dimension-type-9600",
+    class: "DimensionType",
+    category: "Dimensions",
+    name: "Linear 2.5mm",
+    familyName: "Linear Dimension Style",
+  },
+  {
+    kind: "tagTypes",
+    id: "9700",
+    uniqueId: "room-tag-type-9700",
+    class: "FamilySymbol",
+    category: "Room Tags",
+    builtInCategory: "OST_RoomTags",
+    name: "Room Tag",
+    familyName: "Room Tag",
+    familyId: "9699",
+    isActive: true,
+  },
 ];
 
 export class FakeRevitBridgeClient implements RevitBridgeClient {
@@ -247,6 +337,59 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<LevelSummary[]>> {
     maybeAbort(options);
     return ok(request, levels);
+  }
+
+  async getViews(
+    request: BridgeRequest<ViewsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ViewsResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 500);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    const items = fakeViews.filter((view) => matchesViewFilter(view, filter));
+    const page = items.slice(offset, offset + limit);
+    const truncated = offset + page.length < items.length;
+    return ok(request, {
+      document: documentReference(),
+      items: page,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? items.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      fields: request.payload.fields ?? ["id", "uniqueId", "name", "type", "isGraphical", "isTemplate", "canBePrinted"],
+      scope: "views",
+      source: "fake-bridge",
+    });
+  }
+
+  async getSheets(
+    request: BridgeRequest<SheetsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<SheetsResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 500);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    const items = fakeSheets.filter((sheet) => matchesSheetFilter(sheet, filter));
+    const page = items.slice(offset, offset + limit).map((sheet) => ({
+      ...sheet,
+      placedViews: request.payload.includePlacedViews ? sheet.placedViews : undefined,
+    }));
+    const truncated = offset + page.length < items.length;
+    return ok(request, {
+      document: documentReference(),
+      items: page,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? items.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      fields: request.payload.fields ?? ["id", "uniqueId", "sheetNumber", "name", "titleBlockIds"],
+      scope: "sheets",
+      source: "fake-bridge",
+    });
   }
 
   async getCurrentView(
@@ -441,6 +584,72 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
           : request.payload.filter.viewId
             ? `view:${request.payload.filter.viewId}`
             : "document",
+      source: "fake-bridge",
+    });
+  }
+
+  async describeParameters(
+    request: BridgeRequest<ParameterDescribeRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ParameterDescribeResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 20, 100);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    let targets = fakeQueryItems;
+    const elementIds = request.payload.filter.elementIds ?? [];
+    if (elementIds.length > 0) {
+      targets = targets.filter((item) => elementIds.includes(item.id));
+    }
+    const page = targets.slice(offset, offset + limit).map((item) => {
+      const parameters = [
+        {
+          name: "Mark",
+          storageType: "String",
+          source: "instance" as const,
+          isReadOnly: false,
+          hasValue: true,
+          value: "A-101",
+          valueString: "A-101",
+        },
+        {
+          name: "Type Name",
+          storageType: "String",
+          source: "type" as const,
+          isReadOnly: true,
+          hasValue: true,
+          value: "Generic - 200mm",
+          valueString: "Generic - 200mm",
+        },
+      ].filter((parameter) => {
+        if (request.payload.includeReadOnly === false && parameter.isReadOnly) return false;
+        if (request.payload.nameContains && !containsIgnoreCase(parameter.name, request.payload.nameContains)) return false;
+        return true;
+      });
+      const parameterLimit = Math.min(request.payload.parameterLimit ?? 80, 200);
+      return {
+        id: item.id,
+        uniqueId: item.uniqueId,
+        category: item.category,
+        class: item.class,
+        name: item.name,
+        typeId: item.typeId,
+        typeName: "Generic - 200mm",
+        parameters: parameters.slice(0, parameterLimit),
+        parameterCount: parameters.length,
+        truncated: parameters.length > parameterLimit,
+      };
+    });
+    const truncated = offset + page.length < targets.length;
+    return ok(request, {
+      document: documentReference(),
+      items: page,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? targets.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      parameterLimit: Math.min(request.payload.parameterLimit ?? 80, 200),
+      scope: elementIds.length > 0 ? "elements" : "document",
       source: "fake-bridge",
     });
   }
@@ -750,6 +959,31 @@ function matchesRoomFilter(room: RoomSummary, filter: RoomsRequest["filter"], in
   if (filter?.numberContains && !containsIgnoreCase(room.number ?? "", filter.numberContains)) return false;
   if (filter?.nameContains && !containsIgnoreCase(room.name ?? "", filter.nameContains)) return false;
   if (filter?.departmentContains && !containsIgnoreCase(room.department ?? "", filter.departmentContains)) return false;
+  return true;
+}
+
+function matchesViewFilter(view: ViewsResult["items"][number], filter: ViewsRequest["filter"]): boolean {
+  if (!filter) return true;
+  if (filter.viewIds?.length && !filter.viewIds.includes(view.id)) return false;
+  if (filter.uniqueIds?.length && (!view.uniqueId || !filter.uniqueIds.includes(view.uniqueId))) return false;
+  if (filter.viewTypes?.length && !filter.viewTypes.some((viewType) => equalsCatalogToken(viewType, view.type))) return false;
+  if (filter.nameContains && !containsIgnoreCase(view.name, filter.nameContains)) return false;
+  if (filter.isTemplate !== undefined && view.isTemplate !== filter.isTemplate) return false;
+  if (filter.isGraphical !== undefined && view.isGraphical !== filter.isGraphical) return false;
+  if (filter.canBePrinted !== undefined && view.canBePrinted !== filter.canBePrinted) return false;
+  return true;
+}
+
+function matchesSheetFilter(sheet: SheetSummary, filter: SheetsRequest["filter"]): boolean {
+  if (!filter) return true;
+  if (filter.sheetIds?.length && !filter.sheetIds.includes(sheet.id)) return false;
+  if (filter.uniqueIds?.length && (!sheet.uniqueId || !filter.uniqueIds.includes(sheet.uniqueId))) return false;
+  if (filter.numbers?.length && (!sheet.sheetNumber || !filter.numbers.includes(sheet.sheetNumber))) return false;
+  if (filter.numberContains && !containsIgnoreCase(sheet.sheetNumber ?? "", filter.numberContains)) return false;
+  if (filter.nameContains && !containsIgnoreCase(sheet.name ?? "", filter.nameContains)) return false;
+  if (filter.titleBlockIds?.length && !(sheet.titleBlockIds ?? []).some((id) => filter.titleBlockIds?.includes(id))) {
+    return false;
+  }
   return true;
 }
 

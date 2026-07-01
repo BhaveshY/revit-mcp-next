@@ -19,6 +19,8 @@ import type {
   ModelReadinessResult,
   ModelStatisticsRequest,
   ModelStatisticsResult,
+  ParameterDescribeRequest,
+  ParameterDescribeResult,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
@@ -27,6 +29,10 @@ import type {
   RoomsResult,
   ScopedElementListRequest,
   ScopedElementListResult,
+  SheetsRequest,
+  SheetsResult,
+  ViewsRequest,
+  ViewsResult,
 } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
 
@@ -66,6 +72,20 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<{ documentFingerprint?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<LevelSummary[]>> {
+    return this.send(request, options);
+  }
+
+  getViews(
+    request: BridgeRequest<ViewsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ViewsResult>> {
+    return this.send(request, options);
+  }
+
+  getSheets(
+    request: BridgeRequest<SheetsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<SheetsResult>> {
     return this.send(request, options);
   }
 
@@ -122,6 +142,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>> {
+    return this.send(request, options);
+  }
+
+  describeParameters(
+    request: BridgeRequest<ParameterDescribeRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ParameterDescribeResult>> {
     return this.send(request, options);
   }
 

@@ -13,6 +13,8 @@ const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
 const REQUIRED_TOOLS = [
   "revit.status",
   "revit.get_levels",
+  "revit.get_views",
+  "revit.get_sheets",
   "revit.get_current_view",
   "revit.get_current_view_elements",
   "revit.get_selection",
@@ -22,6 +24,7 @@ const REQUIRED_TOOLS = [
   "revit.get_rooms",
   "revit.catalog",
   "revit.query",
+  "revit.describe_parameters",
   "revit.preview_change_set",
   "revit.apply_change_set",
 ];
@@ -162,6 +165,27 @@ async function main() {
     assert(currentView?.document?.fingerprint === documentFingerprint, "revit.get_current_view returned a different document.");
     assert(typeof currentView?.view?.id === "string" && currentView.view.id.length > 0, "revit.get_current_view did not return a view id.");
     console.log(`Current view OK: ${currentView.view.name ?? "(unnamed view)"} (${currentView.view.id})`);
+
+    const views = await callRequiredTool(client, "revit.get_views", {
+      ...documentGuard,
+      filter: { isTemplate: false },
+      preset: "summary",
+      limit: 5,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(views.items), "revit.get_views did not return an items array.");
+    assert(views.returnedCount === views.items.length, "revit.get_views returnedCount did not match items length.");
+    console.log(`Views OK: ${views.returnedCount}${views.totalCount === undefined ? "" : ` of ${views.totalCount}`} sample view(s)`);
+
+    const sheets = await callRequiredTool(client, "revit.get_sheets", {
+      ...documentGuard,
+      preset: "summary",
+      limit: 5,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(sheets.items), "revit.get_sheets did not return an items array.");
+    assert(sheets.returnedCount === sheets.items.length, "revit.get_sheets returnedCount did not match items length.");
+    console.log(`Sheets OK: ${sheets.returnedCount}${sheets.totalCount === undefined ? "" : ` of ${sheets.totalCount}`} sample sheet(s)`);
 
     const currentViewElements = await callRequiredTool(client, "revit.get_current_view_elements", {
       ...documentGuard,
@@ -363,6 +387,22 @@ async function main() {
 
     const queriedWall = await queryWallById(client, wallId);
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
+
+    const wallParameters = await callRequiredTool(client, "revit.describe_parameters", {
+      documentFingerprint,
+      expectedGeneration: numericOrUndefined(createApply.generation),
+      filter: { elementIds: [String(wallId)] },
+      includeTypeParameters: true,
+      includeReadOnly: true,
+      includeValues: true,
+      limit: 1,
+      parameterLimit: 40,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(wallParameters.items), "revit.describe_parameters did not return an items array.");
+    assert(wallParameters.items.length === 1, "revit.describe_parameters did not return the created wall parameter set.");
+    assert(Array.isArray(wallParameters.items[0].parameters), "revit.describe_parameters did not return parameter metadata.");
+    console.log(`Parameter discovery OK: wall ${wallId} has ${wallParameters.items[0].parameterCount} described parameter(s)`);
 
     const familyPlacementResult = await tryPlaceFamilyInstance(client, {
       documentFingerprint,
@@ -1610,7 +1650,7 @@ function printHelp() {
 
 Runs a live Revit MCP smoke against the active Revit project:
   1. revit.status
-  2. read smoke: current view, current-view elements, selection, model analysis, material quantities
+  2. read smoke: views, sheets, current view, current-view elements, selection, model analysis, material quantities
   3. revit.get_levels
   4. revit.catalog for wall and floor types
   5. preview/apply create_level
@@ -1618,7 +1658,7 @@ Runs a live Revit MCP smoke against the active Revit project:
   7. blocked preview for duplicate create_grid
   8. preview/apply create_floor
   9. preview/apply create_wall
-  10. revit.query for created elements
+  10. revit.query and revit.describe_parameters for created elements
   11. preview/apply room boundary walls
   12. preview/apply create_room, then revit.get_rooms read-back with positive area
   13. preview/apply set_parameter on the created wall

@@ -54,6 +54,8 @@ Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\Revi
 
 Claude and Codex enter through the MCP broker over stdio. Plain Python processes can do the same through `integrations/python/revit_mcp_next_client.py`.
 
+The installed `revitctl.cmd` is a lower-level bridge CLI for debugging, support, and scripted CI smoke checks. It reuses the same named-pipe bridge contract and auth config as the MCP broker, but it is not the primary agent interface. MCP remains the "agent brain socket" because it exposes typed tools, descriptions, annotations, and output schemas.
+
 pyRevit and Dynamo run inside Revit, so their examples use the add-in's public in-process bridge through `integrations/python/revit_mcp_next_inprocess.py`. That path shares the same bounded Revit dispatcher as the named-pipe route but does not queue through `ExternalEvent`, avoiding a common deadlock when a Revit-hosted script waits synchronously for work that Revit cannot process until the script returns.
 
 Do not call the add-in named pipe directly from pyRevit or Dynamo. Direct pipe use from an in-process script can deadlock and bypasses the stable integration helpers.

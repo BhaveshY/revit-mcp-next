@@ -34,9 +34,9 @@ Autodesk Revit API
 Revit 2024-only production-candidate slice, not yet a signed production release:
 
 - `contracts/`: shared protocol and tool-result TypeScript types plus JSON schema.
-- `broker/`: MCP stdio server with bounded read/write tools, including `revit.get_rooms` and guarded `create_room`, output schemas, structured errors, pipe auth token forwarding, and bridge tests.
+- `broker/`: MCP stdio server with bounded read/write tools, including view/sheet inventory, parameter discovery, `revit.get_rooms`, guarded `create_room`, output schemas, structured errors, pipe auth token forwarding, `revitctl`, and bridge tests.
 - `addin/`: Revit 2024 add-in with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers including rooms, and preview/apply write handlers including room placement.
-- `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates a Claude/Codex launcher.
+- `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates the Claude/Codex MCP launcher plus `revitctl.cmd` for debugging.
 - `scripts/package-release.ps1`: staged Windows release package with payload checksums and optional bundled production dependencies.
 - `scripts/ensure-dev-signing-certificate.ps1`: CurrentUser local dev code-signing certificate bootstrapper for disposable Revit smoke machines.
 - `scripts/ensure-revit-addin-trust.ps1`: supplemental helper that inspects/seeds/removes Revit's per-user `Always Load` trust entry for the add-in `ClientId`.
@@ -62,6 +62,7 @@ npm run install:windows
 npm run doctor:windows
 npm run mcp:config
 npm run doctor:clients
+npm run revitctl -- status --pretty
 npm run smoke:revit
 npm run smoke:release-local
 npm run package:windows:dry-run
@@ -73,7 +74,7 @@ npm run test:evidence:release:windows
 `npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It creates test geometry, a room, optional family placement when the model has suitable symbols, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
 `npm run smoke:release-local` is the one-command disposable-machine path: it builds, installs to a stable per-year root under `%APPDATA%\Autodesk\Revit\Addins`, copies a sample RVT, launches Revit when needed, waits for `revit.status` readiness, runs doctor/live smoke, closes and relaunches its own Revit process for a second status-only no-prompt probe, collects support output, and attempts release evidence collection. Evidence and package work directories default to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
 
-Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`. The application manifest now uses `<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>`, but the durable no-prompt path is trusted Authenticode signing. `npm run smoke:release-local` creates/trusts a disposable CurrentUser dev certificate, signs the package, and verifies trusted signatures before launch. Production releases still need a real release certificate and archived signature verification evidence.
+Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`. The application manifest now uses `<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>`, but the durable no-prompt path is trusted Authenticode signing. `npm run smoke:release-local` creates/trusts a disposable CurrentUser dev certificate, signs the package, and verifies trusted signatures before launch. For an unsigned external preview, label the package as unsigned and include checksums plus smoke/evidence artifacts; only claim a signed release when signature verification evidence exists for that exact build. See [external-preview.md](docs/external-preview.md) for the concise sharing checklist.
 
 Inspect or remove the local dev signing certificate after disposable-machine testing:
 
@@ -131,6 +132,19 @@ npm run doctor:clients
 ```
 
 Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token. `npm run doctor:clients` verifies the generated snippets, existing Claude Desktop/Codex config files when present, launcher quoting, stale install roots, raw token leakage risk, and basic MCP startup plus `tools/list` without requiring a Revit connection.
+
+## Internal Debug CLI
+
+MCP remains the main agent interface. The installed `revitctl.cmd` is a lower-level bridge CLI for debugging, support, and CI scripts:
+
+```powershell
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"limit":5}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"limit":5}' --pretty
+```
+
+The CLI reads the same installed discovery and auth config as the MCP launcher. It does not print the raw auth token. See [revitctl.md](docs/revitctl.md).
 
 ## pyRevit, Dynamo, And Python
 
@@ -193,6 +207,8 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.status`
 - `revit.list_documents`
 - `revit.get_levels`
+- `revit.get_views`
+- `revit.get_sheets`
 - `revit.get_current_view`
 - `revit.get_current_view_elements`
 - `revit.get_selection`
@@ -202,11 +218,12 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.get_rooms`
 - `revit.catalog`
 - `revit.query`
+- `revit.describe_parameters`
 - `revit.preview_change_set`
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
-Read tools are intentionally compact and paginated where results can grow. Use `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields.
+Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields.
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 
@@ -226,7 +243,7 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 
 `revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
 
-Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, and `viewFamilyTypes`. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
+Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
 
 See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences covering model audit, room/wall/floor creation, family placement preview, selected element updates, and blocked preview recovery.
 
@@ -238,7 +255,7 @@ See [production-readiness.md](docs/production-readiness.md) for the current evid
 
 Remaining blockers:
 
-- Signed release artifacts from an available release certificate, plus archived signing verification evidence.
+- Optional signed release artifacts if a release certificate is available. Unsigned preview packages are acceptable when clearly labeled, with checksums and smoke/evidence artifacts attached.
 - Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, room read/write support, and preview/apply flows.
 - Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json`.
 - Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, live-smoke output, and hosted integration output for that build.

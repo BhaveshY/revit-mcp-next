@@ -20,6 +20,10 @@ namespace RevitMcpNext.Addin.Revit
         private const string AddinVersion = "0.1.0";
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxQueryLimit = 500;
+        private const int MaxViewLimit = 500;
+        private const int MaxSheetLimit = 500;
+        private const int MaxParameterElementLimit = 100;
+        private const int MaxParameterLimit = 200;
         private const int MaxCatalogLimit = 200;
         private const int MaxStatisticsBucketLimit = 200;
         private const int MaxStatisticsScanLimit = 100000;
@@ -115,6 +119,10 @@ namespace RevitMcpNext.Addin.Revit
                             return Success(request, BuildDocumentList(app), sw, generation: GetActiveDocumentGeneration(app));
                         case "get_levels":
                             return HandleGetLevels(app, request, sw);
+                        case "get_views":
+                            return HandleGetViews(app, request, sw);
+                        case "get_sheets":
+                            return HandleGetSheets(app, request, sw);
                         case "get_current_view":
                             return HandleGetCurrentView(app, request, sw);
                         case "get_current_view_elements":
@@ -133,6 +141,8 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleCatalog(app, request, sw);
                         case "query":
                             return HandleQuery(app, request, sw);
+                        case "describe_parameters":
+                            return HandleDescribeParameters(app, request, sw);
                         case "preview_change_set":
                             return HandlePreviewChange(app, request, sw);
                         case "apply_change_set":
@@ -185,6 +195,137 @@ namespace RevitMcpNext.Addin.Revit
                 generation: generation);
         }
 
+        private BridgeResponseEnvelope HandleGetViews(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_views.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
+            int limit = Math.Min(MaxViewLimit, Math.Max(1, GetInt(payload, "limit") ?? 50));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includeCropBox = GetBool(payload, "includeCropBox", false);
+            string preset = GetString(payload, "preset");
+            string[] fields = NormalizeViewFields(GetStringList(payload, "fields"), preset, includeCropBox, warnings);
+
+            List<View> materialized = new FilteredElementCollector(document)
+                .OfClass(typeof(View))
+                .Cast<View>()
+                .Where(view => !(view is ViewSheet))
+                .Where(view => MatchesViewFilter(view, filter))
+                .OrderBy(view => view.ViewType.ToString(), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(SafeElementName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(view => GetElementIdValue(view.Id))
+                .ToList();
+
+            int totalCount = materialized.Count;
+            List<View> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["items"] = page.Select(view => BuildViewItem(document, view, fields, includeCropBox)).ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < totalCount,
+                ["fields"] = fields,
+                ["scope"] = "views",
+                ["source"] = "revit-addin"
+            };
+
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetSheets(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_sheets.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
+            int limit = Math.Min(MaxSheetLimit, Math.Max(1, GetInt(payload, "limit") ?? 50));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includePlacedViews = GetBool(payload, "includePlacedViews", false);
+            string preset = GetString(payload, "preset");
+            string[] fields = NormalizeSheetFields(GetStringList(payload, "fields"), preset, includePlacedViews, warnings);
+
+            List<ViewSheet> materialized = new FilteredElementCollector(document)
+                .OfClass(typeof(ViewSheet))
+                .Cast<ViewSheet>()
+                .Where(sheet => MatchesSheetFilter(document, sheet, filter))
+                .OrderBy(sheet => sheet.SheetNumber, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(SafeElementName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(sheet => GetElementIdValue(sheet.Id))
+                .ToList();
+
+            int totalCount = materialized.Count;
+            List<ViewSheet> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["items"] = page.Select(sheet => BuildSheetItem(document, sheet, fields, includePlacedViews)).ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < totalCount,
+                ["fields"] = fields,
+                ["scope"] = "sheets",
+                ["source"] = "revit-addin"
+            };
+
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
         private BridgeResponseEnvelope HandleQuery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
@@ -225,6 +366,74 @@ namespace RevitMcpNext.Addin.Revit
                     ["elevation"] = "mm",
                     ["length"] = "mm"
                 },
+                ["scope"] = scope,
+                ["source"] = "revit-addin"
+            };
+
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleDescribeParameters(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.describe_parameters.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
+            int limit = Math.Min(MaxParameterElementLimit, Math.Max(1, GetInt(payload, "limit") ?? 20));
+            int parameterLimit = Math.Min(MaxParameterLimit, Math.Max(1, GetInt(payload, "parameterLimit") ?? 80));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includeTypeParameters = GetBool(payload, "includeTypeParameters", true);
+            bool includeReadOnly = GetBool(payload, "includeReadOnly", true);
+            bool includeValues = GetBool(payload, "includeValues", true);
+            string nameContains = GetString(payload, "nameContains");
+
+            string scope;
+            IEnumerable<Element> elements = CreateFilteredElements(app, document, filter, warnings, out scope);
+            List<Element> materialized = elements.ToList();
+            int totalCount = materialized.Count;
+            List<Element> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["items"] = page.Select(element => BuildParameterTarget(
+                    document,
+                    element,
+                    includeTypeParameters,
+                    includeReadOnly,
+                    includeValues,
+                    nameContains,
+                    parameterLimit)).ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < totalCount,
+                ["parameterLimit"] = parameterLimit,
                 ["scope"] = scope,
                 ["source"] = "revit-addin"
             };
@@ -3338,7 +3547,7 @@ namespace RevitMcpNext.Addin.Revit
                     levels.Length > 0 ? "Use revit.get_levels to pick exact level IDs." : "Create a level before level-based model operations.",
                     new Dictionary<string, object> { ["levelCount"] = levels.Length, ["defaultLevelId"] = levels.FirstOrDefault() == null ? null : ToElementIdString(levels.First().Id) }),
                 ScenarioReadiness(
-                    "wall",
+                    "wallCreation",
                     levels.Length > 0 && wallTypeCount > 0,
                     MissingPrerequisites(
                         levels.Length > 0 ? null : "At least one project level.",
@@ -3346,7 +3555,7 @@ namespace RevitMcpNext.Addin.Revit
                     "Use create_wall with levelId, start, end, and optional wallTypeId discovered from revit.catalog.",
                     new Dictionary<string, object> { ["levelCount"] = levels.Length, ["wallTypeCount"] = wallTypeCount, ["wallCount"] = wallCount }),
                 ScenarioReadiness(
-                    "floor",
+                    "floorCreation",
                     levels.Length > 0 && floorTypeCount > 0,
                     MissingPrerequisites(
                         levels.Length > 0 ? null : "At least one project level.",
@@ -3354,7 +3563,7 @@ namespace RevitMcpNext.Addin.Revit
                     "Use create_floor with a closed outline on the target level elevation.",
                     new Dictionary<string, object> { ["levelCount"] = levels.Length, ["floorTypeCount"] = floorTypeCount }),
                 ScenarioReadiness(
-                    "room",
+                    "roomCreation",
                     levels.Length > 0,
                     levels.Length > 0 ? Array.Empty<string>() : new[] { "At least one project level." },
                     wallCount > 0
@@ -3399,7 +3608,7 @@ namespace RevitMcpNext.Addin.Revit
                     "Use revit.query filters when no active selection is available.",
                     new Dictionary<string, object> { ["available"] = selectionAvailable, ["selectionCount"] = selectionCount }),
                 ScenarioReadiness(
-                    "annotation",
+                    "annotations",
                     activeGraphicalView,
                     activeGraphicalView ? Array.Empty<string>() : new[] { "An active graphical non-template view." },
                     "Annotation operations should be scoped to an explicit graphical view and valid references.",
@@ -3507,6 +3716,13 @@ namespace RevitMcpNext.Addin.Revit
         {
             if (view == null || view.IsTemplate) return false;
 
+            return SafeCanBePrinted(view);
+        }
+
+        private static bool SafeCanBePrinted(View view)
+        {
+            if (view == null) return false;
+
             try
             {
                 return view.CanBePrinted;
@@ -3542,6 +3758,8 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.status",
                     "revit.list_documents",
                     "revit.get_levels",
+                    "revit.get_views",
+                    "revit.get_sheets",
                     "revit.get_current_view",
                     "revit.get_current_view_elements",
                     "revit.get_selection",
@@ -3551,6 +3769,7 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.get_rooms",
                     "revit.catalog",
                     "revit.query",
+                    "revit.describe_parameters",
                     "revit.preview_change_set",
                     "revit.apply_change_set",
                     "revit.cancel_request"
@@ -3579,7 +3798,10 @@ namespace RevitMcpNext.Addin.Revit
             return string.Equals(kind, "elementTypes", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(kind, "familySymbols", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(kind, "titleBlocks", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(kind, "viewFamilyTypes", StringComparison.OrdinalIgnoreCase);
+                   string.Equals(kind, "viewFamilyTypes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(kind, "textNoteTypes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(kind, "dimensionTypes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(kind, "tagTypes", StringComparison.OrdinalIgnoreCase);
         }
 
         private static IEnumerable<Element> CreateCatalogElements(
@@ -3603,12 +3825,28 @@ namespace RevitMcpNext.Addin.Revit
             {
                 collector.OfClass(typeof(ViewFamilyType));
             }
+            else if (string.Equals(kind, "textNoteTypes", StringComparison.OrdinalIgnoreCase))
+            {
+                collector.OfClass(typeof(TextNoteType));
+            }
+            else if (string.Equals(kind, "dimensionTypes", StringComparison.OrdinalIgnoreCase))
+            {
+                collector.OfClass(typeof(DimensionType));
+            }
+            else if (string.Equals(kind, "tagTypes", StringComparison.OrdinalIgnoreCase))
+            {
+                collector.OfClass(typeof(FamilySymbol));
+            }
             else
             {
                 collector.WhereElementIsElementType();
             }
 
             IEnumerable<Element> elements = collector.ToElements();
+            if (string.Equals(kind, "tagTypes", StringComparison.OrdinalIgnoreCase))
+            {
+                elements = elements.Where(IsTagFamilySymbol);
+            }
             if (targetElement != null)
             {
                 if (validTypeIds == null || validTypeIds.Count == 0)
@@ -3627,6 +3865,71 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return elements.Where(element => MatchesCatalogFilters(element, filter));
+        }
+
+        private static bool MatchesViewFilter(View view, Dictionary<string, object> filter)
+        {
+            IReadOnlyList<string> viewIds = GetStringList(filter, "viewIds");
+            if (viewIds.Count > 0 && !viewIds.Contains(ToElementIdString(view.Id), StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> uniqueIds = GetStringList(filter, "uniqueIds");
+            if (uniqueIds.Count > 0 && !uniqueIds.Contains(view.UniqueId, StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> viewTypes = GetStringList(filter, "viewTypes");
+            if (viewTypes.Count > 0 && !viewTypes.Contains(view.ViewType.ToString(), StringComparer.OrdinalIgnoreCase)) return false;
+
+            string nameContains = GetString(filter, "nameContains");
+            if (!string.IsNullOrWhiteSpace(nameContains) &&
+                (SafeElementName(view) ?? string.Empty).IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            bool? isTemplate = GetNullableBool(filter, "isTemplate");
+            if (isTemplate.HasValue && view.IsTemplate != isTemplate.Value) return false;
+
+            bool? isGraphical = GetNullableBool(filter, "isGraphical");
+            if (isGraphical.HasValue && IsGraphicalView(view) != isGraphical.Value) return false;
+
+            bool? canBePrinted = GetNullableBool(filter, "canBePrinted");
+            if (canBePrinted.HasValue && SafeCanBePrinted(view) != canBePrinted.Value) return false;
+
+            return true;
+        }
+
+        private static bool MatchesSheetFilter(Document document, ViewSheet sheet, Dictionary<string, object> filter)
+        {
+            IReadOnlyList<string> sheetIds = GetStringList(filter, "sheetIds");
+            if (sheetIds.Count > 0 && !sheetIds.Contains(ToElementIdString(sheet.Id), StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> uniqueIds = GetStringList(filter, "uniqueIds");
+            if (uniqueIds.Count > 0 && !uniqueIds.Contains(sheet.UniqueId, StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> numbers = GetStringList(filter, "numbers");
+            if (numbers.Count > 0 && !numbers.Contains(sheet.SheetNumber, StringComparer.OrdinalIgnoreCase)) return false;
+
+            string numberContains = GetString(filter, "numberContains");
+            if (!string.IsNullOrWhiteSpace(numberContains) &&
+                (sheet.SheetNumber ?? string.Empty).IndexOf(numberContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            string nameContains = GetString(filter, "nameContains");
+            if (!string.IsNullOrWhiteSpace(nameContains) &&
+                (SafeElementName(sheet) ?? string.Empty).IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            IReadOnlyList<string> titleBlockIds = GetStringList(filter, "titleBlockIds");
+            if (titleBlockIds.Count > 0)
+            {
+                string[] sheetTitleBlockIds = GetSheetTitleBlockIds(document, sheet).ToArray();
+                if (!titleBlockIds.Any(id => sheetTitleBlockIds.Contains(id, StringComparer.OrdinalIgnoreCase))) return false;
+            }
+
+            return true;
         }
 
         private static bool MatchesCatalogFilters(Element element, Dictionary<string, object> filter)
@@ -4498,6 +4801,155 @@ namespace RevitMcpNext.Addin.Revit
             return item;
         }
 
+        private static Dictionary<string, object> BuildParameterTarget(
+            Document document,
+            Element element,
+            bool includeTypeParameters,
+            bool includeReadOnly,
+            bool includeValues,
+            string nameContains,
+            int parameterLimit)
+        {
+            var item = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(element.Id),
+                ["uniqueId"] = element.UniqueId,
+                ["class"] = element.GetType().Name,
+                ["name"] = SafeElementName(element)
+            };
+
+            if (element.Category != null) item["category"] = element.Category.Name;
+
+            ElementId typeId = element.GetTypeId();
+            Element typeElement = null;
+            if (IsValidElementId(typeId))
+            {
+                item["typeId"] = ToElementIdString(typeId);
+                typeElement = document.GetElement(typeId);
+                if (typeElement != null) item["typeName"] = SafeElementName(typeElement);
+            }
+
+            var parameters = new List<Dictionary<string, object>>();
+            AddParameterSummaries(parameters, element, "instance", includeReadOnly, includeValues, nameContains);
+
+            if (includeTypeParameters && typeElement != null && !string.Equals(ToElementIdString(typeElement.Id), ToElementIdString(element.Id), StringComparison.Ordinal))
+            {
+                AddParameterSummaries(parameters, typeElement, "type", includeReadOnly, includeValues, nameContains);
+            }
+
+            List<Dictionary<string, object>> ordered = parameters
+                .OrderBy(parameter => Convert.ToString(parameter["source"], CultureInfo.InvariantCulture), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(parameter => Convert.ToString(parameter["name"], CultureInfo.InvariantCulture), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            item["parameters"] = ordered.Take(parameterLimit).ToArray();
+            item["parameterCount"] = ordered.Count;
+            item["truncated"] = ordered.Count > parameterLimit;
+            return item;
+        }
+
+        private static void AddParameterSummaries(
+            List<Dictionary<string, object>> target,
+            Element element,
+            string source,
+            bool includeReadOnly,
+            bool includeValues,
+            string nameContains)
+        {
+            if (element == null || element.Parameters == null) return;
+
+            foreach (Parameter parameter in element.Parameters.Cast<Parameter>())
+            {
+                Dictionary<string, object> summary = BuildParameterSummary(parameter, source, includeValues);
+                string name = Convert.ToString(summary["name"], CultureInfo.InvariantCulture);
+                if (!includeReadOnly && GetBool(summary, "isReadOnly", false)) continue;
+                if (!string.IsNullOrWhiteSpace(nameContains) &&
+                    (name ?? string.Empty).IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                target.Add(summary);
+            }
+        }
+
+        private static Dictionary<string, object> BuildParameterSummary(Parameter parameter, string source, bool includeValues)
+        {
+            string name = parameter?.Definition?.Name ?? "(unnamed)";
+            var summary = new Dictionary<string, object>
+            {
+                ["name"] = name,
+                ["storageType"] = parameter == null ? "None" : parameter.StorageType.ToString(),
+                ["source"] = source,
+                ["isReadOnly"] = parameter?.IsReadOnly ?? true
+            };
+
+            if (parameter == null) return summary;
+
+            try
+            {
+                object hasValue = typeof(Parameter).GetProperty("HasValue")?.GetValue(parameter, null);
+                if (hasValue is bool hasValueBool) summary["hasValue"] = hasValueBool;
+            }
+            catch
+            {
+                // Older parameter flavors may not expose HasValue reliably.
+            }
+
+            try
+            {
+                object idValue = typeof(Parameter).GetProperty("Id")?.GetValue(parameter, null);
+                if (idValue is ElementId parameterId && IsValidElementId(parameterId))
+                {
+                    summary["definitionId"] = GetElementIdValue(parameterId).ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                // Parameter ids are unavailable for some built-in/internal parameter flavors.
+            }
+
+            try
+            {
+                object isShared = typeof(Parameter).GetProperty("IsShared")?.GetValue(parameter, null);
+                if (isShared is bool isSharedBool) summary["isShared"] = isSharedBool;
+            }
+            catch
+            {
+                // Not all parameter sources expose shared state.
+            }
+
+            ExternalDefinition externalDefinition = parameter.Definition as ExternalDefinition;
+            if (externalDefinition != null)
+            {
+                summary["guid"] = externalDefinition.GUID.ToString("D");
+            }
+
+            if (includeValues)
+            {
+                object value = ParameterValue(parameter);
+                summary["value"] = value;
+
+                if (parameter.StorageType == StorageType.ElementId)
+                {
+                    ElementId elementId = parameter.AsElementId();
+                    if (IsValidElementId(elementId)) summary["elementIdValue"] = ToElementIdString(elementId);
+                }
+
+                try
+                {
+                    string valueString = parameter.AsValueString();
+                    if (!string.IsNullOrWhiteSpace(valueString)) summary["valueString"] = valueString;
+                }
+                catch
+                {
+                    // Some storage types do not provide display strings.
+                }
+            }
+
+            return summary;
+        }
+
         private static Dictionary<string, object> GetOrCreateFields(Dictionary<string, object> item)
         {
             if (!item.TryGetValue("fields", out object existing) || !(existing is Dictionary<string, object> fields))
@@ -4642,6 +5094,147 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static string[] NormalizeViewFields(IReadOnlyList<string> requested, string preset, bool includeCropBox, List<BridgeWarning> warnings)
+        {
+            string[] defaults;
+            switch (preset)
+            {
+                case "idOnly":
+                    defaults = new[] { "id" };
+                    break;
+                case "sheetPlacement":
+                    defaults = new[] { "id", "uniqueId", "name", "type", "isGraphical", "isTemplate", "canBePrinted", "viewTemplateId" };
+                    break;
+                default:
+                    defaults = new[] { "id", "uniqueId", "name", "type", "isGraphical", "isTemplate", "canBePrinted", "scale", "detailLevel", "discipline" };
+                    break;
+            }
+
+            IReadOnlyList<string> source = requested.Count == 0 ? defaults : requested;
+            var normalized = new List<string>();
+            foreach (string rawField in source)
+            {
+                string field = rawField?.Trim();
+                if (string.IsNullOrWhiteSpace(field)) continue;
+                if (string.Equals(field, "cropBox", StringComparison.OrdinalIgnoreCase) && !includeCropBox)
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "CROP_BOX_NOT_INCLUDED",
+                        Message = "Field cropBox requires includeCropBox=true."
+                    });
+                    continue;
+                }
+
+                if (IsSupportedViewField(field) && !normalized.Contains(field, StringComparer.OrdinalIgnoreCase))
+                {
+                    normalized.Add(field);
+                }
+                else if (!IsSupportedViewField(field))
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "UNSUPPORTED_VIEW_FIELD",
+                        Message = "View field '" + field + "' is not supported by the current view projection."
+                    });
+                }
+            }
+
+            return normalized.Count == 0 ? new[] { "id" } : normalized.ToArray();
+        }
+
+        private static bool IsSupportedViewField(string field)
+        {
+            switch (field)
+            {
+                case "id":
+                case "uniqueId":
+                case "name":
+                case "type":
+                case "isGraphical":
+                case "isTemplate":
+                case "canBePrinted":
+                case "scale":
+                case "detailLevel":
+                case "discipline":
+                case "viewTemplateId":
+                case "viewTemplateName":
+                case "associatedLevelId":
+                case "associatedLevelName":
+                case "cropBoxActive":
+                case "cropBoxVisible":
+                case "cropBox":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string[] NormalizeSheetFields(IReadOnlyList<string> requested, string preset, bool includePlacedViews, List<BridgeWarning> warnings)
+        {
+            string[] defaults;
+            switch (preset)
+            {
+                case "idOnly":
+                    defaults = new[] { "id" };
+                    break;
+                case "placement":
+                    defaults = new[] { "id", "uniqueId", "sheetNumber", "name", "titleBlockIds", "placedViews" };
+                    break;
+                default:
+                    defaults = new[] { "id", "uniqueId", "sheetNumber", "name", "titleBlockIds" };
+                    break;
+            }
+
+            IReadOnlyList<string> source = requested.Count == 0 ? defaults : requested;
+            var normalized = new List<string>();
+            foreach (string rawField in source)
+            {
+                string field = rawField?.Trim();
+                if (string.IsNullOrWhiteSpace(field)) continue;
+                if (string.Equals(field, "placedViews", StringComparison.OrdinalIgnoreCase) && !includePlacedViews)
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "PLACED_VIEWS_NOT_INCLUDED",
+                        Message = "Field placedViews requires includePlacedViews=true."
+                    });
+                    continue;
+                }
+
+                if (IsSupportedSheetField(field) && !normalized.Contains(field, StringComparer.OrdinalIgnoreCase))
+                {
+                    normalized.Add(field);
+                }
+                else if (!IsSupportedSheetField(field))
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "UNSUPPORTED_SHEET_FIELD",
+                        Message = "Sheet field '" + field + "' is not supported by the current sheet projection."
+                    });
+                }
+            }
+
+            return normalized.Count == 0 ? new[] { "id" } : normalized.ToArray();
+        }
+
+        private static bool IsSupportedSheetField(string field)
+        {
+            switch (field)
+            {
+                case "id":
+                case "uniqueId":
+                case "sheetNumber":
+                case "name":
+                case "titleBlockIds":
+                case "placedViews":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static string[] NormalizeCatalogFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
         {
             string[] defaults;
@@ -4658,6 +5251,9 @@ namespace RevitMcpNext.Addin.Revit
                     break;
                 case "sheet":
                     defaults = new[] { "id", "class", "category", "builtInCategory", "name", "familyName", "familyId", "isActive" };
+                    break;
+                case "annotation":
+                    defaults = new[] { "id", "class", "category", "builtInCategory", "name", "familyName", "familyId" };
                     break;
                 default:
                     defaults = new[] { "id", "class", "category", "name", "familyName" };
@@ -4747,17 +5343,120 @@ namespace RevitMcpNext.Addin.Revit
             return summary;
         }
 
-        private static Dictionary<string, object> BuildViewSummary(View view)
+        private static Dictionary<string, object> BuildViewItem(Document document, View view, IReadOnlyList<string> fields, bool includeCropBox)
         {
-            bool canBePrinted = false;
+            Dictionary<string, object> full = BuildViewInfo(document, view, includeCropBox);
+            var item = new Dictionary<string, object> { ["id"] = ToElementIdString(view.Id) };
+
+            foreach (string field in fields)
+            {
+                if (string.Equals(field, "id", StringComparison.OrdinalIgnoreCase)) continue;
+                if (full.TryGetValue(field, out object value))
+                {
+                    item[field] = value;
+                }
+            }
+
+            return item;
+        }
+
+        private static Dictionary<string, object> BuildSheetItem(Document document, ViewSheet sheet, IReadOnlyList<string> fields, bool includePlacedViews)
+        {
+            var item = new Dictionary<string, object> { ["id"] = ToElementIdString(sheet.Id) };
+
+            foreach (string field in fields)
+            {
+                switch (field)
+                {
+                    case "id":
+                        break;
+                    case "uniqueId":
+                        item["uniqueId"] = sheet.UniqueId;
+                        break;
+                    case "sheetNumber":
+                        item["sheetNumber"] = sheet.SheetNumber;
+                        break;
+                    case "name":
+                        item["name"] = SafeElementName(sheet);
+                        break;
+                    case "titleBlockIds":
+                        item["titleBlockIds"] = GetSheetTitleBlockIds(document, sheet).ToArray();
+                        break;
+                    case "placedViews":
+                        if (includePlacedViews) item["placedViews"] = GetSheetPlacedViews(document, sheet).ToArray();
+                        break;
+                }
+            }
+
+            return item;
+        }
+
+        private static IEnumerable<string> GetSheetTitleBlockIds(Document document, ViewSheet sheet)
+        {
             try
             {
-                canBePrinted = view.CanBePrinted;
+                return new FilteredElementCollector(document, sheet.Id)
+                    .OfCategory(BuiltInCategory.OST_TitleBlocks)
+                    .WhereElementIsNotElementType()
+                    .ToElementIds()
+                    .Where(IsValidElementId)
+                    .Select(ToElementIdString)
+                    .ToArray();
             }
             catch
             {
-                canBePrinted = false;
+                return Array.Empty<string>();
             }
+        }
+
+        private static IEnumerable<Dictionary<string, object>> GetSheetPlacedViews(Document document, ViewSheet sheet)
+        {
+            ICollection<ElementId> viewportIds;
+            try
+            {
+                viewportIds = sheet.GetAllViewports();
+            }
+            catch
+            {
+                return Array.Empty<Dictionary<string, object>>();
+            }
+
+            var placedViews = new List<Dictionary<string, object>>();
+            foreach (ElementId viewportId in viewportIds)
+            {
+                Viewport viewport = document.GetElement(viewportId) as Viewport;
+                if (viewport == null) continue;
+                View view = document.GetElement(viewport.ViewId) as View;
+                var item = new Dictionary<string, object>
+                {
+                    ["viewportId"] = ToElementIdString(viewport.Id),
+                    ["viewId"] = ToElementIdString(viewport.ViewId)
+                };
+
+                if (view != null)
+                {
+                    item["viewName"] = SafeElementName(view);
+                    item["viewType"] = view.ViewType.ToString();
+                }
+
+                try
+                {
+                    item["center"] = PointValue(viewport.GetBoxCenter());
+                }
+                catch
+                {
+                    // Viewport center can be unavailable for unusual sheet contents.
+                }
+
+                placedViews.Add(item);
+            }
+
+            return placedViews;
+        }
+
+        private static Dictionary<string, object> BuildViewSummary(View view)
+        {
+            bool canBePrinted = SafeCanBePrinted(view);
 
             var summary = new Dictionary<string, object>
             {
@@ -5089,6 +5788,16 @@ namespace RevitMcpNext.Addin.Revit
                 BuiltInCategory.OST_ElectricalFixtures,
                 BuiltInCategory.OST_LightingFixtures,
                 BuiltInCategory.OST_SpecialityEquipment);
+        }
+
+        private static bool IsTagFamilySymbol(Element element)
+        {
+            if (!(element is FamilySymbol)) return false;
+
+            string builtInCategory = GetBuiltInCategoryName(element);
+            string categoryName = element.Category?.Name ?? string.Empty;
+            return builtInCategory.IndexOf("Tag", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   categoryName.IndexOf("Tag", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsBuiltInCategory(Element element, params BuiltInCategory[] categories)

@@ -459,6 +459,8 @@ if ($sourceMode -eq "package") {
 }
 
 $brokerEntrySource | Out-Null
+$brokerCtlSource = Resolve-RequiredFile (Join-Path $brokerRuntimeDist "cli\revitctl.js") "Broker revitctl entry point is missing."
+$brokerCtlSource | Out-Null
 
 $installedBroker = Join-Path $InstallRoot "broker"
 $installedContracts = Join-Path $InstallRoot "contracts"
@@ -466,6 +468,7 @@ $installedAddin = Join-Path $InstallRoot "addin"
 $installedIntegrations = Join-Path $InstallRoot "integrations"
 $installedBrokerDist = Join-Path $installedBroker "dist"
 $installedBrokerEntry = Join-Path $installedBroker "dist\src\index.js"
+$installedRevitCtlEntry = Join-Path $installedBroker "dist\src\cli\revitctl.js"
 
 if (-not $DryRun) {
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
@@ -528,6 +531,7 @@ if (-not [string]::IsNullOrWhiteSpace($packagedNodeModules)) {
 }
 
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
+$revitCtlLauncher = Join-Path $InstallRoot "revitctl.cmd"
 $authConfig = Join-Path $InstallRoot "config\auth.env"
 $clientDiscovery = Join-Path $InstallRoot "config\client-discovery.json"
 $authConfigState = Ensure-AuthTokenConfig $authConfig
@@ -553,6 +557,28 @@ if ($DryRun) {
     Set-PrivatePathAcl $launcher | Out-Null
 }
 
+$revitCtlContent = @"
+@echo off
+setlocal
+set "REVIT_MCP_NEXT_PIPE=revit-mcp-next"
+set "REVIT_MCP_NEXT_VERSION=$releaseVersion"
+set "REVIT_MCP_NEXT_AUTH_CONFIG=$authConfig"
+for /f "usebackq tokens=1,* delims==" %%A in ("%REVIT_MCP_NEXT_AUTH_CONFIG%") do if /i "%%A"=="REVIT_MCP_NEXT_AUTH_TOKEN" set "REVIT_MCP_NEXT_AUTH_TOKEN=%%B"
+if not defined REVIT_MCP_NEXT_AUTH_TOKEN (
+  echo Revit MCP Next auth token config is missing or invalid at %REVIT_MCP_NEXT_AUTH_CONFIG%. 1>&2
+  exit /b 126
+)
+"$nodeExe" "$installedRevitCtlEntry" --discovery "$clientDiscovery" --auth-config "$authConfig" %*
+exit /b %ERRORLEVEL%
+"@
+
+if ($DryRun) {
+    Write-Step "Would write revitctl launcher: $revitCtlLauncher"
+} else {
+    Set-Content -LiteralPath $revitCtlLauncher -Value $revitCtlContent -Encoding ASCII
+    Set-PrivatePathAcl $revitCtlLauncher | Out-Null
+}
+
 $clientDiscoveryContent = [ordered] @{
     schemaVersion = 1
     product = "revit-mcp-next"
@@ -562,6 +588,7 @@ $clientDiscoveryContent = [ordered] @{
     pipeName = "revit-mcp-next"
     addinClientId = $addinClientId
     launcherPath = (Get-FullPath $launcher)
+    revitctlPath = (Get-FullPath $revitCtlLauncher)
     authConfigPath = (Get-FullPath $authConfig)
     brokerEntryPath = (Get-FullPath $installedBrokerEntry)
     addinAssemblyPath = (Get-FullPath (Join-Path $installedAddin "RevitMcpNext.Addin.dll"))
@@ -577,6 +604,8 @@ $clientDiscoveryContent = [ordered] @{
         "revit.status",
         "revit.list_documents",
         "revit.get_levels",
+        "revit.get_views",
+        "revit.get_sheets",
         "revit.get_current_view",
         "revit.get_current_view_elements",
         "revit.get_selection",
@@ -586,11 +615,12 @@ $clientDiscoveryContent = [ordered] @{
         "revit.get_rooms",
         "revit.catalog",
         "revit.query",
+        "revit.describe_parameters",
         "revit.preview_change_set",
         "revit.apply_change_set",
         "revit.cancel_request"
     )
-    catalogKinds = @("elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes")
+    catalogKinds = @("elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes", "textNoteTypes", "dimensionTypes", "tagTypes")
     writeOperations = @(
         "set_parameter",
         "create_level",

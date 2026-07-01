@@ -18,6 +18,8 @@ import type {
   ModelReadinessResult,
   ModelStatisticsRequest,
   ModelStatisticsResult,
+  ParameterDescribeRequest,
+  ParameterDescribeResult,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
@@ -26,6 +28,10 @@ import type {
   RoomsResult,
   ScopedElementListRequest,
   ScopedElementListResult,
+  SheetsRequest,
+  SheetsResult,
+  ViewsRequest,
+  ViewsResult,
 } from "@revit-mcp-next/contracts";
 
 export interface RevitBridgeClient {
@@ -41,6 +47,14 @@ export interface RevitBridgeClient {
     request: BridgeRequest<{ documentFingerprint?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<LevelSummary[]>>;
+  getViews(
+    request: BridgeRequest<ViewsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ViewsResult>>;
+  getSheets(
+    request: BridgeRequest<SheetsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<SheetsResult>>;
   getCurrentView(
     request: BridgeRequest<CurrentViewRequest>,
     options?: BridgeCallOptions
@@ -73,6 +87,10 @@ export interface RevitBridgeClient {
     request: BridgeRequest<QueryRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>>;
+  describeParameters(
+    request: BridgeRequest<ParameterDescribeRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ParameterDescribeResult>>;
   catalog(
     request: BridgeRequest<CatalogRequest>,
     options?: BridgeCallOptions

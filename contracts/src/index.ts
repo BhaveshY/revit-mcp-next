@@ -182,6 +182,62 @@ export interface QueryResult {
   source: string;
 }
 
+export type ParameterSource = "instance" | "type";
+
+export interface ParameterSummary {
+  name: string;
+  storageType: "Double" | "Integer" | "String" | "ElementId" | "None" | string;
+  source: ParameterSource;
+  isReadOnly: boolean;
+  hasValue?: boolean;
+  value?: string | number | boolean | null;
+  valueString?: string;
+  elementIdValue?: ElementId;
+  definitionId?: string;
+  isShared?: boolean;
+  guid?: string;
+}
+
+export interface ParameterTargetSummary {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  category?: string;
+  class?: string;
+  name?: string;
+  typeId?: ElementId;
+  typeName?: string;
+  parameters: ParameterSummary[];
+  parameterCount: number;
+  truncated: boolean;
+}
+
+export interface ParameterDescribeRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter: QueryFilter;
+  includeTypeParameters?: boolean;
+  includeReadOnly?: boolean;
+  includeValues?: boolean;
+  nameContains?: string;
+  limit?: number;
+  cursor?: string;
+  parameterLimit?: number;
+  includeTotalCount?: boolean;
+}
+
+export interface ParameterDescribeResult {
+  document: DocumentReference;
+  items: ParameterTargetSummary[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  parameterLimit: number;
+  scope: string;
+  source: string;
+}
+
 export interface DocumentReference {
   fingerprint: string;
   title: string;
@@ -209,6 +265,109 @@ export interface CurrentViewResult {
       max: Point3;
     };
   };
+  source: string;
+}
+
+export type ViewPreset = "idOnly" | "summary" | "sheetPlacement";
+
+export interface ViewsFilter {
+  viewIds?: ElementId[];
+  uniqueIds?: UniqueId[];
+  viewTypes?: string[];
+  nameContains?: string;
+  isTemplate?: boolean;
+  isGraphical?: boolean;
+  canBePrinted?: boolean;
+}
+
+export interface ViewsRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: ViewsFilter;
+  fields?: string[];
+  preset?: ViewPreset;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+  includeCropBox?: boolean;
+}
+
+export interface ViewsResult {
+  document: DocumentReference;
+  items: Array<
+    RevitViewSummary & {
+      viewTemplateId?: ElementId;
+      viewTemplateName?: string;
+      associatedLevelId?: ElementId;
+      associatedLevelName?: string;
+      cropBoxActive?: boolean;
+      cropBoxVisible?: boolean;
+      cropBox?: {
+        min: Point3;
+        max: Point3;
+      };
+    }
+  >;
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  fields: string[];
+  scope: string;
+  source: string;
+}
+
+export type SheetPreset = "idOnly" | "summary" | "placement";
+
+export interface SheetsFilter {
+  sheetIds?: ElementId[];
+  uniqueIds?: UniqueId[];
+  numbers?: string[];
+  numberContains?: string;
+  nameContains?: string;
+  titleBlockIds?: ElementId[];
+}
+
+export interface SheetPlacedView {
+  viewportId: ElementId;
+  viewId: ElementId;
+  viewName?: string;
+  viewType?: string;
+  center?: Point3;
+}
+
+export interface SheetSummary {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  sheetNumber?: string;
+  name?: string;
+  titleBlockIds?: ElementId[];
+  placedViews?: SheetPlacedView[];
+}
+
+export interface SheetsRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: SheetsFilter;
+  fields?: string[];
+  preset?: SheetPreset;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+  includePlacedViews?: boolean;
+}
+
+export interface SheetsResult {
+  document: DocumentReference;
+  items: SheetSummary[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  fields: string[];
+  scope: string;
   source: string;
 }
 
@@ -374,8 +533,15 @@ export interface RoomsResult {
   source: string;
 }
 
-export type CatalogKind = "elementTypes" | "familySymbols" | "titleBlocks" | "viewFamilyTypes";
-export type CatalogPreset = "idOnly" | "compact" | "typeChange" | "placement" | "sheet";
+export type CatalogKind =
+  | "elementTypes"
+  | "familySymbols"
+  | "titleBlocks"
+  | "viewFamilyTypes"
+  | "textNoteTypes"
+  | "dimensionTypes"
+  | "tagTypes";
+export type CatalogPreset = "idOnly" | "compact" | "typeChange" | "placement" | "sheet" | "annotation";
 
 export type CatalogScalar = string | number | boolean;
 

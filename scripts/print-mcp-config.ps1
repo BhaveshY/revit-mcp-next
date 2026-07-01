@@ -86,6 +86,7 @@ function Assert-DiscoveryMatchesInstallRoot($Discovery, $Root) {
 
     foreach ($entry in @(
         @{ Name = "launcherPath"; Value = [string] $Discovery.launcherPath },
+        @{ Name = "revitctlPath"; Value = [string] $Discovery.revitctlPath },
         @{ Name = "authConfigPath"; Value = [string] $Discovery.authConfigPath },
         @{ Name = "brokerEntryPath"; Value = [string] $Discovery.brokerEntryPath },
         @{ Name = "pythonClientPath"; Value = [string] $Discovery.pythonClientPath },
@@ -132,6 +133,13 @@ function New-ConfigPayload($Discovery) {
     if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
         throw "Configured launcher was not found: $launcherPath"
     }
+    $revitCtlPath = ""
+    if (-not [string]::IsNullOrWhiteSpace([string] $Discovery.revitctlPath)) {
+        $revitCtlPath = Get-FullPath ([string] $Discovery.revitctlPath)
+        if (-not (Test-Path -LiteralPath $revitCtlPath -PathType Leaf)) {
+            throw "Configured revitctl launcher was not found: $revitCtlPath"
+        }
+    }
 
     $claudeCode = "claude mcp add --scope user revit-mcp-next -- cmd /c `"$launcherPath`""
     $claudeDesktop = New-ClaudeDesktopConfig $launcherPath
@@ -146,6 +154,7 @@ function New-ConfigPayload($Discovery) {
         version = [string] $Discovery.version
         installRoot = [string] $Discovery.installRoot
         launcherPath = $launcherPath
+        revitctlPath = $revitCtlPath
         claudeCode = $claudeCode
         claudeDesktop = $claudeDesktop
         codexToml = $codexToml
@@ -168,6 +177,12 @@ function Write-TextConfig($Payload) {
     if ($Client -eq "all" -or $Client -eq "codex") {
         Write-Host "Codex config.toml entry:"
         Write-Host $Payload.codexToml
+        Write-Host ""
+    }
+
+    if ($Client -eq "all" -and -not [string]::IsNullOrWhiteSpace([string] $Payload.revitctlPath)) {
+        Write-Host "Internal debug CLI:"
+        Write-Host "cmd /c `"$($Payload.revitctlPath)`" status --pretty"
         Write-Host ""
     }
 }

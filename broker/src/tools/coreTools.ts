@@ -56,9 +56,67 @@ const querySchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const parameterDescribeSchema = {
+  ...documentGuardSchema,
+  filter: queryFilterSchema.describe("Revit-native filters for elements whose parameters should be described. Prefer explicit elementIds, selectionOnly, or tight category/class filters."),
+  includeTypeParameters: z.boolean().default(true),
+  includeReadOnly: z.boolean().default(true),
+  includeValues: z.boolean().default(true),
+  nameContains: z.string().min(1).max(128).optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+  cursor: z.string().optional(),
+  parameterLimit: z.number().int().min(1).max(200).default(80),
+  includeTotalCount: z.boolean().default(false),
+};
+
 const currentViewSchema = {
   ...documentGuardSchema,
   includeCropBox: z.boolean().default(false).describe("Include active view crop box bounds when Revit exposes them."),
+};
+
+const viewFilterSchema = z
+  .object({
+    viewIds: z.array(boundedId).max(256).optional(),
+    uniqueIds: z.array(boundedString).max(256).optional(),
+    viewTypes: z.array(boundedString).max(32).optional().describe("Revit ViewType names such as FloorPlan, CeilingPlan, ThreeD, Section, or DraftingView."),
+    nameContains: z.string().min(1).max(128).optional(),
+    isTemplate: z.boolean().optional(),
+    isGraphical: z.boolean().optional(),
+    canBePrinted: z.boolean().optional(),
+  })
+  .strict();
+
+const viewsSchema = {
+  ...documentGuardSchema,
+  filter: viewFilterSchema.optional(),
+  fields: z.array(boundedString).max(32).optional(),
+  preset: z.enum(["idOnly", "summary", "sheetPlacement"]).default("summary"),
+  includeCropBox: z.boolean().default(false),
+  limit: z.number().int().min(1).max(500).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+};
+
+const sheetFilterSchema = z
+  .object({
+    sheetIds: z.array(boundedId).max(256).optional(),
+    uniqueIds: z.array(boundedString).max(256).optional(),
+    numbers: z.array(z.string().min(1).max(64)).max(256).optional(),
+    numberContains: z.string().min(1).max(64).optional(),
+    nameContains: z.string().min(1).max(128).optional(),
+    titleBlockIds: z.array(boundedId).max(256).optional(),
+  })
+  .strict();
+
+const sheetsSchema = {
+  ...documentGuardSchema,
+  filter: sheetFilterSchema.optional(),
+  fields: z.array(boundedString).max(32).optional(),
+  preset: z.enum(["idOnly", "summary", "placement"]).default("summary"),
+  includePlacedViews: z.boolean().default(false),
+  limit: z.number().int().min(1).max(500).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
 };
 
 const scopedElementListSchema = {
@@ -172,11 +230,11 @@ const catalogFilterSchema = z
   .strict();
 
 const catalogSchema = {
-  kind: z.enum(["elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes"]),
+  kind: z.enum(["elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes", "textNoteTypes", "dimensionTypes", "tagTypes"]),
   documentFingerprint: boundedString.optional().describe("Optional active document fingerprint from revit.status."),
   expectedGeneration: generationSchema.optional().describe("Expected active document generation from revit.status."),
   filter: catalogFilterSchema.optional().describe("Filters for compact Revit catalog discovery."),
-  preset: z.enum(["idOnly", "compact", "typeChange", "placement", "sheet"]).default("compact"),
+  preset: z.enum(["idOnly", "compact", "typeChange", "placement", "sheet", "annotation"]).default("compact"),
   fields: z.array(boundedString).max(32).optional().describe("Optional catalog fields. Use param:<name> for explicit parameters."),
   limit: z.number().int().min(1).max(200).default(50),
   cursor: z.string().optional(),
@@ -467,6 +525,80 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
   );
 
   server.registerTool(
+    "revit.get_views",
+    {
+      title: "Get Revit Views",
+      description:
+        "Return compact, paginated Revit view inventory for view/sheet planning. Filter by view type, name, template state, graphical state, or exact IDs.",
+      inputSchema: viewsSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        fields: args.fields,
+        preset: args.preset ?? "summary",
+        includeCropBox: args.includeCropBox ?? false,
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_views", "read", payload, 30000);
+      const response = await context.bridge.getViews(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} Revit view(s) returned.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_sheets",
+    {
+      title: "Get Revit Sheets",
+      description:
+        "Return compact, paginated Revit sheet inventory with sheet numbers, names, title block IDs, and optional placed views.",
+      inputSchema: sheetsSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        fields: args.fields,
+        preset: args.preset ?? "summary",
+        includePlacedViews: args.includePlacedViews ?? false,
+        limit: args.limit ?? 50,
+        cursor: args.cursor,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_sheets", "read", payload, 30000);
+      const response = await context.bridge.getSheets(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} Revit sheet(s) returned.`
+      );
+    }
+  );
+
+  server.registerTool(
     "revit.get_current_view",
     {
       title: "Get Current Revit View",
@@ -696,7 +828,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Revit Catalog",
       description:
-        "Return compact Revit catalog IDs for safe writes: element types, family symbols, title blocks, and view family types. Use kind=elementTypes with filter.forElementId before change_element_type.",
+        "Return compact Revit catalog IDs for safe writes and discovery: element types, family symbols, title blocks, view family types, and annotation type catalogs. Use kind=elementTypes with filter.forElementId before change_element_type.",
       inputSchema: catalogSchema,
       outputSchema: toolOutputSchema,
       annotations: {
@@ -758,6 +890,45 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         response,
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} item(s) returned from ${result.scope}.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.describe_parameters",
+    {
+      title: "Describe Revit Parameters",
+      description:
+        "Return bounded parameter metadata for targeted elements, including writable/read-only state, storage type, values, and optional type parameters. Use before set_parameter.",
+      inputSchema: parameterDescribeSchema,
+      outputSchema: toolOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter,
+        includeTypeParameters: args.includeTypeParameters ?? true,
+        includeReadOnly: args.includeReadOnly ?? true,
+        includeValues: args.includeValues ?? true,
+        nameContains: args.nameContains,
+        limit: args.limit ?? 20,
+        cursor: args.cursor,
+        parameterLimit: args.parameterLimit ?? 80,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "describe_parameters", "read", payload, 30000);
+      const response = await context.bridge.describeParameters(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} element parameter set(s) returned from ${result.scope}.`
       );
     }
   );

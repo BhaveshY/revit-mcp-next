@@ -7,14 +7,38 @@ These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP cl
 Use this sequence when the user asks what is in the model, what is selected, or what needs cleanup:
 
 1. `revit.status` for connection, Revit version, active document, and generation.
-2. `revit.get_current_view` for view type, scale, and crop state.
-3. `revit.get_current_view_elements` with `preset: "summary"`, a low `limit`, and `includeTotalCount: true`.
-4. `revit.get_selection` when the user references selected elements.
-5. `revit.analyze_model` for category, class, and level distribution.
-6. `revit.get_material_quantities` for bounded material takeoff.
-7. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
+2. `revit.get_views` and `revit.get_sheets` when the task mentions documentation, sheets, view placement, templates, or drawing organization.
+3. `revit.get_current_view` for view type, scale, and crop state.
+4. `revit.get_current_view_elements` with `preset: "summary"`, a low `limit`, and `includeTotalCount: true`.
+5. `revit.get_selection` when the user references selected elements.
+6. `revit.analyze_model` for category, class, and level distribution.
+7. `revit.get_material_quantities` for bounded material takeoff.
+8. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
 
 Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed.
+
+## View And Sheet Planning
+
+Use this sequence when the user asks what sheets/views exist, which views are placed, or what documentation setup is available:
+
+1. `revit.status` for active document fingerprint and generation.
+2. `revit.get_views` with `filter.isTemplate: false`, a low `limit`, and `includeTotalCount: true`.
+3. `revit.get_sheets` with `includePlacedViews: true` when the task involves sheet composition.
+4. `revit.catalog` with `kind: "titleBlocks"` and `preset: "sheet"` when sheet creation or title block availability matters.
+5. `revit.catalog` with `kind: "viewFamilyTypes"` when plan/section/elevation view creation is being evaluated.
+
+The current release exposes view/sheet inventory and discovery. Sheet/view creation operations should still be treated as roadmap work unless a later release adds them to `preview_change_set`.
+
+## Annotation Planning
+
+Use this sequence when the user asks about tags, text notes, or dimensions:
+
+1. `revit.status` and `revit.get_current_view` to confirm the active view is graphical and not a template.
+2. `revit.catalog` with `kind: "textNoteTypes"` and `preset: "annotation"` for text note styles.
+3. `revit.catalog` with `kind: "dimensionTypes"` and `preset: "annotation"` for dimension styles.
+4. `revit.catalog` with `kind: "tagTypes"` and `preset: "annotation"` for available tag symbols.
+
+The current release exposes annotation type discovery. Creating tags, text notes, and dimensions should remain roadmap work until those operations are available through `preview_change_set`.
 
 ## Walls, Floor, And Room
 
@@ -79,8 +103,9 @@ For selected edits:
 
 1. Call `revit.get_selection`.
 2. Call `revit.query` with `filter.elementIds` and explicit fields such as `id`, `uniqueId`, `category`, `class`, `name`, `typeId`, and target parameter fields.
-3. For type changes, call `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"`.
-4. Preview `set_parameter` or `change_element_type`.
+3. Call `revit.describe_parameters` for the target element IDs before `set_parameter`; prefer writable instance parameters unless the user explicitly asks for type-level changes.
+4. For type changes, call `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"`.
+5. Preview `set_parameter` or `change_element_type`.
 
 ```json
 {
