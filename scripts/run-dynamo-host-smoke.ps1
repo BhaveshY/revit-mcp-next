@@ -53,11 +53,31 @@ function Resolve-OptionalFile($Path, $Label) {
 }
 
 function Get-DefaultInstallRoot {
-    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        throw "LOCALAPPDATA is not set. Pass -InstallRoot with the installed Revit MCP Next root."
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $candidates.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext")) | Out-Null
     }
 
-    return Join-Path $env:LOCALAPPDATA "RevitMcpNext"
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "RevitMcpNext")) | Out-Null
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            return (Get-FullPath $candidate)
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return Join-Path $env:LOCALAPPDATA "RevitMcpNext"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        return Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext"
+    }
+
+    throw "APPDATA and LOCALAPPDATA are not set. Pass -InstallRoot with the installed Revit MCP Next root."
 }
 
 function Get-DefaultEvidencePath {

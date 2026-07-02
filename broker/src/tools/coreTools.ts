@@ -316,6 +316,33 @@ const placeFamilyInstanceOperationSchema = operationBaseSchema
     allowPinnedHost: z.boolean().optional().describe("Allow hosted placement on a pinned wall after explicit review. Defaults to false."),
   })
   .strict();
+const createSheetOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_sheet"),
+    sheetNumber: z.string().min(1).max(64).describe("Unique Revit sheet number, such as A-101."),
+    name: z.string().min(1).max(256).optional().describe("Optional sheet name/title."),
+    titleBlockTypeId: boundedId.optional().describe("Optional title block type ID from revit.catalog kind=titleBlocks preset=sheet."),
+  })
+  .strict();
+const placeViewOnSheetOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("place_view_on_sheet"),
+    sheetId: boundedId.describe("Target ViewSheet element ID."),
+    viewId: boundedId.describe("View ID to place. Use revit.get_views and avoid templates, schedules, legends, or views already placed."),
+    center: changePoint2Schema.describe("Viewport center on the sheet in sheet coordinates with explicit units."),
+  })
+  .strict();
+const createTextNoteOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_text_note"),
+    viewId: boundedId.describe("Graphical target view ID. Use revit.get_views first."),
+    text: z.string().min(1).max(2048).describe("Text note body."),
+    position: changePoint3Schema.describe("Text note insertion point with explicit units."),
+    textNoteTypeId: boundedId.optional().describe("Optional text note type ID from revit.catalog kind=textNoteTypes preset=annotation."),
+    width: changeUnitValueSchema.optional().describe("Optional wrapping width. Omit for an unwrapped note."),
+    rotation: changeAngleValueSchema.optional().describe("Optional rotation in the target view."),
+  })
+  .strict();
 const moveElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("move_element"),
@@ -400,6 +427,9 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   createLevelOperationSchema,
   createWallOperationSchema,
   placeFamilyInstanceOperationSchema,
+  createSheetOperationSchema,
+  placeViewOnSheetOperationSchema,
+  createTextNoteOperationSchema,
   moveElementOperationSchema,
   rotateElementOperationSchema,
   copyElementOperationSchema,
@@ -938,7 +968,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {

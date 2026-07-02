@@ -59,7 +59,7 @@ Acceptance criteria for this slice:
 - Signing happens before final checksum and zip evidence is captured, or the release process regenerates those files after signing.
 - Release evidence captures package metadata, checksums, signing status, validation output, install diagnostics, support bundle output, and live-smoke output for one build.
 - Live-smoke evidence includes `smoke-summary.json` with `status: "passed"`; failed or missing summaries are rejected by the evidence collector.
-- Hosted pyRevit/Dynamo evidence includes `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries; failed or missing summaries are rejected by the evidence collector unless an explicit skip reason is supplied.
+- Hosted pyRevit/Dynamo evidence includes `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries; failed or missing summaries are rejected by the evidence collector unless an explicit skip reason is supplied. When hosted evidence is captured, release evidence also verifies each host's loaded `RevitMcpNext.Addin.dll` SHA-256 against the package manifest.
 - A manual self-hosted Revit live-smoke workflow is run for release candidates and its artifacts are archived with the release evidence.
 
 Recommended release evidence:

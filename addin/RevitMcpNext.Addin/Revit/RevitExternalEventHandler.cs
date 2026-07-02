@@ -1075,6 +1075,9 @@ namespace RevitMcpNext.Addin.Revit
                     string.Equals(operationType, "create_floor", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_room", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "place_family_instance", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_sheet", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "place_view_on_sheet", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_text_note", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "copy_element", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1262,6 +1265,12 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewCreateRoom(document, operation, index, validationContext);
                 case "place_family_instance":
                     return PreviewPlaceFamilyInstance(document, operation, index);
+                case "create_sheet":
+                    return PreviewCreateSheet(document, operation, index, validationContext);
+                case "place_view_on_sheet":
+                    return PreviewPlaceViewOnSheet(document, operation, index);
+                case "create_text_note":
+                    return PreviewCreateTextNote(document, operation, index);
                 case "delete_element":
                     return PreviewDeleteElement(document, operation, index);
                 default:
@@ -1298,6 +1307,12 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyCreateRoom(document, operation, index);
                 case "place_family_instance":
                     return ApplyPlaceFamilyInstance(document, operation, index);
+                case "create_sheet":
+                    return ApplyCreateSheet(document, operation, index);
+                case "place_view_on_sheet":
+                    return ApplyPlaceViewOnSheet(document, operation, index);
+                case "create_text_note":
+                    return ApplyCreateTextNote(document, operation, index);
                 case "delete_element":
                     return ApplyDeleteElement(document, operation, index);
                 default:
@@ -1842,6 +1857,261 @@ namespace RevitMcpNext.Addin.Revit
                 target: ElementTarget(created, null),
                 before: null,
                 after: snapshot);
+        }
+
+        private static Dictionary<string, object> PreviewCreateSheet(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
+        {
+            string sheetNumber = NormalizeOptionalText(GetString(operation, "sheetNumber"));
+            if (string.IsNullOrWhiteSpace(sheetNumber)) return BlockedChange(operation, index, "create_sheet requires sheetNumber.");
+            if (SheetNumberExists(document, sheetNumber)) return BlockedChange(operation, index, "A sheet numbered '" + sheetNumber + "' already exists.");
+            if (validationContext != null && !validationContext.TryAddSheetNumber(sheetNumber))
+            {
+                return BlockedChange(operation, index, "The change set creates duplicate sheet number '" + sheetNumber + "'.");
+            }
+
+            FamilySymbol titleBlockType = null;
+            string titleBlockTypeId = GetString(operation, "titleBlockTypeId");
+            if (!string.IsNullOrWhiteSpace(titleBlockTypeId))
+            {
+                titleBlockType = ResolveTitleBlockType(document, titleBlockTypeId);
+                if (titleBlockType == null) return BlockedChange(operation, index, "Title block type " + titleBlockTypeId + " was not found.");
+            }
+
+            var target = new Dictionary<string, object>
+            {
+                ["document"] = document.Title,
+                ["sheetNumber"] = sheetNumber
+            };
+            if (titleBlockType != null) target["titleBlockType"] = ElementSummary(document, titleBlockType);
+
+            var after = new Dictionary<string, object>
+            {
+                ["sheetNumber"] = sheetNumber,
+                ["name"] = NormalizeOptionalText(GetString(operation, "name"))
+            };
+            if (titleBlockType != null)
+            {
+                after["titleBlockTypeId"] = ToElementIdString(titleBlockType.Id);
+                after["titleBlockTypeName"] = SafeElementName(titleBlockType);
+            }
+
+            return Change(operation, index, "ready", target, before: null, after: after);
+        }
+
+        private static Dictionary<string, object> ApplyCreateSheet(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateSheet(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_sheet preview failed.");
+            }
+
+            FamilySymbol titleBlockType = ResolveTitleBlockType(document, GetString(operation, "titleBlockTypeId"));
+            ElementId titleBlockTypeId = titleBlockType == null ? ElementId.InvalidElementId : titleBlockType.Id;
+            ViewSheet sheet = ViewSheet.Create(document, titleBlockTypeId);
+            if (sheet == null)
+            {
+                throw new InvalidOperationException("Revit did not create a sheet.");
+            }
+
+            sheet.SheetNumber = NormalizeOptionalText(GetString(operation, "sheetNumber"));
+            string name = NormalizeOptionalText(GetString(operation, "name"));
+            if (!string.IsNullOrWhiteSpace(name)) sheet.Name = name;
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(sheet, null),
+                before: null,
+                after: SheetSnapshot(document, sheet));
+        }
+
+        private static Dictionary<string, object> PreviewPlaceViewOnSheet(Document document, Dictionary<string, object> operation, int index)
+        {
+            string sheetId = GetString(operation, "sheetId");
+            string viewId = GetString(operation, "viewId");
+            Dictionary<string, object> centerValue = GetDictionary(operation, "center");
+            if (string.IsNullOrWhiteSpace(sheetId)) return BlockedChange(operation, index, "place_view_on_sheet requires sheetId.");
+            if (string.IsNullOrWhiteSpace(viewId)) return BlockedChange(operation, index, "place_view_on_sheet requires viewId.");
+            if (centerValue == null) return BlockedChange(operation, index, "place_view_on_sheet requires center.");
+
+            ViewSheet sheet = ResolveElement(document, sheetId) as ViewSheet;
+            if (sheet == null) return BlockedChange(operation, index, "Sheet " + sheetId + " was not found.");
+
+            View view = ResolveElement(document, viewId) as View;
+            if (view == null) return BlockedChange(operation, index, "View " + viewId + " was not found.");
+            if (view is ViewSheet) return BlockedChange(operation, index, "place_view_on_sheet cannot place a sheet on a sheet.");
+            if (view.IsTemplate) return BlockedChange(operation, index, "View " + viewId + " is a template and cannot be placed on a sheet.");
+
+            XYZ center;
+            try
+            {
+                center = ToInternalSheetPoint(centerValue, "center");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            bool canAdd;
+            try
+            {
+                canAdd = Viewport.CanAddViewToSheet(document, sheet.Id, view.Id);
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, "Revit could not validate sheet placement: " + ex.Message);
+            }
+
+            if (!canAdd)
+            {
+                return BlockedChange(operation, index, "View " + viewId + " cannot be placed on sheet " + sheetId + ". It may already be placed, be unsupported, or be incompatible with viewport placement.");
+            }
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["sheet"] = SheetSnapshot(document, sheet),
+                    ["view"] = BuildViewSummary(view)
+                },
+                before: null,
+                after: new Dictionary<string, object>
+                {
+                    ["sheetId"] = ToElementIdString(sheet.Id),
+                    ["viewId"] = ToElementIdString(view.Id),
+                    ["center"] = PointValue(center)
+                });
+        }
+
+        private static Dictionary<string, object> ApplyPlaceViewOnSheet(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewPlaceViewOnSheet(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "place_view_on_sheet preview failed.");
+            }
+
+            ViewSheet sheet = ResolveElement(document, GetString(operation, "sheetId")) as ViewSheet;
+            View view = ResolveElement(document, GetString(operation, "viewId")) as View;
+            XYZ center = ToInternalSheetPoint(GetDictionary(operation, "center"), "center");
+            Viewport viewport = Viewport.Create(document, sheet.Id, view.Id, center);
+            if (viewport == null)
+            {
+                throw new InvalidOperationException("Revit did not create a viewport for place_view_on_sheet.");
+            }
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(viewport, null),
+                before: null,
+                after: ViewportSnapshot(document, viewport));
+        }
+
+        private static Dictionary<string, object> PreviewCreateTextNote(Document document, Dictionary<string, object> operation, int index)
+        {
+            string viewId = GetString(operation, "viewId");
+            string text = GetString(operation, "text");
+            Dictionary<string, object> positionValue = GetDictionary(operation, "position");
+            if (string.IsNullOrWhiteSpace(viewId)) return BlockedChange(operation, index, "create_text_note requires viewId.");
+            if (string.IsNullOrWhiteSpace(text)) return BlockedChange(operation, index, "create_text_note requires text.");
+            if (text.Length > 2048) return BlockedChange(operation, index, "create_text_note text can contain at most 2048 characters.");
+            if (positionValue == null) return BlockedChange(operation, index, "create_text_note requires position.");
+
+            View view = ResolveElement(document, viewId) as View;
+            string viewError = ValidateTextNoteView(view);
+            if (!string.IsNullOrWhiteSpace(viewError)) return BlockedChange(operation, index, viewError);
+
+            TextNoteType textNoteType = ResolveTextNoteType(document, GetString(operation, "textNoteTypeId"));
+            if (textNoteType == null) return BlockedChange(operation, index, "A usable TextNoteType was not found.");
+
+            XYZ position;
+            double? width = null;
+            double rotationRadians = 0;
+            bool hasRotation = false;
+            try
+            {
+                position = ToInternalPoint(positionValue, "position");
+                Dictionary<string, object> widthValue = GetDictionary(operation, "width");
+                if (widthValue != null)
+                {
+                    width = ToInternalLength(widthValue, "width");
+                    if (width.Value <= 0) return BlockedChange(operation, index, "create_text_note width must be greater than zero.");
+                }
+
+                Dictionary<string, object> rotationValue = GetDictionary(operation, "rotation");
+                if (rotationValue != null)
+                {
+                    rotationRadians = ToInternalAngle(rotationValue);
+                    if (!IsFinite(rotationRadians)) return BlockedChange(operation, index, "create_text_note rotation must be a finite angle.");
+                    hasRotation = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            var after = new Dictionary<string, object>
+            {
+                ["viewId"] = ToElementIdString(view.Id),
+                ["viewName"] = SafeElementName(view),
+                ["textNoteTypeId"] = ToElementIdString(textNoteType.Id),
+                ["textNoteTypeName"] = SafeElementName(textNoteType),
+                ["textLength"] = text.Length,
+                ["position"] = PointValue(position)
+            };
+            if (width.HasValue) after["width"] = LengthValue(width.Value);
+            if (hasRotation) after["rotation"] = AngleValue(rotationRadians);
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["view"] = BuildViewSummary(view),
+                    ["textNoteType"] = ElementSummary(document, textNoteType)
+                },
+                before: null,
+                after: after);
+        }
+
+        private static Dictionary<string, object> ApplyCreateTextNote(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateTextNote(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_text_note preview failed.");
+            }
+
+            View view = ResolveElement(document, GetString(operation, "viewId")) as View;
+            TextNoteType textNoteType = ResolveTextNoteType(document, GetString(operation, "textNoteTypeId"));
+            XYZ position = ToInternalPoint(GetDictionary(operation, "position"), "position");
+            TextNoteOptions options = new TextNoteOptions(textNoteType.Id);
+            Dictionary<string, object> rotationValue = GetDictionary(operation, "rotation");
+            if (rotationValue != null)
+            {
+                options.Rotation = ToInternalAngle(rotationValue);
+            }
+
+            TextNote textNote;
+            Dictionary<string, object> widthValue = GetDictionary(operation, "width");
+            if (widthValue != null)
+            {
+                textNote = TextNote.Create(document, view.Id, position, ToInternalLength(widthValue, "width"), GetString(operation, "text"), options);
+            }
+            else
+            {
+                textNote = TextNote.Create(document, view.Id, position, GetString(operation, "text"), options);
+            }
+
+            if (textNote == null)
+            {
+                throw new InvalidOperationException("Revit did not create a text note.");
+            }
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(textNote, null),
+                before: null,
+                after: TextNoteSnapshot(document, textNote));
         }
 
         private static bool TryBuildFamilyPlacementRequest(
@@ -2560,6 +2830,7 @@ namespace RevitMcpNext.Addin.Revit
             private readonly HashSet<string> _levelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             private readonly HashSet<string> _gridNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             private readonly HashSet<string> _roomNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<string> _sheetNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             public bool TryAddLevelName(string name)
             {
@@ -2574,6 +2845,11 @@ namespace RevitMcpNext.Addin.Revit
             public bool TryAddRoomNumber(string number)
             {
                 return _roomNumbers.Add((number ?? string.Empty).Trim());
+            }
+
+            public bool TryAddSheetNumber(string number)
+            {
+                return _sheetNumbers.Add((number ?? string.Empty).Trim());
             }
         }
 
@@ -2715,6 +2991,17 @@ namespace RevitMcpNext.Addin.Revit
                 .Any(room => string.Equals(GetRoomNumber(room), normalized, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static bool SheetNumberExists(Document document, string number)
+        {
+            string normalized = NormalizeOptionalText(number);
+            if (string.IsNullOrWhiteSpace(normalized)) return false;
+
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(ViewSheet))
+                .Cast<ViewSheet>()
+                .Any(sheet => string.Equals(sheet.SheetNumber, normalized, StringComparison.OrdinalIgnoreCase));
+        }
+
         private static FloorType ResolveFloorType(Document document, string floorTypeId)
         {
             if (!string.IsNullOrWhiteSpace(floorTypeId))
@@ -2726,6 +3013,37 @@ namespace RevitMcpNext.Addin.Revit
                 .OfClass(typeof(FloorType))
                 .Cast<FloorType>()
                 .FirstOrDefault();
+        }
+
+        private static FamilySymbol ResolveTitleBlockType(Document document, string titleBlockTypeId)
+        {
+            if (string.IsNullOrWhiteSpace(titleBlockTypeId)) return null;
+
+            FamilySymbol symbol = ResolveElement(document, titleBlockTypeId) as FamilySymbol;
+            if (symbol == null) return null;
+            return string.Equals(GetBuiltInCategoryName(symbol), "OST_TitleBlocks", StringComparison.OrdinalIgnoreCase) ? symbol : null;
+        }
+
+        private static TextNoteType ResolveTextNoteType(Document document, string textNoteTypeId)
+        {
+            if (!string.IsNullOrWhiteSpace(textNoteTypeId))
+            {
+                return ResolveElement(document, textNoteTypeId) as TextNoteType;
+            }
+
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(TextNoteType))
+                .Cast<TextNoteType>()
+                .FirstOrDefault();
+        }
+
+        private static string ValidateTextNoteView(View view)
+        {
+            if (view == null) return "Target view was not found.";
+            if (view.IsTemplate) return "Target view is a template and cannot host text notes.";
+            if (view.ViewType == ViewType.ThreeD) return "3D views are not supported by create_text_note.";
+            if (view is ViewSheet) return null;
+            return IsGraphicalView(view) ? null : "Target view must be a graphical printable view or sheet.";
         }
 
         private static Level ResolveHostLevel(Document document, Element host)
@@ -2841,6 +3159,12 @@ namespace RevitMcpNext.Addin.Revit
             return new UV(
                 ToInternalLength(GetDictionary(point, "x"), fieldName + ".x"),
                 ToInternalLength(GetDictionary(point, "y"), fieldName + ".y"));
+        }
+
+        private static XYZ ToInternalSheetPoint(Dictionary<string, object> point, string fieldName)
+        {
+            UV uv = ToInternalUv(point, fieldName);
+            return new XYZ(uv.U, uv.V, 0);
         }
 
         private static List<XYZ> ToInternalPointList(IReadOnlyList<Dictionary<string, object>> points, string fieldName)
@@ -3086,6 +3410,97 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return summary;
+        }
+
+        private static Dictionary<string, object> SheetSnapshot(Document document, ViewSheet sheet)
+        {
+            var snapshot = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(sheet.Id),
+                ["uniqueId"] = sheet.UniqueId,
+                ["sheetNumber"] = sheet.SheetNumber,
+                ["name"] = SafeElementName(sheet),
+                ["titleBlockIds"] = GetSheetTitleBlockIds(document, sheet).ToArray()
+            };
+
+            return snapshot;
+        }
+
+        private static Dictionary<string, object> ViewportSnapshot(Document document, Viewport viewport)
+        {
+            var snapshot = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(viewport.Id),
+                ["uniqueId"] = viewport.UniqueId,
+                ["viewId"] = ToElementIdString(viewport.ViewId)
+            };
+
+            try
+            {
+                snapshot["sheetId"] = ToElementIdString(viewport.SheetId);
+            }
+            catch
+            {
+                // Older/unusual viewport variants may not expose SheetId reliably.
+            }
+
+            View view = document.GetElement(viewport.ViewId) as View;
+            if (view != null)
+            {
+                snapshot["viewName"] = SafeElementName(view);
+                snapshot["viewType"] = view.ViewType.ToString();
+            }
+
+            try
+            {
+                snapshot["center"] = PointValue(viewport.GetBoxCenter());
+            }
+            catch
+            {
+                // Viewport box center can be unavailable for unusual sheet contents.
+            }
+
+            return snapshot;
+        }
+
+        private static Dictionary<string, object> TextNoteSnapshot(Document document, TextNote textNote)
+        {
+            var snapshot = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(textNote.Id),
+                ["uniqueId"] = textNote.UniqueId,
+                ["text"] = textNote.Text,
+                ["textLength"] = (textNote.Text ?? string.Empty).Length,
+                ["viewId"] = ToElementIdString(textNote.OwnerViewId)
+            };
+
+            ElementId typeId = textNote.GetTypeId();
+            if (IsValidElementId(typeId))
+            {
+                snapshot["textNoteTypeId"] = ToElementIdString(typeId);
+                Element type = document.GetElement(typeId);
+                if (type != null) snapshot["textNoteTypeName"] = SafeElementName(type);
+            }
+
+            try
+            {
+                snapshot["position"] = PointValue(textNote.Coord);
+            }
+            catch
+            {
+                // Some text note states do not expose a stable coordinate.
+            }
+
+            try
+            {
+                if (textNote.Width > 0) snapshot["width"] = LengthValue(textNote.Width);
+            }
+            catch
+            {
+                // Unwrapped text notes may not expose a width.
+            }
+
+            return snapshot;
         }
 
         private static Dictionary<string, object> TypeSnapshot(Document document, Element element)

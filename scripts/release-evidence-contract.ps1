@@ -91,7 +91,12 @@ function New-SyntheticAddinOutput($Root) {
     Set-Content -LiteralPath (Join-Path $Root "RevitMcpNext.Contracts.dll") -Value "synthetic contracts placeholder for evidence contract" -Encoding ASCII
 }
 
-function New-SyntheticHostIntegrationEvidence($Root, [switch] $Failed) {
+function New-SyntheticHostIntegrationEvidence(
+    $Root,
+    [switch] $Failed,
+    [string] $AddinAssemblySha256 = "",
+    [string] $AddinAssemblyPath = "C:\synthetic\RevitMcpNext.Addin.dll"
+) {
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
 
     $pyRevitEvidencePath = Join-Path $Root "pyrevit.json"
@@ -116,6 +121,10 @@ function New-SyntheticHostIntegrationEvidence($Root, [switch] $Failed) {
             addinHandlerActive = $true
             handler = "configuredAddin"
             directFallbackActive = $false
+            assemblyPath = $AddinAssemblyPath
+            assemblySha256 = $AddinAssemblySha256
+            fileVersion = "0.1.0.0"
+            productVersion = "0.1.0.0"
         }
         createdElementIds = @("9001")
         evidencePath = $pyRevitEvidencePath
@@ -138,6 +147,10 @@ function New-SyntheticHostIntegrationEvidence($Root, [switch] $Failed) {
             addinHandlerActive = -not $Failed
             handler = if ($Failed) { "directFallback" } else { "configuredAddin" }
             directFallbackActive = [bool] $Failed
+            assemblyPath = $AddinAssemblyPath
+            assemblySha256 = $AddinAssemblySha256
+            fileVersion = "0.1.0.0"
+            productVersion = "0.1.0.0"
         }
         createdElementIds = if ($Failed) { @() } else { @("9002") }
         evidencePath = $dynamoEvidencePath
@@ -155,6 +168,10 @@ function New-SyntheticHostIntegrationEvidence($Root, [switch] $Failed) {
                     addinHandlerActive = $true
                     handler = "configuredAddin"
                     directFallbackActive = $false
+                    assemblyPath = $AddinAssemblyPath
+                    assemblySha256 = $AddinAssemblySha256
+                    fileVersion = "0.1.0.0"
+                    productVersion = "0.1.0.0"
                 }
                 createdElementIds = @("9001")
             }
@@ -166,6 +183,10 @@ function New-SyntheticHostIntegrationEvidence($Root, [switch] $Failed) {
                     addinHandlerActive = -not $Failed
                     handler = if ($Failed) { "directFallback" } else { "configuredAddin" }
                     directFallbackActive = [bool] $Failed
+                    assemblyPath = $AddinAssemblyPath
+                    assemblySha256 = $AddinAssemblySha256
+                    fileVersion = "0.1.0.0"
+                    productVersion = "0.1.0.0"
                 }
                 createdElementIds = if ($Failed) { @() } else { @("9002") }
             }
@@ -275,6 +296,8 @@ try {
     $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$($rootPackage.version)-windows"
     Assert-DirectoryExists $packageRoot "staged package"
     Assert-FileExists "$packageRoot.zip" "package zip"
+    $packagedAddinSha256 = (Get-FileHash -LiteralPath (Join-Path $packageRoot "payload\addin\RevitMcpNext.Addin.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
+    $installedAddinPath = Join-Path $installRoot "addin\RevitMcpNext.Addin.dll"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
     Invoke-RepoScript (Join-Path $logsRoot "install-windows.log") $installerScript @(
@@ -331,7 +354,7 @@ try {
         error = "synthetic failed smoke"
     } | ConvertTo-Json) -Encoding UTF8
 
-    New-SyntheticHostIntegrationEvidence $hostIntegrationRawRoot
+    New-SyntheticHostIntegrationEvidence $hostIntegrationRawRoot -AddinAssemblySha256 $packagedAddinSha256 -AddinAssemblyPath $installedAddinPath
     Invoke-RepoScript (Join-Path $logsRoot "host-integrations-evidence.log") (Join-Path $repoRoot "scripts\collect-host-integration-evidence.ps1") @(
         "-PyRevitEvidencePath", (Join-Path $hostIntegrationRawRoot "pyrevit.json"),
         "-DynamoEvidencePath", (Join-Path $hostIntegrationRawRoot "dynamo.json"),
@@ -339,7 +362,10 @@ try {
     )
 
     $failedHostIntegrationRoot = Join-Path $runRoot "host-integrations-failed"
-    New-SyntheticHostIntegrationEvidence $failedHostIntegrationRoot -Failed
+    New-SyntheticHostIntegrationEvidence $failedHostIntegrationRoot -Failed -AddinAssemblySha256 $packagedAddinSha256 -AddinAssemblyPath $installedAddinPath
+
+    $mismatchedHostIntegrationRoot = Join-Path $runRoot "host-integrations-mismatched"
+    New-SyntheticHostIntegrationEvidence $mismatchedHostIntegrationRoot -AddinAssemblySha256 ("0" * 64) -AddinAssemblyPath $installedAddinPath
 
     $evidenceScript = Join-Path $repoRoot "scripts\collect-release-evidence.ps1"
     Assert-ScriptFailsLike $evidenceScript @(
@@ -390,6 +416,15 @@ try {
         "-HostedIntegrationEvidencePath", $failedHostIntegrationRoot
     ) "*Hosted pyRevit/Dynamo integration summary did not pass*" "Failed hosted integration summary gate"
 
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-package-identity"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $mismatchedHostIntegrationRoot
+    ) "*loaded add-in SHA-256*" "Mismatched hosted integration package identity gate"
+
     Invoke-RepoScript (Join-Path $logsRoot "release-evidence.log") $evidenceScript @(
         "-PackageRoot", $packageRoot,
         "-OutputRoot", $evidenceOutputRoot,
@@ -425,6 +460,9 @@ try {
     if ($evidenceManifest.package.evidence.packageZipSha256 -notmatch "^[a-f0-9]{64}$") {
         throw "Package zip SHA-256 was not recorded."
     }
+    if ($evidenceManifest.package.evidence.packagedAddin.sha256 -ne $packagedAddinSha256) {
+        throw "Packaged add-in SHA-256 was not recorded in release evidence."
+    }
     if ($evidenceManifest.signing.status -ne "skipped" -or [string]::IsNullOrWhiteSpace($evidenceManifest.signing.skipReason)) {
         throw "Unsigned package evidence did not record an explicit signing skip reason."
     }
@@ -454,6 +492,15 @@ try {
     }
     if ($evidenceManifest.hostedIntegrations.summary.hosts.dynamo.status -ne "passed") {
         throw "Dynamo hosted integration pass status was not recorded."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.packageIdentity.expectedSha256 -ne $packagedAddinSha256) {
+        throw "Hosted integration package identity did not record the expected add-in SHA-256."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.packageIdentity.hosts.pyrevit.assemblySha256 -ne $packagedAddinSha256) {
+        throw "pyRevit hosted integration package identity was not recorded."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.packageIdentity.hosts.dynamo.assemblySha256 -ne $packagedAddinSha256) {
+        throw "Dynamo hosted integration package identity was not recorded."
     }
     if ($evidenceManifest.validation.validateRepoLog.present -ne $true) {
         throw "validate-repo log was not recorded."

@@ -234,6 +234,9 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place a room by `levelId` and 2D `location`, with optional `name`, `number`, `department`, and `allowDuplicateNumber`.
 - `place_family_instance`: place first-case wall-hosted door/window symbols by `familySymbolId`, `hostElementId`, and `location`, or level-based furniture/equipment/fixture symbols by `familySymbolId`, `levelId`, and `location`.
+- `create_sheet`: create a sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId` from `revit.catalog kind=titleBlocks`.
+- `place_view_on_sheet`: place an eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`.
+- `create_text_note`: create a text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
 - `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
 - `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
 - `copy_element`: copy one model element by an explicit 3D translation vector.

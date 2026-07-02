@@ -654,6 +654,9 @@ export type ChangeOperationType =
   | "create_level"
   | "create_wall"
   | "place_family_instance"
+  | "create_sheet"
+  | "place_view_on_sheet"
+  | "create_text_note"
   | "move_element"
   | "rotate_element"
   | "copy_element"
@@ -706,6 +709,30 @@ export interface PlaceFamilyInstanceOperation extends ChangeOperationBase {
   flipFacing?: boolean;
   flipHand?: boolean;
   allowPinnedHost?: boolean;
+}
+
+export interface CreateSheetOperation extends ChangeOperationBase {
+  type: "create_sheet";
+  sheetNumber: string;
+  name?: string;
+  titleBlockTypeId?: ElementId;
+}
+
+export interface PlaceViewOnSheetOperation extends ChangeOperationBase {
+  type: "place_view_on_sheet";
+  sheetId: ElementId;
+  viewId: ElementId;
+  center: Point2;
+}
+
+export interface CreateTextNoteOperation extends ChangeOperationBase {
+  type: "create_text_note";
+  viewId: ElementId;
+  text: string;
+  position: Point3;
+  textNoteTypeId?: ElementId;
+  width?: UnitValue;
+  rotation?: AngleValue;
 }
 
 export interface MoveElementChangeOperation extends ChangeOperationBase {
@@ -779,6 +806,9 @@ export type ChangeOperation =
   | CreateLevelChangeOperation
   | CreateWallChangeOperation
   | PlaceFamilyInstanceOperation
+  | CreateSheetOperation
+  | PlaceViewOnSheetOperation
+  | CreateTextNoteOperation
   | MoveElementChangeOperation
   | RotateElementChangeOperation
   | CopyElementChangeOperation

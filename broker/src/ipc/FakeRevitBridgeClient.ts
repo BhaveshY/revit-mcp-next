@@ -1114,6 +1114,23 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         hostElementId: operation.hostElementId,
         levelId: operation.levelId,
       };
+    case "create_sheet":
+      return {
+        document: activeDocument.title,
+        sheetNumber: operation.sheetNumber,
+        titleBlockTypeId: operation.titleBlockTypeId,
+      };
+    case "place_view_on_sheet":
+      return {
+        sheetId: operation.sheetId,
+        viewId: operation.viewId,
+      };
+    case "create_text_note":
+      return {
+        document: activeDocument.title,
+        viewId: operation.viewId,
+        textNoteTypeId: operation.textNoteTypeId,
+      };
     case "move_element":
       return {
         elementId: operation.elementId,
@@ -1192,6 +1209,33 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         flipHand: operation.flipHand,
         allowPinnedHost: operation.allowPinnedHost,
       };
+    case "create_sheet":
+      return {
+        id: "1301",
+        uniqueId: "sheet-1301",
+        sheetNumber: operation.sheetNumber,
+        name: operation.name,
+        titleBlockTypeId: operation.titleBlockTypeId,
+      };
+    case "place_view_on_sheet":
+      return {
+        viewportId: "1302",
+        sheetId: operation.sheetId,
+        viewId: operation.viewId,
+        center: operation.center,
+      };
+    case "create_text_note":
+      return {
+        id: "1303",
+        uniqueId: "textnote-1303",
+        viewId: operation.viewId,
+        text: operation.text,
+        textLength: operation.text.length,
+        position: operation.position,
+        textNoteTypeId: operation.textNoteTypeId,
+        width: operation.width,
+        rotation: operation.rotation,
+      };
     case "move_element":
       return {
         translation: operation.translation,
@@ -1257,6 +1301,9 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
     operation.type === "create_level" ||
     operation.type === "create_wall" ||
     operation.type === "place_family_instance" ||
+    operation.type === "create_sheet" ||
+    operation.type === "place_view_on_sheet" ||
+    operation.type === "create_text_note" ||
     operation.type === "create_grid" ||
     operation.type === "create_floor" ||
     operation.type === "create_room" ||

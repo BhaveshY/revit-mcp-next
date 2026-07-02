@@ -293,6 +293,8 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     $failedDynamoEvidencePath = Join-Path $RunRoot "host-smoke\failed-dynamo.json"
     $fallbackPyRevitEvidencePath = Join-Path $RunRoot "host-smoke\fallback-pyrevit.json"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $passedPyRevitEvidencePath) | Out-Null
+    $syntheticAssemblyPath = Join-Path $installRoot "addin\RevitMcpNext.Addin.dll"
+    $syntheticAssemblySha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
     $passedPyRevit = [ordered] @{
         schemaVersion = 1
@@ -305,6 +307,10 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
             addinHandlerActive = $true
             handler = "configuredAddin"
             directFallbackActive = $false
+            assemblyPath = $syntheticAssemblyPath
+            assemblySha256 = $syntheticAssemblySha256
+            fileVersion = "0.1.0.0"
+            productVersion = "0.1.0.0"
         }
         coveredTools = @("revit.status", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level")
@@ -321,6 +327,10 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
             addinHandlerActive = $true
             handler = "configuredAddin"
             directFallbackActive = $false
+            assemblyPath = $syntheticAssemblyPath
+            assemblySha256 = $syntheticAssemblySha256
+            fileVersion = "0.1.0.0"
+            productVersion = "0.1.0.0"
         }
         coveredTools = @("revit.status", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level")
@@ -334,6 +344,10 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         addinHandlerActive = $false
         handler = "directFallback"
         directFallbackActive = $true
+        assemblyPath = $syntheticAssemblyPath
+        assemblySha256 = $syntheticAssemblySha256
+        fileVersion = "0.1.0.0"
+        productVersion = "0.1.0.0"
     }
     $failedDynamo = [ordered] @{
         schemaVersion = 1
@@ -569,7 +583,7 @@ try {
             throw "Client discovery did not advertise expected tool: $expectedTool"
         }
     }
-    foreach ($expectedOperation in @("place_family_instance", "create_room", "delete_element")) {
+    foreach ($expectedOperation in @("place_family_instance", "create_sheet", "place_view_on_sheet", "create_text_note", "create_room", "delete_element")) {
         if (@($clientDiscovery.writeOperations) -notcontains $expectedOperation) {
             throw "Client discovery did not advertise expected write operation: $expectedOperation"
         }

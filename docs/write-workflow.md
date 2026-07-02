@@ -31,6 +31,9 @@ End-to-end supported operations:
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place one room by `levelId` and 2D `location`, optionally setting `name`, `number`, and `department`; duplicate room numbers are blocked unless `allowDuplicateNumber` is set.
 - `place_family_instance`: place supported `familySymbols` discovered through `revit.catalog`; first supported cases are wall-hosted doors/windows with `hostElementId` and level-based furniture/equipment/fixtures with `levelId`.
+- `create_sheet`: create one sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId`; discover title block type IDs with `revit.catalog kind=titleBlocks preset=sheet`.
+- `place_view_on_sheet`: place one eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`; use `revit.get_sheets includePlacedViews=true` to avoid already placed views.
+- `create_text_note`: create one text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
 - `move_element`: move one non-pinned model element by `elementId` and a `translation` vector.
 - `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`.
 - `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs.

@@ -533,7 +533,24 @@ async function main() {
     assert(createdRoom.isEnclosed === true, "revit.get_rooms returned the created room without isEnclosed=true.");
     console.log(`Create/read room OK: room ${roomNumber} (${roomId})`);
 
-    const parameterGeneration = numericOrUndefined(roomApply.generation);
+    const documentationResult = await tryDocumentationWorkflows(client, {
+      documentFingerprint,
+      expectedGeneration: numericOrUndefined(roomApply.generation),
+      transactionPrefix: options.transactionPrefix,
+      runId,
+      currentView,
+      levelElevationMm,
+    });
+    const sheetApply = documentationResult.sheet?.apply;
+    const placedViewApply = documentationResult.placedView?.apply;
+    const textNoteApply = documentationResult.textNote?.apply;
+    const createdSheetId = documentationResult.sheet?.sheetId;
+    const createdViewportId = documentationResult.placedView?.viewportId;
+    const createdTextNoteId = documentationResult.textNote?.textNoteId;
+
+    const parameterGeneration = numericOrUndefined(
+      textNoteApply?.generation ?? placedViewApply?.generation ?? sheetApply?.generation ?? roomApply.generation
+    );
     const parameterValue = `MCP-${runId}`;
     const parameterResult = await applyFirstReadySetParameter(client, {
       documentFingerprint,
@@ -765,6 +782,9 @@ async function main() {
       "create_wall",
       ...(familyPlacementApply ? ["place_family_instance"] : []),
       "create_room",
+      ...(sheetApply ? ["create_sheet"] : []),
+      ...(placedViewApply ? ["place_view_on_sheet"] : []),
+      ...(textNoteApply ? ["create_text_note"] : []),
       "set_parameter",
       ...(changeTypeApply ? ["change_element_type"] : []),
       "move_element",
@@ -785,6 +805,9 @@ async function main() {
         reason: familyPlacementResult.reason,
       });
     }
+    for (const skipped of documentationResult.skippedOperations) {
+      summary.skippedOperations.push(skipped);
+    }
     summary.result = compactObject({
       runId,
       createdElementIds: {
@@ -795,6 +818,9 @@ async function main() {
         familyInstance: familyInstanceId,
         roomBoundaryWalls: roomBoundaryWallIds,
         room: roomId,
+        sheet: createdSheetId,
+        viewport: createdViewportId,
+        textNote: createdTextNoteId,
         copiedWall: copiedWallId,
       },
       finalGeneration: numericOrUndefined(deleteApply.generation),
@@ -1412,6 +1438,215 @@ async function getRoomByNumber(client, { documentFingerprint, levelId, number })
   return match;
 }
 
+async function tryDocumentationWorkflows(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, currentView, levelElevationMm }
+) {
+  const result = {
+    sheet: undefined,
+    placedView: undefined,
+    textNote: undefined,
+    skippedOperations: [],
+  };
+
+  let generation = expectedGeneration;
+
+  const titleBlocks = await catalog(client, {
+    kind: "titleBlocks",
+    preset: "sheet",
+    limit: 20,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(titleBlocks, "titleBlocks");
+  const titleBlockType = titleBlocks.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  const sheetNumber = `MCP-${runId}`;
+  const sheetOperation = compactObject({
+    id: "create-smoke-sheet",
+    type: "create_sheet",
+    sheetNumber,
+    name: `MCP Sheet ${runId}`,
+    titleBlockTypeId: titleBlockType?.id,
+  });
+  const sheetChangeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration: generation,
+    transactionName: makeTransactionName(transactionPrefix, "create sheet", runId),
+    operations: [sheetOperation],
+  });
+  const sheetPreview = await previewChangeSet(client, sheetChangeSet, "create_sheet");
+  const sheetApply = await applyChangeSet(client, sheetChangeSet, sheetPreview, "create_sheet");
+  const sheetChange = findChange(sheetApply, "create_sheet");
+  const sheetId = getCreatedElementId(sheetChange);
+  assert(sheetId, "create_sheet applied but did not return a sheet id.");
+  await getSheetByNumber(client, { documentFingerprint, sheetNumber, expectedSheetId: sheetId });
+  console.log(`Create/read sheet OK: sheet ${sheetNumber} (${sheetId})`);
+  result.sheet = { apply: sheetApply, sheetId };
+  generation = numericOrUndefined(sheetApply.generation);
+
+  const placeViewResult = await tryPlaceViewOnSheet(client, {
+    documentFingerprint,
+    expectedGeneration: generation,
+    transactionPrefix,
+    runId,
+    sheetId,
+  });
+  if (placeViewResult.apply) {
+    result.placedView = placeViewResult;
+    generation = numericOrUndefined(placeViewResult.apply.generation);
+  } else {
+    result.skippedOperations.push({ type: "place_view_on_sheet", reason: placeViewResult.reason });
+  }
+
+  const textNoteResult = await tryCreateTextNote(client, {
+    documentFingerprint,
+    expectedGeneration: generation,
+    transactionPrefix,
+    runId,
+    sheetId,
+    currentView,
+    levelElevationMm,
+  });
+  if (textNoteResult.apply) {
+    result.textNote = textNoteResult;
+  } else {
+    result.skippedOperations.push({ type: "create_text_note", reason: textNoteResult.reason });
+  }
+
+  return result;
+}
+
+async function getSheetByNumber(client, { documentFingerprint, sheetNumber, expectedSheetId }) {
+  const sheets = await callRequiredTool(client, "revit.get_sheets", {
+    documentFingerprint,
+    filter: { numbers: [sheetNumber] },
+    preset: "placement",
+    includePlacedViews: true,
+    limit: 10,
+    includeTotalCount: true,
+  });
+  assert(Array.isArray(sheets.items), "revit.get_sheets did not return an items array.");
+  const match = sheets.items.find((item) => String(item.sheetNumber) === String(sheetNumber));
+  assert(match, `revit.get_sheets did not return sheet number ${sheetNumber}.`);
+  assert(String(match.id) === String(expectedSheetId), `revit.get_sheets returned sheet id ${String(match.id)}, expected ${expectedSheetId}.`);
+  return match;
+}
+
+async function tryPlaceViewOnSheet(client, { documentFingerprint, expectedGeneration, transactionPrefix, runId, sheetId }) {
+  const existingSheets = await callRequiredTool(client, "revit.get_sheets", {
+    documentFingerprint,
+    preset: "placement",
+    includePlacedViews: true,
+    limit: 500,
+    includeTotalCount: true,
+  });
+  assert(Array.isArray(existingSheets.items), "revit.get_sheets did not return an items array for view placement.");
+  const placedViewIds = new Set();
+  for (const sheet of existingSheets.items) {
+    for (const placed of Array.isArray(sheet.placedViews) ? sheet.placedViews : []) {
+      if (placed?.viewId) placedViewIds.add(String(placed.viewId));
+    }
+  }
+
+  const candidateViews = await callRequiredTool(client, "revit.get_views", {
+    documentFingerprint,
+    filter: { isTemplate: false, isGraphical: true, canBePrinted: true },
+    preset: "sheetPlacement",
+    limit: 500,
+    includeTotalCount: true,
+  });
+  assert(Array.isArray(candidateViews.items), "revit.get_views did not return an items array for view placement.");
+  const view = candidateViews.items.find((item) => typeof item.id === "string" && item.id.length > 0 && !placedViewIds.has(String(item.id)));
+  if (!view) {
+    return {
+      reason: `No unplaced printable non-template view was available. Sampled ${candidateViews.items.length} view(s) and found ${placedViewIds.size} already placed view id(s).`,
+    };
+  }
+
+  const operation = {
+    id: "place-smoke-view-on-sheet",
+    type: "place_view_on_sheet",
+    sheetId,
+    viewId: String(view.id),
+    center: point2Mm(250, 180),
+  };
+  const changeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration,
+    transactionName: makeTransactionName(transactionPrefix, "place view on sheet", runId),
+    operations: [operation],
+  });
+  const preview = await previewChangeSet(client, changeSet, "place_view_on_sheet");
+  const apply = await applyChangeSet(client, changeSet, preview, "place_view_on_sheet");
+  const change = findChange(apply, "place_view_on_sheet");
+  const viewportId = getCreatedElementId(change);
+  assert(viewportId, "place_view_on_sheet applied but did not return a viewport id.");
+  const sheet = await getSheetByNumber(client, { documentFingerprint, sheetNumber: `MCP-${runId}`, expectedSheetId: sheetId });
+  assert(
+    (sheet.placedViews ?? []).some((placed) => String(placed.viewId) === String(view.id)),
+    "revit.get_sheets did not report the view placed by place_view_on_sheet."
+  );
+  console.log(`Place view on sheet OK: view ${view.id} on sheet ${sheetId}`);
+  return { apply, viewportId, viewId: String(view.id) };
+}
+
+async function tryCreateTextNote(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, sheetId, currentView, levelElevationMm }
+) {
+  const textNoteTypes = await catalog(client, {
+    kind: "textNoteTypes",
+    preset: "annotation",
+    limit: 20,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(textNoteTypes, "textNoteTypes");
+  const textNoteType = textNoteTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  if (!textNoteType) {
+    return { reason: "No TextNoteType was available in the active model." };
+  }
+
+  const current = currentView?.view;
+  const target = sheetId
+    ? {
+        viewId: String(sheetId),
+        position: pointMm(40, 40, 0),
+        label: `sheet ${sheetId}`,
+      }
+    : current?.id && current.isTemplate !== true && current.isGraphical === true && current.viewType !== "ThreeD"
+      ? {
+          viewId: String(current.id),
+          position: pointMm(1000, 1000, levelElevationMm),
+          label: `view ${current.id}`,
+        }
+      : undefined;
+  if (!target) {
+    return { reason: "No graphical non-template view or created sheet was available to host a text note." };
+  }
+
+  const operation = {
+    id: "create-smoke-text-note",
+    type: "create_text_note",
+    viewId: target.viewId,
+    text: `MCP smoke note ${runId}`,
+    position: target.position,
+    textNoteTypeId: String(textNoteType.id),
+    rotation: { value: 0, unit: "degrees" },
+  };
+  const changeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration,
+    transactionName: makeTransactionName(transactionPrefix, "create text note", runId),
+    operations: [operation],
+  });
+  const preview = await previewChangeSet(client, changeSet, "create_text_note");
+  const apply = await applyChangeSet(client, changeSet, preview, "create_text_note");
+  const change = findChange(apply, "create_text_note");
+  const textNoteId = getCreatedElementId(change);
+  assert(textNoteId, "create_text_note applied but did not return a text note id.");
+  console.log(`Create text note OK: text note ${textNoteId} in ${target.label}`);
+  return { apply, textNoteId };
+}
+
 async function assertElementDeletedById(client, elementId) {
   const query = await callRequiredTool(client, "revit.query", {
     filter: { elementIds: [elementId] },
@@ -1661,18 +1896,21 @@ Runs a live Revit MCP smoke against the active Revit project:
   10. revit.query and revit.describe_parameters for created elements
   11. preview/apply room boundary walls
   12. preview/apply create_room, then revit.get_rooms read-back with positive area
-  13. preview/apply set_parameter on the created wall
-  14. revit.catalog for compatible wall type changes
-  15. preview/apply change_element_type when an alternate valid type exists
-  16. preview/apply move_element
-  17. assert the wall Y location changed by --move-y-mm
-  18. preview/apply rotate_element
-  19. preview/apply copy_element
-  20. preview/apply set_element_pinned true
-  21. blocked preview for moving a pinned element
-  22. rejected apply for mismatched changeSetHash
-  23. preview/apply set_element_pinned false
-  24. preview/apply delete_element for the copied smoke wall
+  13. preview/apply create_sheet and read it back with revit.get_sheets
+  14. preview/apply place_view_on_sheet when an unplaced printable view exists
+  15. preview/apply create_text_note when the current view supports annotations
+  16. preview/apply set_parameter on the created wall
+  17. revit.catalog for compatible wall type changes
+  18. preview/apply change_element_type when an alternate valid type exists
+  19. preview/apply move_element
+  20. assert the wall Y location changed by --move-y-mm
+  21. preview/apply rotate_element
+  22. preview/apply copy_element
+  23. preview/apply set_element_pinned true
+  24. blocked preview for moving a pinned element
+  25. rejected apply for mismatched changeSetHash
+  26. preview/apply set_element_pinned false
+  27. preview/apply delete_element for the copied smoke wall
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

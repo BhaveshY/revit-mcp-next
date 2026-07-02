@@ -357,6 +357,9 @@ test("broker exposes annotated tools with output schemas and callable structured
       "create_level",
       "create_wall",
       "place_family_instance",
+      "create_sheet",
+      "place_view_on_sheet",
+      "create_text_note",
       "move_element",
       "rotate_element",
       "copy_element",
@@ -372,6 +375,15 @@ test("broker exposes annotated tools with output schemas and callable structured
       "wallTypeId",
       "familySymbolId",
       "hostElementId",
+      "sheetNumber",
+      "titleBlockTypeId",
+      "sheetId",
+      "viewId",
+      "center",
+      "text",
+      "position",
+      "textNoteTypeId",
+      "width",
       "height",
       "structural",
       "flip",
@@ -447,6 +459,34 @@ test("broker exposes annotated tools with output schemas and callable structured
         rotation: { value: 0, unit: "degrees" },
         flipFacing: true,
         flipHand: false,
+      },
+      {
+        type: "create_sheet",
+        sheetNumber: "A-201",
+        name: "Preview Sheet",
+        titleBlockTypeId: "9300",
+      },
+      {
+        type: "place_view_on_sheet",
+        sheetId: "1101",
+        viewId: "1025",
+        center: {
+          x: { value: 250, unit: "mm", system: "metric" },
+          y: { value: 180, unit: "mm", system: "metric" },
+        },
+      },
+      {
+        type: "create_text_note",
+        viewId: "1024",
+        text: "MCP generated note",
+        position: {
+          x: { value: 500, unit: "mm", system: "metric" },
+          y: { value: 500, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+        textNoteTypeId: "9400",
+        width: { value: 1200, unit: "mm", system: "metric" },
+        rotation: { value: 0, unit: "degrees" },
       },
       {
         type: "move_element",
@@ -595,7 +635,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 12);
+    assert.equal(apply.structuredContent?.data?.changedCount, 15);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

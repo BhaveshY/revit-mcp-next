@@ -370,6 +370,66 @@ function Get-RequiredHostSummary($Summary, $HostName, $SummaryPath) {
     return $hostSummary
 }
 
+function Get-PackageContentEntry($ReleaseManifest, $RelativePath) {
+    $normalizedRelativePath = $RelativePath -replace "\\", "/"
+    foreach ($entry in @($ReleaseManifest.contents)) {
+        if ([string]::Equals(([string] $entry.path), $normalizedRelativePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $entry
+        }
+    }
+
+    throw "Release manifest is missing package content entry: $normalizedRelativePath"
+}
+
+function Get-PackagedAddinIdentity($ReleaseManifest) {
+    $relativePath = "payload/addin/RevitMcpNext.Addin.dll"
+    $entry = Get-PackageContentEntry $ReleaseManifest $relativePath
+    $sha256 = ([string] $entry.sha256).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($sha256)) {
+        throw "Release manifest content entry '$relativePath' is missing sha256."
+    }
+
+    return [ordered] @{
+        packagePath = $relativePath
+        sha256 = $sha256
+        size = $entry.size
+    }
+}
+
+function Assert-HostLoadedPackageAddin($HostSummary, $HostName, $ExpectedAddinIdentity, $SummaryPath) {
+    $bridge = $HostSummary.inProcessBridge
+    if ($null -eq $bridge) {
+        throw "Hosted pyRevit/Dynamo integration host '$HostName' is missing inProcessBridge identity. Summary: $SummaryPath"
+    }
+
+    $actualSha256 = ([string] $bridge.assemblySha256).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($actualSha256)) {
+        throw "Hosted pyRevit/Dynamo integration host '$HostName' did not record inProcessBridge.assemblySha256. Summary: $SummaryPath"
+    }
+
+    if (-not [string]::Equals($actualSha256, [string] $ExpectedAddinIdentity.sha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Hosted pyRevit/Dynamo integration host '$HostName' loaded add-in SHA-256 $actualSha256, expected packaged $($ExpectedAddinIdentity.sha256). Summary: $SummaryPath"
+    }
+
+    return [ordered] @{
+        assemblyPath = [string] $bridge.assemblyPath
+        assemblySha256 = $actualSha256
+        fileVersion = [string] $bridge.fileVersion
+        productVersion = [string] $bridge.productVersion
+    }
+}
+
+function Assert-HostedIntegrationPackageIdentity($HostedIntegrationSummary, $ExpectedAddinIdentity) {
+    return [ordered] @{
+        expectedPackagePath = [string] $ExpectedAddinIdentity.packagePath
+        expectedSha256 = [string] $ExpectedAddinIdentity.sha256
+        hosts = [ordered] @{
+            pyrevit = (Assert-HostLoadedPackageAddin $HostedIntegrationSummary.hosts.pyrevit "pyrevit" $ExpectedAddinIdentity $HostedIntegrationSummary.path)
+            dynamo = (Assert-HostLoadedPackageAddin $HostedIntegrationSummary.hosts.dynamo "dynamo" $ExpectedAddinIdentity $HostedIntegrationSummary.path)
+        }
+    }
+}
+
 function Read-PassedHostedIntegrationSummary($EvidencePath) {
     $summaryPath = Resolve-HostedIntegrationSummaryPath $EvidencePath
     $summary = Read-JsonFile $summaryPath
@@ -421,6 +481,7 @@ $version = [string] $releaseManifest.package.version
 if ([string]::IsNullOrWhiteSpace($version)) {
     throw "Release manifest package.version is missing."
 }
+$packagedAddinIdentity = Get-PackagedAddinIdentity $releaseManifest
 
 $platform = [string] $releaseManifest.package.platform
 if ([string]::IsNullOrWhiteSpace($platform)) {
@@ -522,6 +583,7 @@ $hostedIntegrationSection = [ordered] @{
 }
 if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
     $hostedIntegrationSummary = Read-PassedHostedIntegrationSummary $HostedIntegrationEvidencePath
+    $hostedIntegrationPackageIdentity = Assert-HostedIntegrationPackageIdentity $hostedIntegrationSummary $packagedAddinIdentity
     $hostedIntegrationRoot = Join-Path $stageRoot "host-integrations"
     $copiedHostedIntegration = Copy-EvidencePath $HostedIntegrationEvidencePath $hostedIntegrationRoot "Hosted pyRevit/Dynamo integration smoke evidence"
     $hostedIntegrationSection = [ordered] @{
@@ -536,6 +598,7 @@ if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
                 pyrevit = $hostedIntegrationSummary.hosts.pyrevit
                 dynamo = $hostedIntegrationSummary.hosts.dynamo
             }
+            packageIdentity = $hostedIntegrationPackageIdentity
         }
         files = Get-InventoryEntries $copiedHostedIntegration
     }
@@ -557,6 +620,7 @@ $packageSummary = [ordered] @{
     packageZipName = $packageZip.Name
     packageZipSha256 = $packageZipHash
     packageZipSize = $packageZip.Length
+    packagedAddin = $packagedAddinIdentity
     releaseManifest = "package/release-manifest.json"
     checksums = "package/CHECKSUMS.sha256"
     packageZipChecksum = "package/package-zip.sha256"

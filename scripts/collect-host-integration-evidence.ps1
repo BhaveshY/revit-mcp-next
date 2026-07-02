@@ -99,6 +99,14 @@ function Assert-HostEvidence($Evidence, $ExpectedHost, $Path) {
         throw "$ExpectedHost evidence used in-process bridge handler '$handler'; expected configuredAddin. File: $Path"
     }
 
+    if ([string]::IsNullOrWhiteSpace([string] $Evidence.inProcessBridge.assemblyPath)) {
+        throw "$ExpectedHost evidence did not record inProcessBridge.assemblyPath. File: $Path"
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string] $Evidence.inProcessBridge.assemblySha256)) {
+        throw "$ExpectedHost evidence did not record inProcessBridge.assemblySha256. File: $Path"
+    }
+
     return [ordered] @{
         status = [string] $Evidence.status
         evidencePath = "$ExpectedHost.json"
@@ -106,9 +114,9 @@ function Assert-HostEvidence($Evidence, $ExpectedHost, $Path) {
         applyWrites = [bool] $Evidence.applyWrites
         activeDocument = $Evidence.activeDocument
         inProcessBridge = $Evidence.inProcessBridge
-        coveredTools = Get-JsonArray $Evidence.coveredTools
-        coveredOperations = $coveredOperations
-        createdElementIds = $createdElementIds
+        coveredTools = @(Get-JsonArray $Evidence.coveredTools)
+        coveredOperations = @($coveredOperations)
+        createdElementIds = @($createdElementIds)
     }
 }
 

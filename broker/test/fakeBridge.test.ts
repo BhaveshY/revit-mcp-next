@@ -278,12 +278,43 @@ test("fake bridge previews and applies a bounded change set", async () => {
       },
       {
         id: "op-6",
+        type: "create_sheet" as const,
+        sheetNumber: "A-201",
+        name: "Preview Sheet",
+        titleBlockTypeId: "9300",
+      },
+      {
+        id: "op-7",
+        type: "place_view_on_sheet" as const,
+        sheetId: "1101",
+        viewId: "1025",
+        center: {
+          x: { value: 250, unit: "mm", system: "metric" as const },
+          y: { value: 180, unit: "mm", system: "metric" as const },
+        },
+      },
+      {
+        id: "op-8",
+        type: "create_text_note" as const,
+        viewId: "1024",
+        text: "MCP generated note",
+        position: {
+          x: { value: 500, unit: "mm", system: "metric" as const },
+          y: { value: 500, unit: "mm", system: "metric" as const },
+          z: { value: 0, unit: "mm", system: "metric" as const },
+        },
+        textNoteTypeId: "9400",
+        width: { value: 1200, unit: "mm", system: "metric" as const },
+        rotation: { value: 0, unit: "degrees" as const },
+      },
+      {
+        id: "op-9",
         type: "move_element" as const,
         elementId: "501",
         translation,
       },
       {
-        id: "op-7",
+        id: "op-10",
         type: "rotate_element" as const,
         elementId: "501",
         axisStart: start,
@@ -295,7 +326,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         angle: { value: 90, unit: "degrees" as const },
       },
       {
-        id: "op-8",
+        id: "op-11",
         type: "copy_element" as const,
         elementId: "501",
         translation: {
@@ -305,27 +336,27 @@ test("fake bridge previews and applies a bounded change set", async () => {
         },
       },
       {
-        id: "op-9",
+        id: "op-12",
         type: "change_element_type" as const,
         elementId: "501",
         typeId: "9002",
       },
       {
-        id: "op-10",
+        id: "op-13",
         type: "set_element_pinned" as const,
         elementId: "501",
         pinned: true,
         expectedPinned: false,
       },
       {
-        id: "op-11",
+        id: "op-14",
         type: "create_grid" as const,
         name: "A",
         start,
         end,
       },
       {
-        id: "op-12",
+        id: "op-15",
         type: "create_floor" as const,
         levelId: "311",
         floorTypeId: "9100",
@@ -346,7 +377,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         ],
       },
       {
-        id: "op-13",
+        id: "op-16",
         type: "create_room" as const,
         levelId: "311",
         location: roomLocation,
@@ -361,7 +392,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 13);
+  assert.equal(preview.data.operationCount, 16);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -396,44 +427,67 @@ test("fake bridge previews and applies a bounded change set", async () => {
     levelId: "311",
   });
   assert.deepEqual(preview.data.changes[4]?.after?.rotation, { value: 90, unit: "degrees" });
+  assert.equal(preview.data.changes[5]?.type, "create_sheet");
   assert.deepEqual(preview.data.changes[5]?.target, {
+    document: "Sample.rvt",
+    sheetNumber: "A-201",
+    titleBlockTypeId: "9300",
+  });
+  assert.equal(preview.data.changes[5]?.after?.sheetNumber, "A-201");
+  assert.equal(preview.data.changes[6]?.type, "place_view_on_sheet");
+  assert.deepEqual(preview.data.changes[6]?.target, {
+    sheetId: "1101",
+    viewId: "1025",
+  });
+  assert.deepEqual(preview.data.changes[6]?.after?.center, {
+    x: { value: 250, unit: "mm", system: "metric" },
+    y: { value: 180, unit: "mm", system: "metric" },
+  });
+  assert.equal(preview.data.changes[7]?.type, "create_text_note");
+  assert.deepEqual(preview.data.changes[7]?.target, {
+    document: "Sample.rvt",
+    viewId: "1024",
+    textNoteTypeId: "9400",
+  });
+  assert.equal(preview.data.changes[7]?.after?.text, "MCP generated note");
+  assert.deepEqual(preview.data.changes[8]?.target, {
     elementId: "501",
   });
-  assert.deepEqual(preview.data.changes[5]?.after, {
+  assert.deepEqual(preview.data.changes[8]?.after, {
     translation,
   });
-  assert.equal(preview.data.changes[6]?.type, "rotate_element");
-  assert.deepEqual(preview.data.changes[6]?.after?.angle, { value: 90, unit: "degrees" });
-  assert.deepEqual(preview.data.changes[7]?.target, {
+  assert.equal(preview.data.changes[9]?.type, "rotate_element");
+  assert.deepEqual(preview.data.changes[9]?.after?.angle, { value: 90, unit: "degrees" });
+  assert.deepEqual(preview.data.changes[10]?.target, {
     sourceElementId: "501",
   });
-  assert.equal(preview.data.changes[8]?.type, "change_element_type");
-  assert.deepEqual(preview.data.changes[8]?.target, {
+  assert.equal(preview.data.changes[11]?.type, "change_element_type");
+  assert.deepEqual(preview.data.changes[11]?.target, {
     elementId: "501",
     typeId: "9002",
   });
-  assert.equal(preview.data.changes[9]?.type, "set_element_pinned");
-  assert.deepEqual(preview.data.changes[9]?.after, {
+  assert.equal(preview.data.changes[12]?.type, "set_element_pinned");
+  assert.deepEqual(preview.data.changes[12]?.after, {
     pinned: true,
     expectedPinned: false,
   });
-  assert.equal(preview.data.changes[10]?.type, "create_grid");
-  assert.deepEqual(preview.data.changes[10]?.target, {
+  assert.equal(preview.data.changes[13]?.type, "create_grid");
+  assert.deepEqual(preview.data.changes[13]?.target, {
     document: "Sample.rvt",
     name: "A",
   });
-  assert.equal(preview.data.changes[11]?.type, "create_floor");
-  assert.deepEqual(preview.data.changes[11]?.target, {
+  assert.equal(preview.data.changes[14]?.type, "create_floor");
+  assert.deepEqual(preview.data.changes[14]?.target, {
     document: "Sample.rvt",
     levelId: "311",
     floorTypeId: "9100",
   });
-  assert.equal(preview.data.changes[12]?.type, "create_room");
-  assert.deepEqual(preview.data.changes[12]?.target, {
+  assert.equal(preview.data.changes[15]?.type, "create_room");
+  assert.deepEqual(preview.data.changes[15]?.target, {
     document: "Sample.rvt",
     levelId: "311",
   });
-  assert.deepEqual(preview.data.changes[12]?.after?.location, roomLocation);
+  assert.deepEqual(preview.data.changes[15]?.after?.location, roomLocation);
 
   const applyPayload = {
     ...changeSet,
@@ -450,18 +504,21 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 13);
+  assert.equal(applied.data.changedCount, 16);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
   assert.equal(applied.data.changes[3]?.type, "place_family_instance");
   assert.equal(applied.data.changes[4]?.type, "place_family_instance");
-  assert.equal(applied.data.changes[5]?.type, "move_element");
-  assert.equal(applied.data.changes[6]?.type, "rotate_element");
-  assert.equal(applied.data.changes[7]?.type, "copy_element");
-  assert.equal(applied.data.changes[8]?.type, "change_element_type");
-  assert.equal(applied.data.changes[9]?.type, "set_element_pinned");
-  assert.equal(applied.data.changes[10]?.type, "create_grid");
-  assert.equal(applied.data.changes[11]?.type, "create_floor");
-  assert.equal(applied.data.changes[12]?.type, "create_room");
+  assert.equal(applied.data.changes[5]?.type, "create_sheet");
+  assert.equal(applied.data.changes[6]?.type, "place_view_on_sheet");
+  assert.equal(applied.data.changes[7]?.type, "create_text_note");
+  assert.equal(applied.data.changes[8]?.type, "move_element");
+  assert.equal(applied.data.changes[9]?.type, "rotate_element");
+  assert.equal(applied.data.changes[10]?.type, "copy_element");
+  assert.equal(applied.data.changes[11]?.type, "change_element_type");
+  assert.equal(applied.data.changes[12]?.type, "set_element_pinned");
+  assert.equal(applied.data.changes[13]?.type, "create_grid");
+  assert.equal(applied.data.changes[14]?.type, "create_floor");
+  assert.equal(applied.data.changes[15]?.type, "create_room");
 });

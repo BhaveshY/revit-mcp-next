@@ -27,7 +27,7 @@ Use this sequence when the user asks what sheets/views exist, which views are pl
 4. `revit.catalog` with `kind: "titleBlocks"` and `preset: "sheet"` when sheet creation or title block availability matters.
 5. `revit.catalog` with `kind: "viewFamilyTypes"` when plan/section/elevation view creation is being evaluated.
 
-The current release exposes view/sheet inventory and discovery. Sheet/view creation operations should still be treated as roadmap work unless a later release adds them to `preview_change_set`.
+The current release also supports `create_sheet` and `place_view_on_sheet` through `preview_change_set`. Use `titleBlockTypeId` from `revit.catalog kind=titleBlocks`; note that sheet `titleBlockIds` returned by `revit.get_sheets` are placed title block instance IDs, not type IDs. For `place_view_on_sheet`, collect existing `placedViews` first and choose an unplaced printable non-template view. `center` is in sheet-space coordinates.
 
 ## Annotation Planning
 
@@ -38,7 +38,7 @@ Use this sequence when the user asks about tags, text notes, or dimensions:
 3. `revit.catalog` with `kind: "dimensionTypes"` and `preset: "annotation"` for dimension styles.
 4. `revit.catalog` with `kind: "tagTypes"` and `preset: "annotation"` for available tag symbols.
 
-The current release exposes annotation type discovery. Creating tags, text notes, and dimensions should remain roadmap work until those operations are available through `preview_change_set`.
+The current release supports `create_text_note` through `preview_change_set`. Tags and dimensions remain deferred until tag/category validation and reference discovery are added.
 
 ## Walls, Floor, And Room
 

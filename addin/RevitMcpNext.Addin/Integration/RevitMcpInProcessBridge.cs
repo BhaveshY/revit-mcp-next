@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 using Autodesk.Revit.UI;
 using RevitMcpNext.Addin.Revit;
@@ -130,12 +132,55 @@ namespace RevitMcpNext.Addin
                 response.Data = data;
             }
 
-            data["inProcessBridge"] = new Dictionary<string, object>
+            var bridgeStatus = new Dictionary<string, object>
             {
                 ["addinHandlerActive"] = addinHandlerActive,
                 ["handler"] = addinHandlerActive ? "configuredAddin" : "directFallback",
                 ["directFallbackActive"] = !addinHandlerActive
             };
+
+            foreach (KeyValuePair<string, object> entry in GetLoadedAssemblyIdentity())
+            {
+                bridgeStatus[entry.Key] = entry.Value;
+            }
+
+            data["inProcessBridge"] = bridgeStatus;
+        }
+
+        private static Dictionary<string, object> GetLoadedAssemblyIdentity()
+        {
+            var identity = new Dictionary<string, object>();
+
+            try
+            {
+                string assemblyPath = typeof(RevitMcpInProcessBridge).Assembly.Location;
+                if (!string.IsNullOrWhiteSpace(assemblyPath))
+                {
+                    identity["assemblyPath"] = assemblyPath;
+                    if (File.Exists(assemblyPath))
+                    {
+                        identity["assemblySha256"] = ComputeSha256(assemblyPath);
+                        FileVersionInfo version = FileVersionInfo.GetVersionInfo(assemblyPath);
+                        if (!string.IsNullOrWhiteSpace(version.FileVersion)) identity["fileVersion"] = version.FileVersion;
+                        if (!string.IsNullOrWhiteSpace(version.ProductVersion)) identity["productVersion"] = version.ProductVersion;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                identity["assemblyIdentityError"] = ex.Message;
+            }
+
+            return identity;
+        }
+
+        private static string ComputeSha256(string path)
+        {
+            using (SHA256 sha256 = SHA256.Create())
+            using (FileStream stream = File.OpenRead(path))
+            {
+                return BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
+            }
         }
 
         private static BridgeRequestEnvelope ParseRequest(string requestJson)
