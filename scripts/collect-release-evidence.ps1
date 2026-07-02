@@ -306,6 +306,47 @@ function Resolve-LiveSmokeSummaryPath($EvidencePath) {
     throw "Live Revit smoke evidence must include smoke-summary.json with status=passed. Missing under: $resolved"
 }
 
+function Get-StringArray($Value) {
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [System.Array]) {
+        return @($Value | ForEach-Object { [string] $_ })
+    }
+
+    return @([string] $Value)
+}
+
+function Test-LiveSmokeOperationAttempted($Summary, [string] $OperationType) {
+    $coveredOperations = Get-StringArray $Summary.coveredOperations
+    if ($coveredOperations -contains $OperationType) {
+        return $true
+    }
+
+    foreach ($skipped in @($Summary.skippedOperations)) {
+        if ($null -eq $skipped) {
+            continue
+        }
+
+        if ($skipped -is [string] -and [string] $skipped -eq $OperationType) {
+            return $true
+        }
+
+        if ([string] $skipped.type -eq $OperationType) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Assert-LiveSmokeOperationAttempted($Summary, [string] $OperationType, [string] $SummaryPath) {
+    if (-not (Test-LiveSmokeOperationAttempted $Summary $OperationType)) {
+        throw "Live Revit smoke summary must cover or explicitly skip '$OperationType'. Summary: $SummaryPath"
+    }
+}
+
 function Read-PassedLiveSmokeSummary($EvidencePath) {
     $summaryPath = Resolve-LiveSmokeSummaryPath $EvidencePath
     $summary = Read-JsonFile $summaryPath
@@ -316,6 +357,9 @@ function Read-PassedLiveSmokeSummary($EvidencePath) {
     if ($summary.schemaVersion -ne 1) {
         throw "Live Revit smoke summary has unexpected schemaVersion: $($summary.schemaVersion). Summary: $summaryPath"
     }
+
+    Assert-LiveSmokeOperationAttempted $summary "tag_room" $summaryPath
+    Assert-LiveSmokeOperationAttempted $summary "tag_element" $summaryPath
 
     return [ordered] @{
         path = $summaryPath

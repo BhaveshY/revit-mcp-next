@@ -237,6 +237,8 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `create_sheet`: create a sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId` from `revit.catalog kind=titleBlocks`.
 - `place_view_on_sheet`: place an eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`.
 - `create_text_note`: create a text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
+- `tag_room`: create a room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`.
+- `tag_element`: create an independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `hasLeader`, and optional `orientation`.
 - `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
 - `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
 - `copy_element`: copy one model element by an explicit 3D translation vector.
@@ -246,7 +248,7 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 
 `revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
 
-Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
+Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`, including room tag types and independent tag symbols. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
 
 See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences covering model audit, room/wall/floor creation, family placement preview, selected element updates, and blocked preview recovery.
 

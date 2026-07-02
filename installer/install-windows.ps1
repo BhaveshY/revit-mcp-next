@@ -629,6 +629,8 @@ $clientDiscoveryContent = [ordered] @{
         "create_sheet",
         "place_view_on_sheet",
         "create_text_note",
+        "tag_room",
+        "tag_element",
         "create_grid",
         "create_floor",
         "create_room",

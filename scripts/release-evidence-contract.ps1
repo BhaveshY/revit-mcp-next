@@ -343,7 +343,10 @@ try {
         documentFingerprint = "doc-synthetic-evidence-contract"
         coveredTools = @("revit.status", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level", "create_wall", "create_room")
-        skippedOperations = @()
+        skippedOperations = @(
+            @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },
+            @{ type = "tag_element"; reason = "Synthetic evidence contract does not load element tag families." }
+        )
     } | ConvertTo-Json -Depth 8) -Encoding UTF8
 
     $failedLiveSmokeRoot = Join-Path $runRoot "live-failed"

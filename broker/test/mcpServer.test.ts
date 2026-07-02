@@ -360,6 +360,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "create_sheet",
       "place_view_on_sheet",
       "create_text_note",
+      "tag_room",
+      "tag_element",
       "move_element",
       "rotate_element",
       "copy_element",
@@ -383,6 +385,11 @@ test("broker exposes annotated tools with output schemas and callable structured
       "text",
       "position",
       "textNoteTypeId",
+      "roomId",
+      "elementId",
+      "tagTypeId",
+      "hasLeader",
+      "orientation",
       "width",
       "height",
       "structural",
@@ -487,6 +494,28 @@ test("broker exposes annotated tools with output schemas and callable structured
         textNoteTypeId: "9400",
         width: { value: 1200, unit: "mm", system: "metric" },
         rotation: { value: 0, unit: "degrees" },
+      },
+      {
+        type: "tag_room",
+        roomId: "601",
+        viewId: "1024",
+        location: roomLocation,
+        tagTypeId: "9700",
+        hasLeader: false,
+        orientation: "Horizontal",
+      },
+      {
+        type: "tag_element",
+        elementId: "501",
+        viewId: "1024",
+        tagTypeId: "9701",
+        position: {
+          x: { value: 2200, unit: "mm", system: "metric" },
+          y: { value: 450, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+        hasLeader: true,
+        orientation: "Horizontal",
       },
       {
         type: "move_element",
@@ -635,7 +664,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(apply.isError, undefined);
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 15);
+    assert.equal(apply.structuredContent?.data?.changedCount, 17);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
 
     const invalidPreview = (await client.callTool({

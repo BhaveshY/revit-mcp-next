@@ -38,7 +38,7 @@ Use this sequence when the user asks about tags, text notes, or dimensions:
 3. `revit.catalog` with `kind: "dimensionTypes"` and `preset: "annotation"` for dimension styles.
 4. `revit.catalog` with `kind: "tagTypes"` and `preset: "annotation"` for available tag symbols.
 
-The current release supports `create_text_note` through `preview_change_set`. Tags and dimensions remain deferred until tag/category validation and reference discovery are added.
+The current release supports `create_text_note`, `tag_room`, and `tag_element` through `preview_change_set`. For room tags, use a placed room from `revit.get_rooms`, a plan or section view from `revit.get_views`, and a room tag type from `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`. For element tags, query elements visible in the target view, then use a matching wall or multi-category tag `FamilySymbol` from `tagTypes`. Dimension creation remains deferred until robust reference discovery is added.
 
 ## Walls, Floor, And Room
 

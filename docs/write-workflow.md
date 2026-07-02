@@ -34,6 +34,8 @@ End-to-end supported operations:
 - `create_sheet`: create one sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId`; discover title block type IDs with `revit.catalog kind=titleBlocks preset=sheet`.
 - `place_view_on_sheet`: place one eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`; use `revit.get_sheets includePlacedViews=true` to avoid already placed views.
 - `create_text_note`: create one text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
+- `tag_room`: create one room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`; discover room tag types with `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`.
+- `tag_element`: create one independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `hasLeader`, and optional `orientation`; discover wall or multi-category tags with `revit.catalog kind=tagTypes`.
 - `move_element`: move one non-pinned model element by `elementId` and a `translation` vector.
 - `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`.
 - `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs.

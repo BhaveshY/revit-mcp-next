@@ -548,9 +548,46 @@ async function main() {
     const createdViewportId = documentationResult.placedView?.viewportId;
     const createdTextNoteId = documentationResult.textNote?.textNoteId;
 
-    const parameterGeneration = numericOrUndefined(
+    let annotationGeneration = numericOrUndefined(
       textNoteApply?.generation ?? placedViewApply?.generation ?? sheetApply?.generation ?? roomApply.generation
     );
+    const roomTagResult = await tryTagRoom(client, {
+      documentFingerprint,
+      expectedGeneration: annotationGeneration,
+      transactionPrefix: options.transactionPrefix,
+      runId,
+      preferredRoomId: roomId,
+      preferredLevelId: String(smokeLevelId),
+      preferredLocation: roomOperation.location,
+    });
+    if (roomTagResult.apply) {
+      annotationGeneration = numericOrUndefined(roomTagResult.apply.generation);
+    } else {
+      summary.skippedOperations.push({ type: "tag_room", reason: roomTagResult.reason });
+      console.log(`Tag room skipped: ${roomTagResult.reason}`);
+    }
+
+    const elementTagResult = await tryTagElement(client, {
+      documentFingerprint,
+      expectedGeneration: annotationGeneration,
+      transactionPrefix: options.transactionPrefix,
+      runId,
+      preferredElementId: wallId,
+      levelElevationMm: smokeLevelElevationMm,
+    });
+    if (elementTagResult.apply) {
+      annotationGeneration = numericOrUndefined(elementTagResult.apply.generation);
+    } else {
+      summary.skippedOperations.push({ type: "tag_element", reason: elementTagResult.reason });
+      console.log(`Tag element skipped: ${elementTagResult.reason}`);
+    }
+
+    const roomTagApply = roomTagResult.apply;
+    const elementTagApply = elementTagResult.apply;
+    const createdRoomTagId = roomTagResult.roomTagId;
+    const createdElementTagId = elementTagResult.elementTagId;
+
+    const parameterGeneration = annotationGeneration;
     const parameterValue = `MCP-${runId}`;
     const parameterResult = await applyFirstReadySetParameter(client, {
       documentFingerprint,
@@ -785,6 +822,8 @@ async function main() {
       ...(sheetApply ? ["create_sheet"] : []),
       ...(placedViewApply ? ["place_view_on_sheet"] : []),
       ...(textNoteApply ? ["create_text_note"] : []),
+      ...(roomTagApply ? ["tag_room"] : []),
+      ...(elementTagApply ? ["tag_element"] : []),
       "set_parameter",
       ...(changeTypeApply ? ["change_element_type"] : []),
       "move_element",
@@ -821,6 +860,8 @@ async function main() {
         sheet: createdSheetId,
         viewport: createdViewportId,
         textNote: createdTextNoteId,
+        roomTag: createdRoomTagId,
+        elementTag: createdElementTagId,
         copiedWall: copiedWallId,
       },
       finalGeneration: numericOrUndefined(deleteApply.generation),
@@ -1647,6 +1688,228 @@ async function tryCreateTextNote(
   return { apply, textNoteId };
 }
 
+async function tryTagRoom(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredRoomId, preferredLevelId, preferredLocation }
+) {
+  const roomTagTypes = await catalog(client, {
+    kind: "tagTypes",
+    filter: { categories: ["OST_RoomTags"] },
+    preset: "annotation",
+    limit: 50,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(roomTagTypes, "tagTypes");
+  const tagType = roomTagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  if (!tagType) {
+    return { reason: "No room tag type was available in the active model." };
+  }
+
+  const views = await listAnnotationViews(client, documentFingerprint, ["FloorPlan", "CeilingPlan", "EngineeringPlan", "Section"]);
+  if (views.length === 0) {
+    return { reason: "No printable non-template plan or section view was available for room tags." };
+  }
+
+  let generation = expectedGeneration;
+  let lastBlockedReason = "";
+  for (const view of prioritizeByLevel(views, preferredLevelId)) {
+    const roomFilter = view.associatedLevelId ? { levelIds: [String(view.associatedLevelId)] } : {};
+    const rooms = await callRequiredTool(client, "revit.get_rooms", {
+      documentFingerprint,
+      filter: roomFilter,
+      fields: ["id", "number", "name", "levelId", "location"],
+      preset: "summary",
+      includeUnplaced: false,
+      limit: 100,
+      includeTotalCount: true,
+    });
+    const candidates = prioritizeById(Array.isArray(rooms.items) ? rooms.items : [], preferredRoomId);
+    for (const room of candidates) {
+      if (!room?.id) continue;
+      const location = roomTagLocation(room, preferredRoomId, preferredLocation);
+      if (!location) continue;
+      const operation = {
+        id: "tag-smoke-room",
+        type: "tag_room",
+        roomId: String(room.id),
+        viewId: String(view.id),
+        location,
+        tagTypeId: String(tagType.id),
+        hasLeader: false,
+        orientation: "Horizontal",
+      };
+      const changeSet = compactObject({
+        documentFingerprint,
+        expectedGeneration: generation,
+        transactionName: makeTransactionName(transactionPrefix, "tag room", runId),
+        operations: [operation],
+      });
+      const previewResult = await tryPreviewChangeSet(client, changeSet, "tag_room");
+      if (!previewResult.ready) {
+        lastBlockedReason = previewResult.reason;
+        continue;
+      }
+      const apply = await applyChangeSet(client, changeSet, previewResult.preview, "tag_room");
+      const change = findChange(apply, "tag_room");
+      const roomTagId = getCreatedElementId(change);
+      assert(roomTagId, "tag_room applied but did not return a room tag id.");
+      console.log(`Tag room OK: room ${room.id} tagged as ${roomTagId} in view ${view.id}`);
+      return { apply, roomTagId, roomId: String(room.id), viewId: String(view.id) };
+    }
+  }
+
+  return {
+    reason: lastBlockedReason
+      ? `No room tag candidate previewed ready. Last blocked reason: ${lastBlockedReason}`
+      : "No placed room with a taggable location was available in a printable plan or section view.",
+  };
+}
+
+async function tryTagElement(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredElementId, levelElevationMm }
+) {
+  let tagTypes = await catalog(client, {
+    kind: "tagTypes",
+    filter: { categories: ["OST_WallTags"] },
+    preset: "annotation",
+    limit: 50,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(tagTypes, "tagTypes");
+  let tagType = tagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  if (!tagType) {
+    tagTypes = await catalog(client, {
+      kind: "tagTypes",
+      filter: { categories: ["OST_MultiCategoryTags"] },
+      preset: "annotation",
+      limit: 50,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(tagTypes, "tagTypes");
+    tagType = tagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  }
+  if (!tagType) {
+    return { reason: "No wall or multi-category tag FamilySymbol was available in the active model." };
+  }
+
+  const views = await listAnnotationViews(client, documentFingerprint, ["FloorPlan", "CeilingPlan", "EngineeringPlan", "Section", "DraftingView"]);
+  if (views.length === 0) {
+    return { reason: "No printable non-template graphical view was available for element tags." };
+  }
+
+  let generation = expectedGeneration;
+  let lastBlockedReason = "";
+  for (const view of views) {
+    const query = await callRequiredTool(client, "revit.query", {
+      documentFingerprint,
+      filter: { viewId: String(view.id), categories: ["OST_Walls"] },
+      fields: ["id", "uniqueId", "category", "class", "name"],
+      preset: "summary",
+      limit: 100,
+      includeTotalCount: true,
+    });
+    const candidates = prioritizeById(Array.isArray(query.items) ? query.items : [], preferredElementId);
+    for (const element of candidates) {
+      if (!element?.id) continue;
+      const operation = {
+        id: "tag-smoke-element",
+        type: "tag_element",
+        elementId: String(element.id),
+        viewId: String(view.id),
+        tagTypeId: String(tagType.id),
+        position: pointMm(1000, 1000, numericOrDefault(levelElevationMm, 0)),
+        hasLeader: true,
+        orientation: "Horizontal",
+      };
+      const changeSet = compactObject({
+        documentFingerprint,
+        expectedGeneration: generation,
+        transactionName: makeTransactionName(transactionPrefix, "tag element", runId),
+        operations: [operation],
+      });
+      const previewResult = await tryPreviewChangeSet(client, changeSet, "tag_element");
+      if (!previewResult.ready) {
+        lastBlockedReason = previewResult.reason;
+        continue;
+      }
+      const apply = await applyChangeSet(client, changeSet, previewResult.preview, "tag_element");
+      const change = findChange(apply, "tag_element");
+      const elementTagId = getCreatedElementId(change);
+      assert(elementTagId, "tag_element applied but did not return an element tag id.");
+      console.log(`Tag element OK: element ${element.id} tagged as ${elementTagId} in view ${view.id}`);
+      return { apply, elementTagId, elementId: String(element.id), viewId: String(view.id) };
+    }
+  }
+
+  return {
+    reason: lastBlockedReason
+      ? `No element tag candidate previewed ready. Last blocked reason: ${lastBlockedReason}`
+      : "No wall visible in a printable non-template graphical view was available for element tags.",
+  };
+}
+
+async function listAnnotationViews(client, documentFingerprint, acceptedTypes) {
+  const result = await callRequiredTool(client, "revit.get_views", {
+    documentFingerprint,
+    filter: { isTemplate: false, isGraphical: true, canBePrinted: true },
+    preset: "summary",
+    limit: 500,
+    includeTotalCount: true,
+  });
+  assert(Array.isArray(result.items), "revit.get_views did not return an items array for annotation views.");
+  const accepted = new Set(acceptedTypes);
+  return result.items.filter((view) => typeof view?.id === "string" && accepted.has(viewTypeOf(view)));
+}
+
+async function tryPreviewChangeSet(client, changeSet, operationName) {
+  const preview = await callRequiredTool(client, "revit.preview_change_set", changeSet);
+  assert(Array.isArray(preview.changes), `${operationName} preview did not return changes.`);
+  if (preview.ready === true && preview.changes.every((change) => change.status === "ready")) {
+    assert(preview.previewId, `${operationName} preview did not return previewId.`);
+    assert(preview.changeSetHash, `${operationName} preview did not return changeSetHash.`);
+    console.log(`Preview OK: ${operationName} (${preview.previewId})`);
+    return { ready: true, preview };
+  }
+
+  const blocked = preview.changes.find((change) => change.status === "blocked");
+  return {
+    ready: false,
+    preview,
+    reason: blocked?.message ?? formatChanges(preview.changes),
+  };
+}
+
+function prioritizeByLevel(items, preferredLevelId) {
+  if (!preferredLevelId) return items;
+  return items.slice().sort((left, right) => {
+    const leftMatch = String(left?.associatedLevelId ?? "") === String(preferredLevelId) ? 0 : 1;
+    const rightMatch = String(right?.associatedLevelId ?? "") === String(preferredLevelId) ? 0 : 1;
+    return leftMatch - rightMatch;
+  });
+}
+
+function prioritizeById(items, preferredId) {
+  if (!preferredId) return items;
+  return items.slice().sort((left, right) => {
+    const leftMatch = String(left?.id ?? "") === String(preferredId) ? 0 : 1;
+    const rightMatch = String(right?.id ?? "") === String(preferredId) ? 0 : 1;
+    return leftMatch - rightMatch;
+  });
+}
+
+function roomTagLocation(room, preferredRoomId, preferredLocation) {
+  if (preferredLocation && String(room?.id ?? "") === String(preferredRoomId)) return preferredLocation;
+  if (room?.location?.x && room?.location?.y) {
+    return point2Mm(unitValueNumber(room.location.x), unitValueNumber(room.location.y));
+  }
+  return undefined;
+}
+
+function viewTypeOf(view) {
+  return String(view?.type ?? view?.viewType ?? "");
+}
+
 async function assertElementDeletedById(client, elementId) {
   const query = await callRequiredTool(client, "revit.query", {
     filter: { elementIds: [elementId] },
@@ -1899,18 +2162,20 @@ Runs a live Revit MCP smoke against the active Revit project:
   13. preview/apply create_sheet and read it back with revit.get_sheets
   14. preview/apply place_view_on_sheet when an unplaced printable view exists
   15. preview/apply create_text_note when the current view supports annotations
-  16. preview/apply set_parameter on the created wall
-  17. revit.catalog for compatible wall type changes
-  18. preview/apply change_element_type when an alternate valid type exists
-  19. preview/apply move_element
-  20. assert the wall Y location changed by --move-y-mm
-  21. preview/apply rotate_element
-  22. preview/apply copy_element
-  23. preview/apply set_element_pinned true
-  24. blocked preview for moving a pinned element
-  25. rejected apply for mismatched changeSetHash
-  26. preview/apply set_element_pinned false
-  27. preview/apply delete_element for the copied smoke wall
+  16. preview/apply tag_room when a room tag type, room, and plan/section view are available
+  17. preview/apply tag_element when a wall/multi-category tag type and visible wall are available
+  18. preview/apply set_parameter on the created wall
+  19. revit.catalog for compatible wall type changes
+  20. preview/apply change_element_type when an alternate valid type exists
+  21. preview/apply move_element
+  22. assert the wall Y location changed by --move-y-mm
+  23. preview/apply rotate_element
+  24. preview/apply copy_element
+  25. preview/apply set_element_pinned true
+  26. blocked preview for moving a pinned element
+  27. rejected apply for mismatched changeSetHash
+  28. preview/apply set_element_pinned false
+  29. preview/apply delete_element for the copied smoke wall
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

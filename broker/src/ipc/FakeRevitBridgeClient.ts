@@ -295,7 +295,18 @@ const catalogItems: FakeCatalogItem[] = [
     builtInCategory: "OST_RoomTags",
     name: "Room Tag",
     familyName: "Room Tag",
-    familyId: "9699",
+    isActive: true,
+  },
+  {
+    kind: "tagTypes",
+    id: "9701",
+    uniqueId: "wall-tag-symbol-9701",
+    class: "FamilySymbol",
+    category: "Wall Tags",
+    builtInCategory: "OST_WallTags",
+    name: "Wall Tag",
+    familyName: "Wall Tag",
+    familyId: "9698",
     isActive: true,
   },
 ];
@@ -1025,7 +1036,14 @@ function projectRoom(room: RoomSummary, fields: string[]): RoomSummary {
 
 function matchesCatalogFilter(item: CatalogItem, filter: CatalogRequest["filter"]): boolean {
   if (!filter) return true;
-  if (filter.categories?.length && !filter.categories.some((category) => equalsCatalogToken(category, item.category))) {
+  if (
+    filter.categories?.length &&
+    !filter.categories.some(
+      (category) =>
+        equalsCatalogToken(category, item.category) ||
+        equalsCatalogToken(category, item.builtInCategory),
+    )
+  ) {
     return false;
   }
   if (filter.classes?.length && !filter.classes.some((className) => equalsCatalogToken(className, item.class))) {
@@ -1130,6 +1148,20 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         document: activeDocument.title,
         viewId: operation.viewId,
         textNoteTypeId: operation.textNoteTypeId,
+      };
+    case "tag_room":
+      return {
+        document: activeDocument.title,
+        roomId: operation.roomId,
+        viewId: operation.viewId,
+        tagTypeId: operation.tagTypeId,
+      };
+    case "tag_element":
+      return {
+        document: activeDocument.title,
+        elementId: operation.elementId,
+        viewId: operation.viewId,
+        tagTypeId: operation.tagTypeId,
       };
     case "move_element":
       return {
@@ -1236,6 +1268,28 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         width: operation.width,
         rotation: operation.rotation,
       };
+    case "tag_room":
+      return {
+        id: "1304",
+        uniqueId: "roomtag-1304",
+        roomId: operation.roomId,
+        viewId: operation.viewId,
+        tagTypeId: operation.tagTypeId,
+        location: operation.location,
+        hasLeader: operation.hasLeader ?? false,
+        orientation: operation.orientation ?? "Horizontal",
+      };
+    case "tag_element":
+      return {
+        id: "1305",
+        uniqueId: "elementtag-1305",
+        elementId: operation.elementId,
+        viewId: operation.viewId,
+        tagTypeId: operation.tagTypeId,
+        position: operation.position,
+        hasLeader: operation.hasLeader ?? false,
+        orientation: operation.orientation ?? "Horizontal",
+      };
     case "move_element":
       return {
         translation: operation.translation,
@@ -1304,6 +1358,8 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
     operation.type === "create_sheet" ||
     operation.type === "place_view_on_sheet" ||
     operation.type === "create_text_note" ||
+    operation.type === "tag_room" ||
+    operation.type === "tag_element" ||
     operation.type === "create_grid" ||
     operation.type === "create_floor" ||
     operation.type === "create_room" ||

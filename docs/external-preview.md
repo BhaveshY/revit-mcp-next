@@ -69,12 +69,12 @@ The preview is useful for agent workflows that need:
 - model statistics and material quantity reads
 - parameter discovery before edits
 - type/family/title-block/view-family/annotation catalog discovery
-- guarded preview/apply writes for levels, grids, walls, floors, rooms, family placement, parameter changes, movement, rotation, copy, type changes, pinning, and guarded deletes
+- guarded preview/apply writes for levels, grids, walls, floors, rooms, family placement, sheets, view placement, text notes, room tags, element tags, parameter changes, movement, rotation, copy, type changes, pinning, and guarded deletes
 - pyRevit and Dynamo in-process examples for hosted automation
 
 ## Known Preview Limits
 
 - No public CA/release certificate is assumed.
 - Hosted pyRevit and Dynamo evidence should be collected for production release claims.
-- Annotation creation, dimensions, MEP line-based elements, structural framing systems, ceilings, roofs, and view override workflows are not implemented yet.
+- Dimension creation, MEP line-based elements, structural framing systems, ceilings, roofs, and view override workflows are not implemented yet. Annotation support currently covers text notes, room tags, and independent element tags.
 - Real-model destructive workflow coverage is still intentionally conservative. Use disposable models for preview testing.

@@ -23,6 +23,7 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | Wall subset of `create_line_based_element` | Covered as guarded `create_wall` preview/apply operation. |
 | Floor subset of `create_surface_based_element` | Covered as guarded `create_floor` preview/apply operation. |
 | `create_room` | Covered as guarded `create_room` preview/apply operation with level/location input and duplicate-number protection by default, with live smoke coverage in the Revit 2024 smoke workflow. |
+| `tag_walls` / `tag_rooms` | Covered as guarded `tag_element` and `tag_room` preview/apply operations for view-scoped wall/multi-category tags and room tags. Tag type discovery is through `revit.catalog kind=tagTypes`. |
 | Door/window/furniture subset of `create_point_based_element` | Covered for first production cases as guarded `place_family_instance` preview/apply operation. It supports wall-hosted doors/windows and level-based furniture/equipment/fixtures discovered through `revit.catalog kind=familySymbols preset=placement`, with symbol, host, level, pinned-host, activation, rotation, and flip validation. |
 | Parts of `operate_element` | Covered by guarded `set_parameter`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, and `set_element_pinned`. |
 | `delete_element` | Covered as high-risk guarded `delete_element` preview/apply operation with optional `expectedUniqueId`, `expectedPinned`, and `allowPinned` guards. |
@@ -36,7 +37,6 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | `create_structural_framing_system` | Missing. | Add as a dedicated structural operation after catalog support for beam symbols and levels is validated. |
 | Beam/pipe/duct/conduit subsets of `create_line_based_element` | Missing. | Add separate operations per domain rather than one overloaded tool. |
 | Ceiling/roof subsets of `create_surface_based_element` | Missing. | Add separate `create_ceiling` and `create_roof` operations after type/catalog and host constraints are validated. |
-| `tag_walls` / `tag_rooms` | Missing. | Add view-scoped annotation operations with selected/current-view limits. |
 | `color_splash` / color parts of `operate_element` | Missing. | Add view override operations guarded by view id and category/element limits. |
 | `store_project_data`, `store_room_data`, `query_stored_data` | Missing by design. | Defer unless local persistence is explicitly required; current architecture favors live bounded reads over stale local cache. |
 | `say_hello` | Not needed. | Covered by `revit.status` and doctor/smoke diagnostics. |
@@ -45,6 +45,6 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 ## Current Priority Order
 
 1. Prove signed no-prompt loading, live Revit 2024 smoke, pyRevit smoke, and Dynamo smoke from the exact release package for each public release candidate.
-2. Add dimension and tagging operations after robust view/reference validation.
+2. Add dimension operations after robust reference discovery and preview messages.
 3. Add beam/pipe/duct/conduit and ceiling/roof operations as separate typed operations after catalog and host constraints are validated.
 4. Keep `store_project_data`, `store_room_data`, `query_stored_data`, and `send_code_to_revit` explicitly deferred unless separate designs are approved.

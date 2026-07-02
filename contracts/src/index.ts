@@ -657,6 +657,8 @@ export type ChangeOperationType =
   | "create_sheet"
   | "place_view_on_sheet"
   | "create_text_note"
+  | "tag_room"
+  | "tag_element"
   | "move_element"
   | "rotate_element"
   | "copy_element"
@@ -669,6 +671,8 @@ export type ChangeOperationType =
 export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
+export type RoomTagOrientation = "Horizontal" | "Vertical" | "Model";
+export type ElementTagOrientation = "Horizontal" | "Vertical" | "AnyModelDirection";
 
 export interface ChangeOperationBase {
   id?: string;
@@ -733,6 +737,26 @@ export interface CreateTextNoteOperation extends ChangeOperationBase {
   textNoteTypeId?: ElementId;
   width?: UnitValue;
   rotation?: AngleValue;
+}
+
+export interface TagRoomOperation extends ChangeOperationBase {
+  type: "tag_room";
+  roomId: ElementId;
+  viewId: ElementId;
+  location: Point2;
+  tagTypeId?: ElementId;
+  hasLeader?: boolean;
+  orientation?: RoomTagOrientation;
+}
+
+export interface TagElementOperation extends ChangeOperationBase {
+  type: "tag_element";
+  elementId: ElementId;
+  viewId: ElementId;
+  tagTypeId: ElementId;
+  position: Point3;
+  hasLeader?: boolean;
+  orientation?: ElementTagOrientation;
 }
 
 export interface MoveElementChangeOperation extends ChangeOperationBase {
@@ -809,6 +833,8 @@ export type ChangeOperation =
   | CreateSheetOperation
   | PlaceViewOnSheetOperation
   | CreateTextNoteOperation
+  | TagRoomOperation
+  | TagElementOperation
   | MoveElementChangeOperation
   | RotateElementChangeOperation
   | CopyElementChangeOperation

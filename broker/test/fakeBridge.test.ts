@@ -190,6 +190,28 @@ test("fake bridge returns bounded catalog result shape with compatibility paging
   assert.equal(secondPage.data.returnedCount, 1);
   assert.equal(secondPage.data.truncated, false);
   assert.equal(secondPage.data.items[0]?.id, "9002");
+
+  const roomTags = await bridge.catalog(
+    makeRequest(
+      "test",
+      "catalog",
+      "read",
+      {
+        kind: "tagTypes",
+        filter: { categories: ["OST_RoomTags"] },
+        preset: "annotation",
+        includeTotalCount: true,
+      },
+      30000
+    )
+  );
+
+  assert.equal(roomTags.ok, true);
+  if (!roomTags.ok) return;
+  assert.equal(roomTags.data.kind, "tagTypes");
+  assert.equal(roomTags.data.returnedCount, 1);
+  assert.equal(roomTags.data.totalCount, 1);
+  assert.equal(roomTags.data.items[0]?.builtInCategory, "OST_RoomTags");
 });
 
 test("request builder stamps current protocol and operation kind", () => {
@@ -385,6 +407,30 @@ test("fake bridge previews and applies a bounded change set", async () => {
         number: "101",
         department: "Operations",
       },
+      {
+        id: "op-17",
+        type: "tag_room" as const,
+        roomId: "601",
+        viewId: "1024",
+        location: roomLocation,
+        tagTypeId: "9700",
+        hasLeader: false,
+        orientation: "Horizontal" as const,
+      },
+      {
+        id: "op-18",
+        type: "tag_element" as const,
+        elementId: "501",
+        viewId: "1024",
+        tagTypeId: "9701",
+        position: {
+          x: { value: 2200, unit: "mm", system: "metric" as const },
+          y: { value: 450, unit: "mm", system: "metric" as const },
+          z: { value: 0, unit: "mm", system: "metric" as const },
+        },
+        hasLeader: true,
+        orientation: "Horizontal" as const,
+      },
     ],
   } satisfies ChangeSetRequest;
 
@@ -392,7 +438,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 16);
+  assert.equal(preview.data.operationCount, 18);
   assert.equal(preview.data.riskLevel, "medium");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -488,6 +534,22 @@ test("fake bridge previews and applies a bounded change set", async () => {
     levelId: "311",
   });
   assert.deepEqual(preview.data.changes[15]?.after?.location, roomLocation);
+  assert.equal(preview.data.changes[16]?.type, "tag_room");
+  assert.deepEqual(preview.data.changes[16]?.target, {
+    document: "Sample.rvt",
+    roomId: "601",
+    viewId: "1024",
+    tagTypeId: "9700",
+  });
+  assert.deepEqual(preview.data.changes[16]?.after?.location, roomLocation);
+  assert.equal(preview.data.changes[17]?.type, "tag_element");
+  assert.deepEqual(preview.data.changes[17]?.target, {
+    document: "Sample.rvt",
+    elementId: "501",
+    viewId: "1024",
+    tagTypeId: "9701",
+  });
+  assert.equal(preview.data.changes[17]?.after?.hasLeader, true);
 
   const applyPayload = {
     ...changeSet,
@@ -504,7 +566,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 16);
+  assert.equal(applied.data.changedCount, 18);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
@@ -521,4 +583,6 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.data.changes[13]?.type, "create_grid");
   assert.equal(applied.data.changes[14]?.type, "create_floor");
   assert.equal(applied.data.changes[15]?.type, "create_room");
+  assert.equal(applied.data.changes[16]?.type, "tag_room");
+  assert.equal(applied.data.changes[17]?.type, "tag_element");
 });

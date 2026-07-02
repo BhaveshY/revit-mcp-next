@@ -343,6 +343,28 @@ const createTextNoteOperationSchema = operationBaseSchema
     rotation: changeAngleValueSchema.optional().describe("Optional rotation in the target view."),
   })
   .strict();
+const tagRoomOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("tag_room"),
+    roomId: boundedId.describe("Room element ID to tag. Use revit.get_rooms first."),
+    viewId: boundedId.describe("Plan-like graphical view ID that can display the room. Use revit.get_views first."),
+    location: changePoint2Schema.describe("Room tag head location in the target view's level plane."),
+    tagTypeId: boundedId.optional().describe("Optional room tag type ID from revit.catalog kind=tagTypes preset=annotation."),
+    hasLeader: z.boolean().optional().describe("Whether to create the room tag with a leader. Defaults to false."),
+    orientation: z.enum(["Horizontal", "Vertical", "Model"]).optional().describe("Optional room tag orientation."),
+  })
+  .strict();
+const tagElementOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("tag_element"),
+    elementId: boundedId.describe("Model element ID to tag."),
+    viewId: boundedId.describe("Graphical target view ID that can display the element. Use revit.get_views and revit.query with viewId first."),
+    tagTypeId: boundedId.describe("Tag FamilySymbol ID from revit.catalog kind=tagTypes preset=annotation."),
+    position: changePoint3Schema.describe("Tag head position in the target view."),
+    hasLeader: z.boolean().optional().describe("Whether to create the element tag with a leader. Defaults to false."),
+    orientation: z.enum(["Horizontal", "Vertical", "AnyModelDirection"]).optional().describe("Optional independent tag orientation."),
+  })
+  .strict();
 const moveElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("move_element"),
@@ -430,6 +452,8 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   createSheetOperationSchema,
   placeViewOnSheetOperationSchema,
   createTextNoteOperationSchema,
+  tagRoomOperationSchema,
+  tagElementOperationSchema,
   moveElementOperationSchema,
   rotateElementOperationSchema,
   copyElementOperationSchema,
@@ -968,7 +992,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: toolOutputSchema,
       annotations: {
