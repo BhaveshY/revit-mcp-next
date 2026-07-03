@@ -693,6 +693,7 @@ export interface ChangeOperationBase {
 export interface SetParameterChangeOperation extends ChangeOperationBase {
   type: "set_parameter";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   parameterName: string;
   value: ChangeScalar;
 }
@@ -718,6 +719,7 @@ export interface PlaceFamilyInstanceOperation extends ChangeOperationBase {
   type: "place_family_instance";
   familySymbolId: ElementId;
   hostElementId?: ElementId;
+  expectedHostUniqueId?: UniqueId;
   levelId?: ElementId;
   location: Point3;
   rotation?: AngleValue;
@@ -753,6 +755,7 @@ export interface CreateTextNoteOperation extends ChangeOperationBase {
 export interface TagRoomOperation extends ChangeOperationBase {
   type: "tag_room";
   roomId: ElementId;
+  expectedUniqueId?: UniqueId;
   viewId: ElementId;
   location: Point2;
   tagTypeId?: ElementId;
@@ -763,6 +766,7 @@ export interface TagRoomOperation extends ChangeOperationBase {
 export interface TagElementOperation extends ChangeOperationBase {
   type: "tag_element";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   viewId: ElementId;
   tagTypeId: ElementId;
   position: Point3;
@@ -773,12 +777,14 @@ export interface TagElementOperation extends ChangeOperationBase {
 export interface MoveElementChangeOperation extends ChangeOperationBase {
   type: "move_element";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   translation: Point3;
 }
 
 export interface RotateElementChangeOperation extends ChangeOperationBase {
   type: "rotate_element";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   axisStart: Point3;
   axisEnd: Point3;
   angle: AngleValue;
@@ -787,18 +793,21 @@ export interface RotateElementChangeOperation extends ChangeOperationBase {
 export interface CopyElementChangeOperation extends ChangeOperationBase {
   type: "copy_element";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   translation: Point3;
 }
 
 export interface ChangeElementTypeOperation extends ChangeOperationBase {
   type: "change_element_type";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   typeId: ElementId;
 }
 
 export interface SetElementPinnedOperation extends ChangeOperationBase {
   type: "set_element_pinned";
   elementId: ElementId;
+  expectedUniqueId?: UniqueId;
   pinned: boolean;
   expectedPinned?: boolean;
 }

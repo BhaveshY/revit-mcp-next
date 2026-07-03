@@ -543,6 +543,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "pinned",
       "expectedPinned",
       "expectedUniqueId",
+      "expectedHostUniqueId",
       "allowPinned",
       "allowDependentDeletes",
       "expectedDeletedElementIds",
@@ -633,6 +634,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "set_parameter",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         parameterName: "Mark",
         value: "A-101",
       },
@@ -649,6 +651,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "place_family_instance",
         familySymbolId: "9200",
+        hostElementId: "501",
+        expectedHostUniqueId: "wall-501",
         levelId: "311",
         location: {
           x: { value: 1200, unit: "mm", system: "metric" },
@@ -690,6 +694,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "tag_room",
         roomId: "601",
+        expectedUniqueId: "room-601",
         viewId: "1024",
         location: roomLocation,
         tagTypeId: "9700",
@@ -699,6 +704,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "tag_element",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         viewId: "1024",
         tagTypeId: "9701",
         position: {
@@ -712,6 +718,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "move_element",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         translation: {
           x: { value: 0, unit: "mm", system: "metric" },
           y: { value: 250, unit: "mm", system: "metric" },
@@ -721,6 +728,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "rotate_element",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         axisStart: {
           x: { value: 0, unit: "mm", system: "metric" },
           y: { value: 0, unit: "mm", system: "metric" },
@@ -736,6 +744,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "copy_element",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         translation: {
           x: { value: 1200, unit: "mm", system: "metric" },
           y: { value: 0, unit: "mm", system: "metric" },
@@ -745,11 +754,13 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "change_element_type",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         typeId: "9002",
       },
       {
         type: "set_element_pinned",
         elementId: "501",
+        expectedUniqueId: "wall-501",
         pinned: true,
         expectedPinned: false,
       },
@@ -855,16 +866,17 @@ test("broker exposes annotated tools with output schemas and callable structured
       operationIndex: 0,
       type: "set_parameter",
       status: "ready",
-      target: { elementId: "501", parameterName: "Mark" },
+      target: { elementId: "501", uniqueId: "wall-501", parameterName: "Mark" },
       after: { value: "A-101" },
     });
     const familyPreviewChange = preview.structuredContent?.data?.changes?.find((change) => change.type === "place_family_instance");
     assert.deepEqual(familyPreviewChange?.target, {
       document: "Sample.rvt",
       familySymbolId: "9200",
+      hostElementId: "501",
+      hostUniqueId: "wall-501",
       levelId: "311",
     });
-    assert.equal(Object.hasOwn(familyPreviewChange?.target ?? {}, "hostElementId"), false);
 
     try {
       const missingMetadataApply = (await client.callTool({

@@ -403,7 +403,29 @@ async function main() {
     console.log(`Create wall OK: element ${wallId}`);
 
     const queriedWall = await queryWallById(client, wallId);
+    const wallUniqueId = String(queriedWall.uniqueId ?? "");
+    assert(wallUniqueId.length > 0, "Created smoke wall query did not return a uniqueId.");
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
+
+    await previewBlockedChangeSet(
+      client,
+      compactObject({
+        documentFingerprint,
+        expectedGeneration: numericOrUndefined(createApply.generation),
+        transactionName: makeTransactionName(options.transactionPrefix, "mismatched wall uniqueId preview", runId),
+        operations: [
+          {
+            id: "mismatched-wall-unique-id-preview",
+            type: "set_parameter",
+            elementId: wallId,
+            expectedUniqueId: `${wallUniqueId}-mismatch`,
+            parameterName: "Comments",
+            value: "blocked-by-unique-id-guard",
+          },
+        ],
+      }),
+      "mismatched wall uniqueId guard"
+    );
 
     const wallParameters = await callRequiredTool(client, "revit.describe_parameters", {
       documentFingerprint,
@@ -425,6 +447,7 @@ async function main() {
       transactionPrefix: options.transactionPrefix,
       runId,
       wallId,
+      wallUniqueId,
       levelId: String(smokeLevelId),
       levelElevationMm: smokeLevelElevationMm,
       wallLengthMm: options.wallLengthMm,
@@ -546,6 +569,8 @@ async function main() {
     assert(unitValueNumber(createdRoom.area) > 0, "revit.get_rooms returned the created room without positive area.");
     assert(createdRoom.isPlaced === true, "revit.get_rooms returned the created room without isPlaced=true.");
     assert(createdRoom.isEnclosed === true, "revit.get_rooms returned the created room without isEnclosed=true.");
+    const createdRoomUniqueId = String(createdRoom.uniqueId ?? "");
+    assert(createdRoomUniqueId.length > 0, "revit.get_rooms did not return the created room uniqueId.");
     console.log(`Create/read room OK: room ${roomNumber} (${roomId})`);
 
     const documentationResult = await tryDocumentationWorkflows(client, {
@@ -572,6 +597,7 @@ async function main() {
       transactionPrefix: options.transactionPrefix,
       runId,
       preferredRoomId: roomId,
+      preferredRoomUniqueId: createdRoomUniqueId,
       preferredLevelId: String(smokeLevelId),
       preferredLocation: roomOperation.location,
     });
@@ -609,6 +635,7 @@ async function main() {
       expectedGeneration: parameterGeneration,
       transactionName: makeTransactionName(options.transactionPrefix, "set wall parameter", runId),
       elementId: wallId,
+      expectedUniqueId: wallUniqueId,
       value: parameterValue,
       candidateNames: ["Comments", "Kommentare", "Mark", "Kennzeichen", "Markierung"],
     });
@@ -641,6 +668,7 @@ async function main() {
         id: "change-smoke-wall-type",
         type: "change_element_type",
         elementId: wallId,
+        expectedUniqueId: wallUniqueId,
         typeId: alternateWallType.id,
       };
       const changeTypeTransaction = makeTransactionName(options.transactionPrefix, "change wall type", runId);
@@ -669,6 +697,7 @@ async function main() {
       id: "move-smoke-wall",
       type: "move_element",
       elementId: wallId,
+      expectedUniqueId: wallUniqueId,
       translation: pointMm(0, options.moveYMm, 0),
     };
     const moveTransaction = makeTransactionName(options.transactionPrefix, "move wall", runId);
@@ -695,6 +724,7 @@ async function main() {
       id: "rotate-smoke-wall",
       type: "rotate_element",
       elementId: wallId,
+      expectedUniqueId: wallUniqueId,
       axisStart,
       axisEnd,
       angle: { value: 5, unit: "degrees" },
@@ -718,6 +748,7 @@ async function main() {
       id: "copy-smoke-wall",
       type: "copy_element",
       elementId: wallId,
+      expectedUniqueId: wallUniqueId,
       translation: pointMm(options.wallLengthMm + 1000, 0, 0),
     };
     const copyTransaction = makeTransactionName(options.transactionPrefix, "copy wall", runId);
@@ -734,6 +765,8 @@ async function main() {
     const copiedWallId = getCopiedElementId(copyChange);
     assert(copiedWallId, "copy_element applied but no copied element ID was returned.");
     const copiedWall = await queryWallById(client, copiedWallId);
+    const copiedWallUniqueId = String(copiedWall.uniqueId ?? "");
+    assert(copiedWallUniqueId.length > 0, "Copied smoke wall query did not return a uniqueId.");
     console.log(`Copy wall OK: source ${wallId} copied to ${copiedWallId}`);
 
     const pinGeneration = numericOrUndefined(copyApply.generation);
@@ -741,6 +774,7 @@ async function main() {
       id: "pin-smoke-wall",
       type: "set_element_pinned",
       elementId: copiedWallId,
+      expectedUniqueId: copiedWallUniqueId,
       pinned: true,
       expectedPinned: false,
     };
@@ -769,6 +803,7 @@ async function main() {
             id: "move-pinned-smoke-wall-preview",
             type: "move_element",
             elementId: copiedWallId,
+            expectedUniqueId: copiedWallUniqueId,
             translation: pointMm(0, options.moveYMm, 0),
           },
         ],
@@ -780,6 +815,7 @@ async function main() {
       id: "unpin-smoke-wall",
       type: "set_element_pinned",
       elementId: copiedWallId,
+      expectedUniqueId: copiedWallUniqueId,
       pinned: false,
       expectedPinned: true,
     };
@@ -808,7 +844,7 @@ async function main() {
       id: "delete-copied-smoke-wall",
       type: "delete_element",
       elementId: copiedWallId,
-      expectedUniqueId: copiedWall.uniqueId,
+      expectedUniqueId: copiedWallUniqueId,
       expectedPinned: false,
     });
     const deleteTransaction = makeTransactionName(options.transactionPrefix, "delete copied wall", runId);
@@ -1223,7 +1259,7 @@ async function queryWallById(client, wallId) {
 
 async function applyFirstReadySetParameter(
   client,
-  { documentFingerprint, expectedGeneration, transactionName, elementId, value, candidateNames }
+  { documentFingerprint, expectedGeneration, transactionName, elementId, expectedUniqueId, value, candidateNames }
 ) {
   const blockedMessages = [];
   for (const parameterName of candidateNames) {
@@ -1231,6 +1267,7 @@ async function applyFirstReadySetParameter(
       id: `set-smoke-wall-${parameterName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
       type: "set_parameter",
       elementId,
+      expectedUniqueId,
       parameterName,
       value,
     };
@@ -1265,7 +1302,7 @@ async function applyFirstReadySetParameter(
 
 async function tryPlaceFamilyInstance(
   client,
-  { documentFingerprint, expectedGeneration, transactionPrefix, runId, wallId, levelId, levelElevationMm, wallLengthMm }
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, wallId, wallUniqueId, levelId, levelElevationMm, wallLengthMm }
 ) {
   const hostedSymbols = await catalog(client, {
     kind: "familySymbols",
@@ -1291,6 +1328,7 @@ async function tryPlaceFamilyInstance(
       type: "place_family_instance",
       familySymbolId: String(symbol.id),
       hostElementId: wallId,
+      expectedHostUniqueId: wallUniqueId,
       levelId,
       location: pointMm(Math.max(600, Math.min(wallLengthMm / 2, wallLengthMm - 600)), 0, levelElevationMm),
       rotation: { value: 0, unit: "degrees" },
@@ -1715,7 +1753,16 @@ async function tryCreateTextNote(
 
 async function tryTagRoom(
   client,
-  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredRoomId, preferredLevelId, preferredLocation }
+  {
+    documentFingerprint,
+    expectedGeneration,
+    transactionPrefix,
+    runId,
+    preferredRoomId,
+    preferredRoomUniqueId,
+    preferredLevelId,
+    preferredLocation,
+  }
 ) {
   const roomTagTypes = await catalog(client, {
     kind: "tagTypes",
@@ -1742,7 +1789,7 @@ async function tryTagRoom(
     const rooms = await callRequiredTool(client, "revit.get_rooms", {
       documentFingerprint,
       filter: roomFilter,
-      fields: ["id", "number", "name", "levelId", "location"],
+      fields: ["id", "uniqueId", "number", "name", "levelId", "location"],
       preset: "summary",
       includeUnplaced: false,
       limit: 100,
@@ -1757,6 +1804,8 @@ async function tryTagRoom(
         id: "tag-smoke-room",
         type: "tag_room",
         roomId: String(room.id),
+        expectedUniqueId:
+          String(room.id) === String(preferredRoomId) ? preferredRoomUniqueId : stringOrUndefined(room.uniqueId),
         viewId: String(view.id),
         location,
         tagTypeId: String(tagType.id),
@@ -2101,7 +2150,13 @@ function makeTransactionName(prefix, action, runId) {
 }
 
 function compactObject(value) {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+  if (Array.isArray(value)) return value.map((entry) => compactObject(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, compactObject(entry)])
+  );
 }
 
 function numericOrUndefined(value) {
@@ -2182,26 +2237,28 @@ Runs a live Revit MCP smoke against the active Revit project:
   8. preview/apply create_floor
   9. preview/apply create_wall
   10. revit.query and revit.describe_parameters for created elements
-  11. preview/apply room boundary walls
-  12. preview/apply create_room, then revit.get_rooms read-back with positive area
-  13. preview/apply create_sheet and read it back with revit.get_sheets
-  14. preview/apply place_view_on_sheet when an unplaced printable view exists
-  15. preview/apply create_text_note when the current view supports annotations
-  16. preview/apply tag_room when a room tag type, room, and plan/section view are available
-  17. preview/apply tag_element when a wall/multi-category tag type and visible wall are available
-  18. preview/apply set_parameter on the created wall
-  19. revit.catalog for compatible wall type changes
-  20. preview/apply change_element_type when an alternate valid type exists
-  21. preview/apply move_element
-  22. assert the wall Y location changed by --move-y-mm
-  23. preview/apply rotate_element
-  24. preview/apply copy_element
-  25. preview/apply set_element_pinned true
-  26. blocked preview for moving a pinned element
-  27. rejected apply for mismatched changeSetHash
-  28. preview/apply set_element_pinned false
-  29. preview/apply delete_element for the copied smoke wall
-  30. revit.cancel_request no-op probe
+  11. blocked preview for mismatched expectedUniqueId
+  12. preview/apply place_family_instance with expectedHostUniqueId for hosted symbols or levelId-only for level-based symbols
+  13. preview/apply room boundary walls
+  14. preview/apply create_room, then revit.get_rooms read-back with positive area
+  15. preview/apply create_sheet and read it back with revit.get_sheets
+  16. preview/apply place_view_on_sheet when an unplaced printable view exists
+  17. preview/apply create_text_note when the current view supports annotations
+  18. preview/apply tag_room with expectedUniqueId when a room tag type, room, and plan/section view are available
+  19. preview/apply tag_element with expectedUniqueId when a wall/multi-category tag type and visible wall are available
+  20. preview/apply guarded set_parameter on the created wall
+  21. revit.catalog for compatible wall type changes
+  22. preview/apply guarded change_element_type when an alternate valid type exists
+  23. preview/apply guarded move_element
+  24. assert the wall Y location changed by --move-y-mm
+  25. preview/apply guarded rotate_element
+  26. preview/apply guarded copy_element
+  27. preview/apply guarded set_element_pinned true
+  28. blocked preview for moving a pinned element
+  29. rejected apply for mismatched changeSetHash
+  30. preview/apply guarded set_element_pinned false
+  31. preview/apply guarded delete_element for the copied smoke wall
+  32. revit.cancel_request no-op probe
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

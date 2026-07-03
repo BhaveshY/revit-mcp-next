@@ -346,6 +346,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         id: "op-1",
         type: "set_parameter" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         parameterName: "Mark",
         value: "A-101",
       },
@@ -371,6 +372,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         type: "place_family_instance" as const,
         familySymbolId: "9200",
         hostElementId: "501",
+        expectedHostUniqueId: "wall-501",
         levelId: "311",
         location: {
           x: { value: 1200, unit: "mm", system: "metric" as const },
@@ -426,12 +428,14 @@ test("fake bridge previews and applies a bounded change set", async () => {
         id: "op-9",
         type: "move_element" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         translation,
       },
       {
         id: "op-10",
         type: "rotate_element" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         axisStart: start,
         axisEnd: {
           x: { value: 0, unit: "mm", system: "metric" as const },
@@ -444,6 +448,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         id: "op-11",
         type: "copy_element" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         translation: {
           x: { value: 1200, unit: "mm", system: "metric" as const },
           y: { value: 0, unit: "mm", system: "metric" as const },
@@ -454,12 +459,14 @@ test("fake bridge previews and applies a bounded change set", async () => {
         id: "op-12",
         type: "change_element_type" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         typeId: "9002",
       },
       {
         id: "op-13",
         type: "set_element_pinned" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         pinned: true,
         expectedPinned: false,
       },
@@ -504,6 +511,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         id: "op-17",
         type: "tag_room" as const,
         roomId: "601",
+        expectedUniqueId: "room-601",
         viewId: "1024",
         location: roomLocation,
         tagTypeId: "9700",
@@ -514,6 +522,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
         id: "op-18",
         type: "tag_element" as const,
         elementId: "501",
+        expectedUniqueId: "wall-501",
         viewId: "1024",
         tagTypeId: "9701",
         position: {
@@ -561,6 +570,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
     document: "Sample.rvt",
     familySymbolId: "9200",
     hostElementId: "501",
+    hostUniqueId: "wall-501",
     levelId: "311",
   });
   assert.deepEqual(preview.data.changes[3]?.after?.location, {
@@ -602,6 +612,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.data.changes[7]?.after?.text, "MCP generated note");
   assert.deepEqual(preview.data.changes[8]?.target, {
     elementId: "501",
+    uniqueId: "wall-501",
   });
   assert.deepEqual(preview.data.changes[8]?.after, {
     translation,
@@ -610,10 +621,12 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.deepEqual(preview.data.changes[9]?.after?.angle, { value: 90, unit: "degrees" });
   assert.deepEqual(preview.data.changes[10]?.target, {
     sourceElementId: "501",
+    sourceUniqueId: "wall-501",
   });
   assert.equal(preview.data.changes[11]?.type, "change_element_type");
   assert.deepEqual(preview.data.changes[11]?.target, {
     elementId: "501",
+    uniqueId: "wall-501",
     typeId: "9002",
   });
   assert.equal(preview.data.changes[12]?.type, "set_element_pinned");
@@ -642,6 +655,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.deepEqual(preview.data.changes[16]?.target, {
     document: "Sample.rvt",
     roomId: "601",
+    uniqueId: "room-601",
     viewId: "1024",
     tagTypeId: "9700",
   });
@@ -650,6 +664,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.deepEqual(preview.data.changes[17]?.target, {
     document: "Sample.rvt",
     elementId: "501",
+    uniqueId: "wall-501",
     viewId: "1024",
     tagTypeId: "9701",
   });
@@ -702,4 +717,110 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(cancel.data.cancelled, false);
   assert.equal(cancel.data.requestId, "fake-request-id");
   assert.match(cancel.data.message, /No queued fake request/);
+});
+
+test("fake bridge blocks mismatched write identity guards", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const point = {
+    x: { value: 0, unit: "mm", system: "metric" as const },
+    y: { value: 0, unit: "mm", system: "metric" as const },
+    z: { value: 0, unit: "mm", system: "metric" as const },
+  };
+  const roomPoint = {
+    x: { value: 0, unit: "mm", system: "metric" as const },
+    y: { value: 0, unit: "mm", system: "metric" as const },
+  };
+  const operations = [
+    {
+      type: "set_parameter",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      parameterName: "Mark",
+      value: "A-101",
+    },
+    {
+      type: "tag_room",
+      roomId: "601",
+      expectedUniqueId: "not-room-601",
+      viewId: "1024",
+      location: roomPoint,
+    },
+    {
+      type: "tag_element",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      viewId: "1024",
+      tagTypeId: "9701",
+      position: point,
+    },
+    {
+      type: "move_element",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      translation: point,
+    },
+    {
+      type: "rotate_element",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      axisStart: point,
+      axisEnd: { ...point, z: { value: 1, unit: "m", system: "metric" as const } },
+      angle: { value: 90, unit: "degrees" as const },
+    },
+    {
+      type: "copy_element",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      translation: point,
+    },
+    {
+      type: "change_element_type",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      typeId: "9002",
+    },
+    {
+      type: "set_element_pinned",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+      pinned: true,
+    },
+    {
+      type: "delete_element",
+      elementId: "501",
+      expectedUniqueId: "not-wall-501",
+    },
+    {
+      type: "place_family_instance",
+      familySymbolId: "9200",
+      hostElementId: "501",
+      expectedHostUniqueId: "not-wall-501",
+      levelId: "311",
+      location: point,
+    },
+  ] satisfies ChangeSetRequest["operations"];
+
+  const preview = await bridge.previewChange(
+    makeRequest(
+      "session",
+      "preview_change_set",
+      "preview",
+      {
+        transactionName: "Mismatched identity guard",
+        operations,
+      } satisfies ChangeSetRequest,
+      30000
+    )
+  );
+
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.equal(preview.data.ready, false);
+  assert.equal(preview.data.changes.length, operations.length);
+  for (const [index, change] of preview.data.changes.entries()) {
+    assert.equal(change.status, "blocked", `operation ${index} should be blocked`);
+  }
+  assert.match(preview.data.changes[0]?.message ?? "", /Element 501 uniqueId did not match expectedUniqueId/);
+  assert.match(preview.data.changes[1]?.message ?? "", /Room 601 uniqueId did not match expectedUniqueId/);
+  assert.match(preview.data.changes[9]?.message ?? "", /Host element 501 uniqueId did not match expectedHostUniqueId/);
 });

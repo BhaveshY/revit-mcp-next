@@ -38,7 +38,7 @@ Use this sequence when the user asks about tags, text notes, or dimensions:
 3. `revit.catalog` with `kind: "dimensionTypes"` and `preset: "annotation"` for dimension styles.
 4. `revit.catalog` with `kind: "tagTypes"` and `preset: "annotation"` for available tag symbols.
 
-The current release supports `create_text_note`, `tag_room`, and `tag_element` through `preview_change_set`. For room tags, use a placed room from `revit.get_rooms`, a plan or section view from `revit.get_views`, and a room tag type from `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`. For element tags, query elements visible in the target view, then use a matching wall or multi-category tag `FamilySymbol` from `tagTypes`. Dimension creation remains deferred until robust reference discovery is added.
+The current release supports `create_text_note`, `tag_room`, and `tag_element` through `preview_change_set`. For room tags, use a placed room from `revit.get_rooms`, keep targeting by `roomId`, pass `expectedUniqueId` when the room `uniqueId` is known, choose a plan or section view from `revit.get_views`, and choose a room tag type from `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`. For element tags, query elements visible in the target view, then use a matching wall or multi-category tag `FamilySymbol` from `tagTypes`. Dimension creation remains deferred until robust reference discovery is added.
 
 ## Walls, Floor, And Room
 
@@ -75,18 +75,20 @@ Use `revit.catalog` with `kind: "familySymbols"` and `preset: "placement"`. For 
 {"filter":{"categories":["OST_Walls"]},"fields":["id","uniqueId","category","class","name","levelId"],"limit":5}
 ```
 
-Then preview `place_family_instance` only when a symbol and any required host exist:
+Then preview `place_family_instance` only when a symbol and any required host exist. For hosted doors/windows, keep targeting the wall by `hostElementId` and echo the wall `uniqueId` as `expectedHostUniqueId`:
 
 ```json
 {
   "documentFingerprint": "doc",
   "expectedGeneration": 12,
-  "transactionName": "Place furniture sample",
+  "transactionName": "Place hosted door sample",
   "operations": [
     {
-      "id": "place-chair",
+      "id": "place-door",
       "type": "place_family_instance",
       "familySymbolId": "12001",
+      "hostElementId": "501",
+      "expectedHostUniqueId": "wall-501-unique-id",
       "levelId": "311",
       "location": {"x":{"value":1800,"unit":"mm"},"y":{"value":500,"unit":"mm"},"z":{"value":0,"unit":"mm"}},
       "rotation": {"value":0,"unit":"degrees"}
@@ -94,6 +96,8 @@ Then preview `place_family_instance` only when a symbol and any required host ex
   ]
 }
 ```
+
+For level-based furniture/equipment/fixture placement without a host, use `levelId` and omit `expectedHostUniqueId`.
 
 Treat a blocked placement preview as a normal discovery result: the model may have no compatible symbols, the symbol may need a wall/workplane host, or the installed add-in may not support placement for that family class yet. Do not fall back to guessed IDs.
 
@@ -113,13 +117,13 @@ For selected edits:
   "expectedGeneration": 12,
   "transactionName": "Update selected element",
   "operations": [
-    {"id":"mark","type":"set_parameter","elementId":"501","parameterName":"Mark","value":"A-101"},
-    {"id":"type","type":"change_element_type","elementId":"501","typeId":"9002"}
+    {"id":"mark","type":"set_parameter","elementId":"501","expectedUniqueId":"wall-501-unique-id","parameterName":"Mark","value":"A-101"},
+    {"id":"type","type":"change_element_type","elementId":"501","expectedUniqueId":"wall-501-unique-id","typeId":"9002"}
   ]
 }
 ```
 
-Use `expectedUniqueId` on destructive operations and avoid changing pinned elements unless the user explicitly asks for pin state changes. For `delete_element`, inspect the previewed `deletedElementIds`; if Revit reports dependents, only continue with `allowDependentDeletes` or exact `expectedDeletedElementIds` after review.
+Use `expectedUniqueId` on every existing-element write when a prior read returned `uniqueId`, and avoid changing pinned elements unless the user explicitly asks for pin state changes. For `delete_element`, inspect the previewed `deletedElementIds`; if Revit reports dependents, only continue with `allowDependentDeletes` or exact `expectedDeletedElementIds` after review.
 
 ## Blocked Preview Recovery
 

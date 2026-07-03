@@ -232,23 +232,25 @@ All tools return a strict MCP `structuredContent` envelope: `data`, `warnings`, 
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 
-- `set_parameter`: set a writable instance parameter by element ID and parameter name.
+For existing-element writes, keep using Revit `elementId` or operation-specific IDs such as `roomId` as the target and pass `expectedUniqueId` when a prior read returned `uniqueId`. For wall-hosted family placement, keep using `hostElementId` and pass `expectedHostUniqueId` when the host wall `uniqueId` is known. Preview blocks mismatches before apply.
+
+- `set_parameter`: set a writable instance parameter by element ID and parameter name, optionally guarded by `expectedUniqueId`.
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
 - `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place a room by `levelId` and 2D `location`, with optional `name`, `number`, `department`, and `allowDuplicateNumber`.
-- `place_family_instance`: place first-case wall-hosted door/window symbols by `familySymbolId`, `hostElementId`, and `location`, or level-based furniture/equipment/fixture symbols by `familySymbolId`, `levelId`, and `location`.
+- `place_family_instance`: place first-case wall-hosted door/window symbols by `familySymbolId`, `hostElementId`, optional `expectedHostUniqueId`, and `location`, or level-based furniture/equipment/fixture symbols by `familySymbolId`, `levelId`, and `location`.
 - `create_sheet`: create a sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId` from `revit.catalog kind=titleBlocks`.
 - `place_view_on_sheet`: place an eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`.
 - `create_text_note`: create a text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
-- `tag_room`: create a room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`.
-- `tag_element`: create an independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `hasLeader`, and optional `orientation`.
-- `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector.
-- `rotate_element`: rotate one non-pinned model element around an explicit axis and angle.
-- `copy_element`: copy one model element by an explicit 3D translation vector.
-- `change_element_type`: change one non-pinned model element to a compatible Revit type ID discovered through `revit.catalog`.
-- `set_element_pinned`: pin or unpin one model element, with optional `expectedPinned` guard.
+- `tag_room`: create a room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `expectedUniqueId`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`.
+- `tag_element`: create an independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `expectedUniqueId`, optional `hasLeader`, and optional `orientation`.
+- `move_element`: move one non-pinned model element by `elementId` and an explicit 3D translation vector, optionally guarded by `expectedUniqueId`.
+- `rotate_element`: rotate one non-pinned model element around an explicit axis and angle, optionally guarded by `expectedUniqueId`.
+- `copy_element`: copy one model element by an explicit 3D translation vector, optionally guarded by `expectedUniqueId`.
+- `change_element_type`: change one non-pinned model element to a compatible Revit type ID discovered through `revit.catalog`, optionally guarded by `expectedUniqueId`.
+- `set_element_pinned`: pin or unpin one model element, with optional `expectedUniqueId` and `expectedPinned` guards.
 - `delete_element`: delete one non-type element by `elementId`, with optional `expectedUniqueId`, `expectedPinned`, `allowPinned`, dependent-delete preview, `allowDependentDeletes`, `expectedDeletedElementIds`, and `expectedDeletedCount` guards.
 
 `revit.preview_change_set` validates supported operations without mutation and returns `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt`; `revit.apply_change_set` requires those exact preview fields plus `confirm: true` and applies the full change set in one named Revit transaction.

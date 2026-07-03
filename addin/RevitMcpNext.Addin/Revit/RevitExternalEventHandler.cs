@@ -1377,6 +1377,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
 
             Parameter parameter = element.LookupParameter(parameterName);
             if (parameter == null) return BlockedChange(operation, index, "Parameter '" + parameterName + "' was not found on element " + elementId + ".");
@@ -2172,6 +2174,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Room room = ResolveElement(document, roomId) as Room;
             if (room == null) return BlockedChange(operation, index, "Room " + roomId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, room, roomId, "expectedUniqueId", "Room");
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             if (!IsRoomPlaced(room)) return BlockedChange(operation, index, "Room " + roomId + " is unplaced and cannot be tagged.");
 
             View view = ResolveElement(document, viewId) as View;
@@ -2267,6 +2271,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             string targetError = ValidateIndependentTagTarget(element);
             if (!string.IsNullOrWhiteSpace(targetError)) return BlockedChange(operation, index, targetError);
 
@@ -2451,6 +2457,12 @@ namespace RevitMcpNext.Addin.Revit
                     return false;
                 }
 
+                error = ValidateExpectedUniqueId(operation, hostWall, hostElementId, "expectedHostUniqueId", "Host element");
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    return false;
+                }
+
                 string hostError = ValidateWallFamilyInstanceHost(document, hostWall);
                 if (!string.IsNullOrWhiteSpace(hostError))
                 {
@@ -2512,6 +2524,12 @@ namespace RevitMcpNext.Addin.Revit
 
             if (IsLevelBasedFurnitureEquipmentFixtureCategory(symbol))
             {
+                if (!string.IsNullOrWhiteSpace(GetString(operation, "expectedHostUniqueId")))
+                {
+                    error = "expectedHostUniqueId requires hostElementId and is only supported for hosted place_family_instance operations.";
+                    return false;
+                }
+
                 if (placementType != FamilyPlacementType.OneLevelBased)
                 {
                     error = "FamilySymbol " + familySymbolId + " has placementType " + placementType + ". Level-based furniture/equipment/fixture placement requires OneLevelBased.";
@@ -2679,6 +2697,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be moved.");
             if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot be moved.");
 
@@ -2738,6 +2758,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be rotated.");
             if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot be rotated.");
 
@@ -2810,6 +2832,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be copied.");
             if (element.ViewSpecific) return BlockedChange(operation, index, "Element " + elementId + " is view-specific and cannot be copied by copy_element.");
 
@@ -2881,6 +2905,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is already an element type and cannot change type.");
             if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot change type.");
 
@@ -2934,6 +2960,8 @@ namespace RevitMcpNext.Addin.Revit
 
             Element element = ResolveElement(document, elementId);
             if (element == null) return BlockedChange(operation, index, "Element " + elementId + " was not found.");
+            string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
             if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is an element type and cannot be pinned or unpinned.");
 
             bool desiredPinned = Convert.ToBoolean(pinnedValue, CultureInfo.InvariantCulture);
@@ -3211,6 +3239,24 @@ namespace RevitMcpNext.Addin.Revit
         private static Dictionary<string, object> BlockedChange(Dictionary<string, object> operation, int index, string message)
         {
             return Change(operation, index, "blocked", null, null, null, message);
+        }
+
+        private static string ValidateExpectedUniqueId(
+            Dictionary<string, object> operation,
+            Element element,
+            string elementId,
+            string fieldName = "expectedUniqueId",
+            string label = "Element")
+        {
+            string expectedUniqueId = GetString(operation, fieldName);
+            if (string.IsNullOrWhiteSpace(expectedUniqueId)) return null;
+
+            if (!string.Equals(element.UniqueId, expectedUniqueId, StringComparison.Ordinal))
+            {
+                return label + " " + elementId + " uniqueId did not match " + fieldName + ".";
+            }
+
+            return null;
         }
 
         private sealed class PreviewValidationContext

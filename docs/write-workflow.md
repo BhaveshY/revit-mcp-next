@@ -30,25 +30,27 @@ When a previous read, preview, or apply response already returned element identi
 
 pyRevit and Dynamo scripts should use the in-process helper under `integrations/python` so they do not deadlock while waiting on an `ExternalEvent`. Plain external Python processes can use the stdio MCP client in the same folder. Do not call the named pipe directly from pyRevit or Dynamo.
 
+When a read returns `uniqueId`, keep targeting writes by `elementId` or operation-specific IDs such as `roomId`, and echo the `uniqueId` back as `expectedUniqueId` on existing-element writes. This is supported by `set_parameter`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `set_element_pinned`, and `delete_element`. For wall-hosted `place_family_instance`, keep targeting the host by `hostElementId` and echo the host wall's `uniqueId` as `expectedHostUniqueId`. Preview blocks mismatches before the apply token can be used, which protects agents from stale integer element IDs after model changes.
+
 End-to-end supported operations:
 
-- `set_parameter`: set a writable instance parameter by element ID and parameter name.
+- `set_parameter`: set a writable instance parameter by element ID and parameter name, optionally guarded by `expectedUniqueId`.
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
 - `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place one room by `levelId` and 2D `location`, optionally setting `name`, `number`, and `department`; duplicate room numbers are blocked unless `allowDuplicateNumber` is set.
-- `place_family_instance`: place supported `familySymbols` discovered through `revit.catalog`; first supported cases are wall-hosted doors/windows with `hostElementId` and level-based furniture/equipment/fixtures with `levelId`.
+- `place_family_instance`: place supported `familySymbols` discovered through `revit.catalog`; first supported cases are wall-hosted doors/windows with `hostElementId` plus optional `expectedHostUniqueId`, and level-based furniture/equipment/fixtures with `levelId`.
 - `create_sheet`: create one sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId`; discover title block type IDs with `revit.catalog kind=titleBlocks preset=sheet`.
 - `place_view_on_sheet`: place one eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`; use `revit.get_sheets includePlacedViews=true` to avoid already placed views.
 - `create_text_note`: create one text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
-- `tag_room`: create one room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`; discover room tag types with `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`.
-- `tag_element`: create one independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `hasLeader`, and optional `orientation`; discover wall or multi-category tags with `revit.catalog kind=tagTypes`.
-- `move_element`: move one non-pinned model element by `elementId` and a `translation` vector.
-- `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`.
-- `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs.
-- `change_element_type`: change one non-pinned model element to a compatible `typeId`.
-- `set_element_pinned`: set one model element's pinned state, optionally guarded by `expectedPinned`.
+- `tag_room`: create one room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `expectedUniqueId`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`; discover room tag types with `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`.
+- `tag_element`: create one independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `expectedUniqueId`, optional `hasLeader`, and optional `orientation`; discover wall or multi-category tags with `revit.catalog kind=tagTypes`.
+- `move_element`: move one non-pinned model element by `elementId` and a `translation` vector, optionally guarded by `expectedUniqueId`.
+- `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`, optionally guarded by `expectedUniqueId`.
+- `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs, optionally guarded by `expectedUniqueId`.
+- `change_element_type`: change one non-pinned model element to a compatible `typeId`, optionally guarded by `expectedUniqueId`.
+- `set_element_pinned`: set one model element's pinned state, optionally guarded by `expectedUniqueId` and `expectedPinned`.
 - `delete_element`: delete one non-type element by `elementId`, optionally guarded by `expectedUniqueId`, `expectedPinned`, and `allowPinned`. Preview probes Revit's actual delete set in a rollback transaction and blocks dependent deletes unless `allowDependentDeletes` is true or `expectedDeletedElementIds` exactly matches the previewed IDs. Use `expectedDeletedCount` when the exact count matters.
 
 Example preview payload:
@@ -62,6 +64,7 @@ Example preview payload:
       "id": "op-1",
       "type": "set_parameter",
       "elementId": "501",
+      "expectedUniqueId": "1e7f0b6d-....-0001f5",
       "parameterName": "Mark",
       "value": "A-101"
     }
@@ -85,6 +88,7 @@ Example apply payload:
       "id": "op-1",
       "type": "set_parameter",
       "elementId": "501",
+      "expectedUniqueId": "1e7f0b6d-....-0001f5",
       "parameterName": "Mark",
       "value": "A-101"
     }
@@ -101,7 +105,7 @@ cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" preview .\change-set.json --pr
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" apply .\apply-payload.json --confirm --pretty
 ```
 
-For destructive deletes, inspect `changes[].after.deletedElementIds` and `dependentDeletedCount` from preview before apply. A blocked delete is usually useful evidence: it means Revit would remove more than the requested element, so narrow the target or echo the reviewed `expectedDeletedElementIds`.
+For guarded writes, a uniqueId mismatch usually means the model changed after the read. Rerun `revit.query` by `elementId` or `uniqueId`, then rebuild preview/apply from fresh data. For destructive deletes, inspect `changes[].after.deletedElementIds` and `dependentDeletedCount` from preview before apply. A blocked dependent delete is usually useful evidence: it means Revit would remove more than the requested element, so narrow the target or echo the reviewed `expectedDeletedElementIds`.
 
 Production readiness:
 
@@ -112,6 +116,6 @@ Production readiness:
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
-- Run `npm run smoke:revit` only against a disposable active Revit project; it checks `revit.cancel_request` no-op behavior, creates a grid, floor, walls, a room-bounding loop, and a room, reads the room back through `revit.get_rooms`, attempts family placement when suitable symbols and hosts exist, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it checks `revit.cancel_request` no-op behavior, creates a grid, floor, walls, a room-bounding loop, and a room, reads the room back through `revit.get_rooms`, verifies a blocked mismatched `expectedUniqueId` preview, attempts guarded family placement when suitable symbols and hosts exist, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

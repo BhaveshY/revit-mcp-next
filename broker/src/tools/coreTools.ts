@@ -353,6 +353,7 @@ const setParameterOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("set_parameter"),
     elementId: boundedId.describe("Target Revit element ID."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard to avoid editing an unexpected element if IDs changed."),
     parameterName: boundedString.describe("Exact parameter name to set on the target element."),
     value: changeScalarSchema.describe("New parameter value as a string, number, or boolean."),
   })
@@ -383,6 +384,7 @@ const placeFamilyInstanceOperationSchema = operationBaseSchema
     hostElementId: boundedId
       .optional()
       .describe("Required for wall-hosted doors/windows and other hosted families. Use a valid host element ID."),
+    expectedHostUniqueId: boundedString.optional().describe("Optional host uniqueId guard for hosted placement."),
     levelId: boundedId.optional().describe("Required for level-based furniture, equipment, and fixture symbols; useful for hosted placement validation."),
     location: changePoint3Schema.describe("Insertion point with explicit units."),
     rotation: changeAngleValueSchema.optional().describe("Optional rotation around the family insertion point vertical axis."),
@@ -422,6 +424,7 @@ const tagRoomOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("tag_room"),
     roomId: boundedId.describe("Room element ID to tag. Use revit.get_rooms first."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the tagged room."),
     viewId: boundedId.describe("Plan-like graphical view ID that can display the room. Use revit.get_views first."),
     location: changePoint2Schema.describe("Room tag head location in the target view's level plane."),
     tagTypeId: boundedId.optional().describe("Optional room tag type ID from revit.catalog kind=tagTypes preset=annotation."),
@@ -433,6 +436,7 @@ const tagElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("tag_element"),
     elementId: boundedId.describe("Model element ID to tag."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the tagged model element."),
     viewId: boundedId.describe("Graphical target view ID that can display the element. Use revit.get_views and revit.query with viewId first."),
     tagTypeId: boundedId.describe("Tag FamilySymbol ID from revit.catalog kind=tagTypes preset=annotation."),
     position: changePoint3Schema.describe("Tag head position in the target view."),
@@ -444,6 +448,7 @@ const moveElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("move_element"),
     elementId: boundedId.describe("Target Revit element ID."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the moved element."),
     translation: changePoint3Schema.describe("Translation vector to apply to the target element."),
   })
   .strict();
@@ -451,6 +456,7 @@ const rotateElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("rotate_element"),
     elementId: boundedId.describe("Target Revit element ID."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the rotated element."),
     axisStart: changePoint3Schema.describe("Rotation axis start point."),
     axisEnd: changePoint3Schema.describe("Rotation axis end point."),
     angle: changeAngleValueSchema.describe("Signed rotation angle. Positive follows Revit's axis direction right-hand rule."),
@@ -460,6 +466,7 @@ const copyElementOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("copy_element"),
     elementId: boundedId.describe("Source Revit element ID to duplicate."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the copied source element."),
     translation: changePoint3Schema.describe("Translation vector from source to copied element."),
   })
   .strict();
@@ -467,6 +474,7 @@ const changeElementTypeOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("change_element_type"),
     elementId: boundedId.describe("Target Revit element ID."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the type-changed element."),
     typeId: boundedId.describe("New Revit element type ID. Use revit.catalog with kind=elementTypes and filter.forElementId first."),
   })
   .strict();
@@ -474,6 +482,7 @@ const setElementPinnedOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("set_element_pinned"),
     elementId: boundedId.describe("Target Revit element ID."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the pin-state target element."),
     pinned: z.boolean().describe("Desired pinned state."),
     expectedPinned: z.boolean().optional().describe("Optional current pinned state guard."),
   })

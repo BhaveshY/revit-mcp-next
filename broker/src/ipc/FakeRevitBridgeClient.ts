@@ -11,6 +11,7 @@ import type {
   ChangeApplyRequest,
   ChangeApplyResult,
   ChangeOperation,
+  ChangePreviewItem,
   ChangePreviewResult,
   ChangeSetRequest,
   CurrentViewRequest,
@@ -753,6 +754,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<ChangePreviewResult>> {
     maybeAbort(options);
     const metadata = getChangeSetMetadata(request.payload);
+    const changes = request.payload.operations.map((operation, index) => getPreviewChange(operation, index, "ready"));
+    const ready = changes.every((change) => change.status === "ready");
     return ok(request, {
       previewId: `fake-preview-${request.payload.operations.length}`,
       documentFingerprint: metadata.documentFingerprint,
@@ -761,21 +764,14 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       expiresAt: metadata.expiresAt,
       transactionName: request.payload.transactionName,
       operationCount: request.payload.operations.length,
-      ready: true,
+      ready,
       requiresConfirmation: true,
       riskLevel: request.payload.operations.some(isHighRiskOperation)
         ? "high"
         : request.payload.operations.some(isMediumRiskOperation)
           ? "medium"
           : "low",
-      changes: request.payload.operations.map((operation, index) => ({
-        operationIndex: index,
-        operationId: operation.id,
-        type: operation.type,
-        status: "ready",
-        target: getOperationTarget(operation),
-        after: getOperationAfter(operation),
-      })),
+      changes,
     });
   }
 
@@ -785,22 +781,18 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<ChangeApplyResult>> {
     maybeAbort(options);
     const metadata = getChangeSetMetadata(request.payload);
+    const previewChanges = request.payload.operations.map((operation, index) => getPreviewChange(operation, index, "ready"));
+    const ready = previewChanges.every((change) => change.status === "ready");
+    const applied = Boolean(request.payload.confirm && ready);
     return ok(request, {
       previewId: request.payload.previewId,
       documentFingerprint: metadata.documentFingerprint,
       changeSetHash: metadata.changeSetHash,
       baseGeneration: metadata.baseGeneration,
       transactionName: request.payload.transactionName,
-      applied: request.payload.confirm,
-      changedCount: request.payload.operations.length,
-      changes: request.payload.operations.map((operation, index) => ({
-        operationIndex: index,
-        operationId: operation.id,
-        type: operation.type,
-        status: "applied",
-        target: getOperationTarget(operation),
-        after: getOperationAfter(operation),
-      })),
+      applied,
+      changedCount: applied ? request.payload.operations.length : 0,
+      changes: previewChanges.map((change) => (change.status === "ready" && applied ? { ...change, status: "applied" } : change)),
     });
   }
 
@@ -1197,11 +1189,90 @@ function hashChangeSet(payload: ChangeSetRequest, documentFingerprint: string, b
   return `sha256:${createHash("sha256").update(JSON.stringify(canonicalPayload)).digest("hex")}`;
 }
 
+function getPreviewChange(operation: ChangeOperation, index: number, readyStatus: "ready" | "applied"): ChangePreviewItem {
+  const message = getIdentityGuardFailure(operation);
+  if (message) {
+    return {
+      operationIndex: index,
+      operationId: operation.id,
+      type: operation.type,
+      status: "blocked",
+      target: getOperationTarget(operation),
+      message,
+    };
+  }
+
+  return {
+    operationIndex: index,
+    operationId: operation.id,
+    type: operation.type,
+    status: readyStatus,
+    target: getOperationTarget(operation),
+    after: getOperationAfter(operation),
+  };
+}
+
+function getIdentityGuardFailure(operation: ChangeOperation): string | undefined {
+  switch (operation.type) {
+    case "set_parameter":
+    case "tag_element":
+    case "move_element":
+    case "rotate_element":
+    case "copy_element":
+    case "change_element_type":
+    case "set_element_pinned":
+    case "delete_element":
+      return getExpectedUniqueIdFailure(operation.elementId, operation.expectedUniqueId, "Element");
+    case "tag_room":
+      return getExpectedUniqueIdFailure(operation.roomId, operation.expectedUniqueId, "Room");
+    case "place_family_instance":
+      return getExpectedUniqueIdFailure(
+        operation.hostElementId,
+        operation.expectedHostUniqueId,
+        "Host element",
+        "expectedHostUniqueId"
+      );
+    default:
+      return undefined;
+  }
+}
+
+function getExpectedUniqueIdFailure(
+  elementId: string | undefined,
+  expectedUniqueId: string | undefined,
+  label: string,
+  fieldName = "expectedUniqueId"
+): string | undefined {
+  if (!expectedUniqueId) return undefined;
+  if (!elementId) return `${label} uniqueId guard requires an element ID.`;
+  const actualUniqueId = getFakeElementUniqueId(elementId);
+  if (actualUniqueId === expectedUniqueId) return undefined;
+  return `${label} ${elementId} uniqueId did not match ${fieldName}.`;
+}
+
+function getFakeElementUniqueId(elementId: string): string | undefined {
+  return (
+    fakeQueryItems.find((item) => item.id === elementId)?.uniqueId ??
+    fakeRooms.find((room) => room.id === elementId)?.uniqueId ??
+    levels.find((level) => level.id === elementId)?.uniqueId ??
+    fakeViews.find((view) => view.id === elementId)?.uniqueId ??
+    fakeSheets.find((sheet) => sheet.id === elementId)?.uniqueId ??
+    catalogItems.find((item) => item.id === elementId)?.uniqueId
+  );
+}
+
+function fakeUniqueIdField(elementId: string | undefined, fieldName = "uniqueId"): Record<string, unknown> {
+  if (!elementId) return {};
+  const uniqueId = getFakeElementUniqueId(elementId);
+  return uniqueId ? { [fieldName]: uniqueId } : {};
+}
+
 function getOperationTarget(operation: ChangeOperation): Record<string, unknown> {
   switch (operation.type) {
     case "set_parameter":
       return {
         elementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId),
         parameterName: operation.parameterName,
       };
     case "create_level":
@@ -1219,6 +1290,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         document: activeDocument.title,
         familySymbolId: operation.familySymbolId,
         hostElementId: operation.hostElementId,
+        ...fakeUniqueIdField(operation.hostElementId, "hostUniqueId"),
         levelId: operation.levelId,
       };
     case "create_sheet":
@@ -1242,6 +1314,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         document: activeDocument.title,
         roomId: operation.roomId,
+        ...fakeUniqueIdField(operation.roomId),
         viewId: operation.viewId,
         tagTypeId: operation.tagTypeId,
       };
@@ -1249,29 +1322,35 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         document: activeDocument.title,
         elementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId),
         viewId: operation.viewId,
         tagTypeId: operation.tagTypeId,
       };
     case "move_element":
       return {
         elementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId),
       };
     case "rotate_element":
       return {
         elementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId),
       };
     case "copy_element":
       return {
         sourceElementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId, "sourceUniqueId"),
       };
     case "change_element_type":
       return {
         elementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId),
         typeId: operation.typeId,
       };
     case "set_element_pinned":
       return {
         elementId: operation.elementId,
+        ...fakeUniqueIdField(operation.elementId),
       };
     case "create_grid":
       return {
@@ -1292,7 +1371,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
     case "delete_element":
       return {
         elementId: operation.elementId,
-        expectedUniqueId: operation.expectedUniqueId,
+        ...fakeUniqueIdField(operation.elementId),
       };
     default:
       return assertNever(operation);
