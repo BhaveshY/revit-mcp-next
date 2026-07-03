@@ -103,7 +103,8 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use for visible-context edits, tags, and view-local audits.",
-    compactUse: "Use preset=idOnly/summary or explicit fields; page with the returned opaque cursor and unchanged arguments.",
+    compactUse:
+      "Use preset=idOnly/summary, preset=geometrySummary when placement/bounds are needed, or explicit fields; page with the returned opaque cursor and unchanged arguments.",
     related: ["revit.query", "revit.get_current_view"],
   },
   {
@@ -187,7 +188,8 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use instead of broad model dumps whenever you need element IDs or compact metadata.",
-    compactUse: "Prefer explicit fields, preset=idOnly/summary/schedule, includeTotalCount=false, and opaque cursor paging.",
+    compactUse:
+      "Prefer explicit fields, preset=idOnly/summary/schedule, preset=geometrySummary for location/bounds, includeTotalCount=false, and opaque cursor paging.",
     related: ["revit.describe_parameters", "revit.get_current_view_elements", "revit.get_selection"],
   },
   {
@@ -425,7 +427,7 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
     async ({ workflow }) => {
       const workflows: Record<typeof workflow, string> = {
         audit:
-          "Audit workflow: call revit.status, revit.get_model_readiness with focused scenarios, revit.analyze_model with bounded bucketLimit, then revit.query with explicit fields for any category or class that needs detail.",
+          "Audit workflow: call revit.status, revit.get_model_readiness with focused scenarios, revit.analyze_model with bounded bucketLimit, then revit.query with explicit fields for any category or class that needs detail. Use preset=geometrySummary for element location/bounds checks and consume data.units.location/bounds, currently mm.",
         "selection-update":
           "Selection update workflow: call revit.status, revit.get_selection with preset=summary, revit.describe_parameters with preset=writableEdit for target IDs, preview set_parameter/change_element_type, then apply only the matching ready preview.",
         "sheet-planning":

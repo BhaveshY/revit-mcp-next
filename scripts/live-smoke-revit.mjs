@@ -433,6 +433,11 @@ async function main() {
     assert(wallUniqueId.length > 0, "Created smoke wall query did not return a uniqueId.");
     console.log(`Query OK: wall ${queriedWall.id} (${queriedWall.name ?? queriedWall.class ?? "Wall"})`);
 
+    const wallGeometry = await queryElementGeometryById(client, wallId);
+    assert(wallGeometry.location, "geometrySummary did not return location for the created wall.");
+    assert(wallGeometry.bounds, "geometrySummary did not return bounds for the created wall.");
+    console.log(`Geometry summary OK: wall ${wallId} location/bounds returned`);
+
     await previewBlockedChangeSet(
       client,
       compactObject({
@@ -1667,6 +1672,26 @@ async function queryElementById(client, className, elementId) {
   } while (cursor);
 
   throw new Error(`Created ${className} ${elementId} was not found by revit.query after scanning ${scanned} item(s).`);
+}
+
+async function queryElementGeometryById(client, elementId) {
+  const query = await callRequiredTool(client, "revit.query", {
+    filter: { elementIds: [String(elementId)] },
+    preset: "geometrySummary",
+    limit: 1,
+    includeTotalCount: true,
+  });
+
+  assert(Array.isArray(query.items), "geometrySummary did not return an items array.");
+  assert(Array.isArray(query.fields), "geometrySummary did not return a field projection.");
+  assert(query.fields.includes("location"), "geometrySummary projection did not include location.");
+  assert(query.fields.includes("bounds"), "geometrySummary projection did not include bounds.");
+  assert(query.units?.location === "mm", "geometrySummary did not report location units as mm.");
+  assert(query.units?.bounds === "mm", "geometrySummary did not report bounds units as mm.");
+
+  const match = query.items.find((item) => String(item.id) === String(elementId));
+  assert(match, `geometrySummary did not return element ${elementId}.`);
+  return match;
 }
 
 async function queryElementByParameter(client, className, elementId, parameterName, value) {

@@ -80,6 +80,33 @@ test("fake bridge query honors cursor and field projection", async () => {
   assert.equal(secondPage.data.truncated, false);
 });
 
+test("fake bridge query geometrySummary returns compact location and bounds", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const response = await bridge.query(
+    makeRequest(
+      "test",
+      "query",
+      "read",
+      {
+        filter: { elementIds: ["501"] },
+        preset: "geometrySummary",
+        limit: 1,
+      },
+      30000
+    )
+  );
+
+  assert.equal(response.ok, true);
+  if (!response.ok) return;
+  assert.deepEqual(response.data.fields, ["id", "uniqueId", "category", "class", "name", "typeId", "levelId", "location", "bounds"]);
+  assert.equal(response.data.units.location, "mm");
+  assert.equal(response.data.units.bounds, "mm");
+  assert.equal(response.data.items[0]?.id, "501");
+  assert.equal(response.data.items[0]?.location?.start?.x.value, 0);
+  assert.equal(response.data.items[0]?.location?.end?.x.value, 4000);
+  assert.equal(response.data.items[0]?.bounds?.max?.z.value, 3000);
+});
+
 test("fake bridge describeParameters honors compact presets", async () => {
   const bridge = new FakeRevitBridgeClient();
 
@@ -144,7 +171,7 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
       "test",
       "get_current_view_elements",
       "read",
-      { filter: { categories: ["OST_Walls"] }, preset: "summary", limit: 1, includeTotalCount: true },
+      { filter: { categories: ["OST_Walls"] }, preset: "geometrySummary", limit: 1, includeTotalCount: true },
       30000
     )
   );
@@ -154,6 +181,10 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   assert.equal(viewElements.data.returnedCount, 1);
   assert.equal(viewElements.data.totalCount, 1);
   assert.equal(viewElements.data.items[0]?.id, "501");
+  assert.equal(viewElements.data.units.location, "mm");
+  assert.equal(viewElements.data.units.bounds, "mm");
+  assert.equal(viewElements.data.items[0]?.location?.length?.value, 4000);
+  assert.equal(viewElements.data.items[0]?.bounds?.max?.z.value, 3000);
 
   const selection = await bridge.getSelection(
     makeRequest("test", "get_selection", "read", { filter: { selectionOnly: true }, limit: 1 }, 30000)

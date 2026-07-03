@@ -9,7 +9,7 @@ Use this sequence when the user asks what is in the model, what is selected, or 
 1. `revit.status` for connection, Revit version, active document, and generation.
 2. `revit.get_views` and `revit.get_sheets` when the task mentions documentation, sheets, view placement, templates, or drawing organization.
 3. `revit.get_current_view` for view type, scale, and crop state.
-4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; when more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
+4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; use `preset: "geometrySummary"` instead when the workflow needs compact element `location` and model-space `bounds` in millimeters. When more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
 5. `revit.get_selection` when the user references selected elements.
 6. `revit.analyze_model` for category, class, and level distribution.
 7. `revit.get_material_quantities` for bounded material takeoff.

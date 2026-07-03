@@ -54,7 +54,10 @@ const documentGuardSchema = {
 const querySchema = {
   filter: queryFilterSchema.describe("Revit-native filters to apply before projection."),
   fields: z.array(boundedString).max(32).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
-  preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).optional(),
+  preset: z
+    .enum(["idOnly", "summary", "schedule", "geometrySummary"])
+    .optional()
+    .describe("Projection preset. geometrySummary returns compact element location and model-space bounds; read data.units.location/bounds for units."),
   limit: z.number().int().min(1).max(500).default(50),
   cursor: z.string().optional(),
   includeTotalCount: z.boolean().default(false),
@@ -198,7 +201,10 @@ const scopedElementListSchema = {
   ...documentGuardSchema,
   filter: scopedQueryFilterSchema.optional().describe("Additional filters within the tool scope. viewId and selectionOnly are set by the tool."),
   fields: z.array(boundedString).max(32).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
-  preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).optional(),
+  preset: z
+    .enum(["idOnly", "summary", "schedule", "geometrySummary"])
+    .optional()
+    .describe("Projection preset. geometrySummary returns compact element location and model-space bounds; read data.units.location/bounds for units."),
   includeHidden: z.boolean().default(false).describe("Request hidden elements when supported by the Revit view collector."),
   limit: z.number().int().min(1).max(500).default(50),
   cursor: z.string().optional(),
@@ -704,6 +710,31 @@ const point3Schema = z
   })
   .passthrough();
 
+const elementLocationSchema = z
+  .object({
+    point: point3Schema.optional(),
+    rotation: z.number().optional(),
+    start: point3Schema.optional(),
+    end: point3Schema.optional(),
+    length: unitValueSchema.optional(),
+    min: point3Schema.optional(),
+    max: point3Schema.optional(),
+    available: z.boolean().optional(),
+  })
+  .passthrough()
+  .describe(
+    "Compact element placement snapshot. Values are unit-bearing points/lengths; geometrySummary advertises the normalized unit in data.units.location."
+  );
+
+const elementBoundsSchema = z
+  .object({
+    min: point3Schema.optional(),
+    max: point3Schema.optional(),
+    available: z.boolean().optional(),
+  })
+  .passthrough()
+  .describe("Compact model-space element bounds. Values are unit-bearing points; geometrySummary advertises the normalized unit in data.units.bounds.");
+
 const documentReferenceSchema = z
   .object({
     fingerprint: z.string(),
@@ -759,6 +790,8 @@ const queryItemSchema = z
     name: z.string().nullable().optional(),
     typeId: z.string().nullable().optional(),
     levelId: z.string().nullable().optional(),
+    location: elementLocationSchema.optional().describe("Location snapshot returned by geometrySummary or explicit location fields."),
+    bounds: elementBoundsSchema.optional().describe("Model-space bounds returned by geometrySummary or explicit bounds fields."),
     fields: z.record(z.unknown()).optional(),
   })
   .passthrough();
@@ -767,7 +800,7 @@ const queryResultSchema = pageBaseSchema
   .extend({
     items: z.array(queryItemSchema),
     fields: z.array(z.string()),
-    units: z.record(z.string()),
+    units: z.record(z.string()).describe("Unit labels for normalized result fields, including location/bounds=mm for geometrySummary."),
   })
   .passthrough();
 

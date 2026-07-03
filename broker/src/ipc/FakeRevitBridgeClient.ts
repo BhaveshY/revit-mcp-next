@@ -150,7 +150,7 @@ const capabilities = [
   "revit.cancel_request",
 ];
 
-const fakeQueryItems = [
+const fakeQueryItems: QueryItem[] = [
   {
     id: "501",
     uniqueId: "wall-501",
@@ -159,6 +159,31 @@ const fakeQueryItems = [
     name: "Basic Wall",
     typeId: "9001",
     levelId: "311",
+    location: {
+      start: {
+        x: { value: 0, unit: "mm", system: "metric" },
+        y: { value: 0, unit: "mm", system: "metric" },
+        z: { value: 0, unit: "mm", system: "metric" },
+      },
+      end: {
+        x: { value: 4000, unit: "mm", system: "metric" },
+        y: { value: 0, unit: "mm", system: "metric" },
+        z: { value: 0, unit: "mm", system: "metric" },
+      },
+      length: { value: 4000, unit: "mm", system: "metric" },
+    },
+    bounds: {
+      min: {
+        x: { value: 0, unit: "mm", system: "metric" },
+        y: { value: -100, unit: "mm", system: "metric" },
+        z: { value: 0, unit: "mm", system: "metric" },
+      },
+      max: {
+        x: { value: 4000, unit: "mm", system: "metric" },
+        y: { value: 100, unit: "mm", system: "metric" },
+        z: { value: 3000, unit: "mm", system: "metric" },
+      },
+    },
   },
   {
     id: "502",
@@ -629,7 +654,12 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       cursor: truncated ? String(offset + items.length) : undefined,
       truncated,
       fields,
-      units: {},
+      units: {
+        elevation: "mm",
+        length: "mm",
+        location: "mm",
+        bounds: "mm",
+      },
       scope:
         hasExplicitIdentityFilter
           ? "elements"
@@ -829,6 +859,7 @@ function queryFieldsForPreset(preset: QueryRequest["preset"]): string[] {
     case "schedule":
       return ["id", "category", "class", "name", "typeId", "levelId"];
     case "geometrySummary":
+      return ["id", "uniqueId", "category", "class", "name", "typeId", "levelId", "location", "bounds"];
     case "summary":
     default:
       return ["id", "category", "class", "name"];
@@ -878,7 +909,12 @@ function buildScopedElementList(
     cursor: truncated ? String(offset + items.length) : undefined,
     truncated,
     fields,
-    units: {},
+    units: {
+      elevation: "mm",
+      length: "mm",
+      location: "mm",
+      bounds: "mm",
+    },
     scope,
     source: "fake-bridge",
   };

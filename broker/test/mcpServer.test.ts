@@ -266,6 +266,8 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.match(queryOutputSchema, /cursor/);
     assert.match(queryOutputSchema, /fields/);
     assert.match(queryOutputSchema, /units/);
+    assert.match(queryOutputSchema, /location/);
+    assert.match(queryOutputSchema, /bounds/);
     const explicitQuery = (await client.callTool({
       name: "revit.query",
       arguments: {
@@ -286,6 +288,35 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.id, "501");
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.uniqueId, "wall-501");
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.class, "Wall");
+
+    const geometryQuery = (await client.callTool({
+      name: "revit.query",
+      arguments: {
+        filter: { elementIds: ["501"] },
+        preset: "geometrySummary",
+        limit: 1,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          fields?: string[];
+          units?: { location?: string; bounds?: string };
+          items?: Array<{
+            id?: string;
+            location?: { start?: { x?: { value?: number } }; end?: { x?: { value?: number } } };
+            bounds?: { max?: { z?: { value?: number } } };
+          }>;
+        };
+      };
+    };
+    assert.equal(geometryQuery.isError, undefined);
+    assert.ok(geometryQuery.structuredContent?.data?.fields?.includes("location"));
+    assert.ok(geometryQuery.structuredContent?.data?.fields?.includes("bounds"));
+    assert.equal(geometryQuery.structuredContent?.data?.units?.location, "mm");
+    assert.equal(geometryQuery.structuredContent?.data?.units?.bounds, "mm");
+    assert.equal(geometryQuery.structuredContent?.data?.items?.[0]?.location?.end?.x?.value, 4000);
+    assert.equal(geometryQuery.structuredContent?.data?.items?.[0]?.bounds?.max?.z?.value, 3000);
 
     try {
       const invalidQuery = (await client.callTool({

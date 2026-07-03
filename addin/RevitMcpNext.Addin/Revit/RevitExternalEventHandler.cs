@@ -946,7 +946,9 @@ namespace RevitMcpNext.Addin.Revit
                 ["units"] = new Dictionary<string, object>
                 {
                     ["elevation"] = "mm",
-                    ["length"] = "mm"
+                    ["length"] = "mm",
+                    ["location"] = "mm",
+                    ["bounds"] = "mm"
                 },
                 ["scope"] = string.IsNullOrWhiteSpace(scopeOverride) ? scope : scopeOverride,
                 ["source"] = "revit-addin"
@@ -4736,16 +4738,56 @@ namespace RevitMcpNext.Addin.Revit
                 };
             }
 
-            BoundingBoxXYZ boundingBox = element.get_BoundingBox(null);
-            if (boundingBox != null)
-            {
-                return new Dictionary<string, object>
-                {
-                    ["min"] = PointValue(boundingBox.Min),
-                    ["max"] = PointValue(boundingBox.Max)
-                };
-            }
+            return BoundsSnapshot(element) ?? UnavailableGeometrySnapshot();
+        }
 
+        private static Dictionary<string, object> BoundsSnapshot(Element element)
+        {
+            if (element == null) return null;
+
+            try
+            {
+                return BoundsValue(element.get_BoundingBox(null));
+            }
+            catch
+            {
+                return UnavailableGeometrySnapshot();
+            }
+        }
+
+        private static Dictionary<string, object> BoundsValue(BoundingBoxXYZ boundingBox)
+        {
+            if (boundingBox?.Min == null || boundingBox.Max == null) return UnavailableGeometrySnapshot();
+
+            XYZ min = boundingBox.Min;
+            XYZ max = boundingBox.Max;
+            Transform transform = boundingBox.Transform;
+            XYZ[] corners =
+            {
+                TransformBoundingBoxPoint(transform, new XYZ(min.X, min.Y, min.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(max.X, min.Y, min.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(min.X, max.Y, min.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(min.X, min.Y, max.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(max.X, max.Y, min.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(max.X, min.Y, max.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(min.X, max.Y, max.Z)),
+                TransformBoundingBoxPoint(transform, new XYZ(max.X, max.Y, max.Z))
+            };
+
+            return new Dictionary<string, object>
+            {
+                ["min"] = PointValue(new XYZ(corners.Min(point => point.X), corners.Min(point => point.Y), corners.Min(point => point.Z))),
+                ["max"] = PointValue(new XYZ(corners.Max(point => point.X), corners.Max(point => point.Y), corners.Max(point => point.Z)))
+            };
+        }
+
+        private static XYZ TransformBoundingBoxPoint(Transform transform, XYZ point)
+        {
+            return transform == null ? point : transform.OfPoint(point);
+        }
+
+        private static Dictionary<string, object> UnavailableGeometrySnapshot()
+        {
             return new Dictionary<string, object>
             {
                 ["available"] = false
@@ -6192,6 +6234,14 @@ namespace RevitMcpNext.Addin.Revit
                         ElementId levelId = GetLevelId(element);
                         if (IsValidElementId(levelId)) item["levelId"] = ToElementIdString(levelId);
                         break;
+                    case "location":
+                        Dictionary<string, object> location = LocationSnapshot(element);
+                        if (location != null) item["location"] = location;
+                        break;
+                    case "bounds":
+                        Dictionary<string, object> bounds = BoundsSnapshot(element);
+                        if (bounds != null) item["bounds"] = bounds;
+                        break;
                     default:
                         if (field.StartsWith("param:", StringComparison.OrdinalIgnoreCase))
                         {
@@ -6418,12 +6468,7 @@ namespace RevitMcpNext.Addin.Revit
                     defaults = new[] { "id", "category", "name", "typeId", "levelId" };
                     break;
                 case "geometrySummary":
-                    warnings.Add(new BridgeWarning
-                    {
-                        Code = "GEOMETRY_SUMMARY_NOT_READY",
-                        Message = "geometrySummary currently returns summary fields; geometry extraction will be added behind explicit budgets."
-                    });
-                    defaults = SummaryFields();
+                    defaults = GeometrySummaryFields();
                     break;
                 default:
                     defaults = SummaryFields();
@@ -6522,6 +6567,11 @@ namespace RevitMcpNext.Addin.Revit
             return new[] { "id", "uniqueId", "category", "class", "name", "typeId", "levelId" };
         }
 
+        private static string[] GeometrySummaryFields()
+        {
+            return new[] { "id", "uniqueId", "category", "class", "name", "typeId", "levelId", "location", "bounds" };
+        }
+
         private static bool IsSupportedField(string field)
         {
             switch (field)
@@ -6533,6 +6583,8 @@ namespace RevitMcpNext.Addin.Revit
                 case "name":
                 case "typeId":
                 case "levelId":
+                case "location":
+                case "bounds":
                     return true;
                 default:
                     return field.StartsWith("param:", StringComparison.OrdinalIgnoreCase) && field.Length > "param:".Length;

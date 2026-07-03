@@ -24,6 +24,31 @@ export interface Point2 {
   y: UnitValue;
 }
 
+/**
+ * Compact element placement snapshot. `geometrySummary` returns this when Revit exposes
+ * a point, curve, or bounding fallback; read QueryResult.units.location for the normalized unit.
+ */
+export interface ElementLocationSummary {
+  point?: Point3;
+  rotation?: number;
+  start?: Point3;
+  end?: Point3;
+  length?: UnitValue;
+  min?: Point3;
+  max?: Point3;
+  available?: boolean;
+}
+
+/**
+ * Compact model-space bounding extents. `geometrySummary` reports the normalized unit
+ * through QueryResult.units.bounds, currently "mm" for the Revit add-in.
+ */
+export interface ElementBoundsSummary {
+  min?: Point3;
+  max?: Point3;
+  available?: boolean;
+}
+
 export interface AngleValue {
   value: number;
   unit: "degrees" | "radians";
@@ -154,6 +179,10 @@ export interface QueryFilter {
   parameterEquals?: Record<string, string | number | boolean>;
 }
 
+/**
+ * Query projection preset. Use `geometrySummary` for compact element location/bounds
+ * without parameter dumps; units are advertised through QueryResult.units.location/bounds.
+ */
 export type QueryPreset = "idOnly" | "summary" | "schedule" | "geometrySummary";
 
 export interface QueryRequest {
@@ -173,6 +202,8 @@ export interface QueryItem {
   name?: string;
   typeId?: ElementId;
   levelId?: ElementId;
+  location?: ElementLocationSummary;
+  bounds?: ElementBoundsSummary;
   fields?: Record<string, unknown>;
 }
 
@@ -184,6 +215,7 @@ export interface QueryResult {
   cursor?: string;
   truncated: boolean;
   fields: string[];
+  /** Unit labels for normalized result fields, including location/bounds for geometrySummary. */
   units: Record<string, string>;
   scope: string;
   source: string;
