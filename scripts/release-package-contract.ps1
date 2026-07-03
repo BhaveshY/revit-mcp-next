@@ -389,7 +389,7 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
 
 function Assert-PackagedNpmAliases($PackageRoot) {
     $package = Read-JsonFile (Join-Path $PackageRoot "package.json")
-    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "revitctl")) {
+    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "evidence:check", "revitctl")) {
         if (-not $package.scripts.PSObject.Properties[$alias]) {
             throw "Packaged package.json is missing npm alias: $alias"
         }

@@ -323,6 +323,11 @@ try {
         throw "Support bundle zip was not created under $supportRoot."
     }
 
+    $authToken = Read-AuthTokenConfig (Join-Path $installRoot "config\auth.env")
+    if ([string]::IsNullOrWhiteSpace($authToken)) {
+        throw "Auth token was not found in the temp install."
+    }
+
     New-Item -ItemType Directory -Force -Path $liveSmokeRoot | Out-Null
     Set-Content -LiteralPath (Join-Path $liveSmokeRoot "smoke-revit.log") -Value "synthetic live smoke artifact for evidence contract" -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $liveSmokeRoot "run-inputs.json") -Value (@{ revitYear = 2024; synthetic = $true } | ConvertTo-Json) -Encoding UTF8
@@ -335,13 +340,19 @@ try {
             version = "2024"
             build = "synthetic"
         }
+        addinAssembly = [ordered] @{
+            assemblyPath = $installedAddinPath
+            assemblySha256 = $packagedAddinSha256
+            fileVersion = "0.1.0.0"
+            productVersion = "0.1.0"
+        }
         activeDocument = [ordered] @{
             title = "Synthetic Evidence Contract.rvt"
             fingerprint = "doc-synthetic-evidence-contract"
             generation = 42
         }
         documentFingerprint = "doc-synthetic-evidence-contract"
-        coveredTools = @("revit.status", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
+        coveredTools = @("revit.status", "revit.cancel_request", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level", "create_wall", "create_room")
         skippedOperations = @(
             @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },
@@ -357,6 +368,49 @@ try {
         error = "synthetic failed smoke"
     } | ConvertTo-Json) -Encoding UTF8
 
+    $ambiguousLiveSmokeRoot = Join-Path $runRoot "live-ambiguous"
+    New-Item -ItemType Directory -Force -Path (Join-Path $ambiguousLiveSmokeRoot "a") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $ambiguousLiveSmokeRoot "b") | Out-Null
+    Copy-Item -LiteralPath (Join-Path $liveSmokeRoot "smoke-summary.json") -Destination (Join-Path $ambiguousLiveSmokeRoot "a\smoke-summary.json") -Force
+    Copy-Item -LiteralPath (Join-Path $liveSmokeRoot "smoke-summary.json") -Destination (Join-Path $ambiguousLiveSmokeRoot "b\smoke-summary.json") -Force
+
+    $missingIdentityLiveSmokeRoot = Join-Path $runRoot "live-missing-identity"
+    New-Item -ItemType Directory -Force -Path $missingIdentityLiveSmokeRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $missingIdentityLiveSmokeRoot "smoke-summary.json") -Value ([ordered] @{
+        schemaVersion = 1
+        status = "passed"
+        mode = "full"
+        expectedRevitYear = "2024"
+        revit = @{ version = "2024"; build = "synthetic" }
+        activeDocument = @{ title = "Synthetic Evidence Contract.rvt"; fingerprint = "doc-synthetic-evidence-contract"; generation = 42 }
+        documentFingerprint = "doc-synthetic-evidence-contract"
+        coveredTools = @("revit.status", "revit.cancel_request", "revit.preview_change_set", "revit.apply_change_set")
+        coveredOperations = @("create_level")
+        skippedOperations = @(
+            @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },
+            @{ type = "tag_element"; reason = "Synthetic evidence contract does not load element tag families." }
+        )
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+
+    $mismatchedIdentityLiveSmokeRoot = Join-Path $runRoot "live-mismatched-identity"
+    New-Item -ItemType Directory -Force -Path $mismatchedIdentityLiveSmokeRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $mismatchedIdentityLiveSmokeRoot "smoke-summary.json") -Value ([ordered] @{
+        schemaVersion = 1
+        status = "passed"
+        mode = "full"
+        expectedRevitYear = "2024"
+        revit = @{ version = "2024"; build = "synthetic" }
+        addinAssembly = @{ assemblyPath = $installedAddinPath; assemblySha256 = ("0" * 64) }
+        activeDocument = @{ title = "Synthetic Evidence Contract.rvt"; fingerprint = "doc-synthetic-evidence-contract"; generation = 42 }
+        documentFingerprint = "doc-synthetic-evidence-contract"
+        coveredTools = @("revit.status", "revit.cancel_request", "revit.preview_change_set", "revit.apply_change_set")
+        coveredOperations = @("create_level")
+        skippedOperations = @(
+            @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },
+            @{ type = "tag_element"; reason = "Synthetic evidence contract does not load element tag families." }
+        )
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+
     New-SyntheticHostIntegrationEvidence $hostIntegrationRawRoot -AddinAssemblySha256 $packagedAddinSha256 -AddinAssemblyPath $installedAddinPath
     Invoke-RepoScript (Join-Path $logsRoot "host-integrations-evidence.log") (Join-Path $repoRoot "scripts\collect-host-integration-evidence.ps1") @(
         "-PyRevitEvidencePath", (Join-Path $hostIntegrationRawRoot "pyrevit.json"),
@@ -369,6 +423,16 @@ try {
 
     $mismatchedHostIntegrationRoot = Join-Path $runRoot "host-integrations-mismatched"
     New-SyntheticHostIntegrationEvidence $mismatchedHostIntegrationRoot -AddinAssemblySha256 ("0" * 64) -AddinAssemblyPath $installedAddinPath
+
+    $ambiguousHostIntegrationRoot = Join-Path $runRoot "host-integrations-ambiguous"
+    New-Item -ItemType Directory -Force -Path (Join-Path $ambiguousHostIntegrationRoot "a") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $ambiguousHostIntegrationRoot "b") | Out-Null
+    Copy-Item -LiteralPath (Join-Path $hostIntegrationRoot "host-integrations-summary.json") -Destination (Join-Path $ambiguousHostIntegrationRoot "a\host-integrations-summary.json") -Force
+    Copy-Item -LiteralPath (Join-Path $hostIntegrationRoot "host-integrations-summary.json") -Destination (Join-Path $ambiguousHostIntegrationRoot "b\host-integrations-summary.json") -Force
+
+    $leakyAdditionalEvidenceRoot = Join-Path $runRoot "leaky-additional-evidence"
+    New-Item -ItemType Directory -Force -Path $leakyAdditionalEvidenceRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $leakyAdditionalEvidenceRoot "leaky.log") -Value "REVIT_MCP_NEXT_AUTH_TOKEN=$authToken" -Encoding UTF8
 
     $evidenceScript = Join-Path $repoRoot "scripts\collect-release-evidence.ps1"
     Assert-ScriptFailsLike $evidenceScript @(
@@ -404,6 +468,33 @@ try {
 
     Assert-ScriptFailsLike $evidenceScript @(
         "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-live-ambiguous"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $ambiguousLiveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot
+    ) "*multiple smoke-summary.json files*" "Ambiguous live-smoke summary gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-live-smoke-missing-identity"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $missingIdentityLiveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot
+    ) "*Live Revit smoke summary is missing addinAssembly identity*" "Missing live-smoke package identity gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-live-smoke-package-identity"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $mismatchedIdentityLiveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot
+    ) "*Live Revit smoke loaded add-in SHA-256*" "Mismatched live-smoke package identity gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
         "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-missing"),
         "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
         "-LiveSmokeEvidencePath", $liveSmokeRoot,
@@ -421,6 +512,15 @@ try {
 
     Assert-ScriptFailsLike $evidenceScript @(
         "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-ambiguous"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $ambiguousHostIntegrationRoot
+    ) "*multiple host-integrations-summary.json*files*" "Ambiguous hosted integration summary gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
         "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-package-identity"),
         "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
         "-LiveSmokeEvidencePath", $liveSmokeRoot,
@@ -428,8 +528,19 @@ try {
         "-HostedIntegrationEvidencePath", $mismatchedHostIntegrationRoot
     ) "*loaded add-in SHA-256*" "Mismatched hosted integration package identity gate"
 
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-raw-secret"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $hostIntegrationRoot,
+        "-AdditionalEvidencePaths", $leakyAdditionalEvidenceRoot
+    ) "*potential raw secret*" "Raw secret release evidence gate"
+
     Invoke-RepoScript (Join-Path $logsRoot "release-evidence.log") $evidenceScript @(
         "-PackageRoot", $packageRoot,
+        "-PackageZipPath", "$packageRoot.zip",
         "-OutputRoot", $evidenceOutputRoot,
         "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
         "-LiveSmokeEvidencePath", $liveSmokeRoot,
@@ -438,7 +549,7 @@ try {
         "-ValidateRepoLogPath", $validateLog,
         "-PackageLogPath", $packageLog,
         "-DoctorLogPath", $doctorLog,
-        "-CommandLogPaths", $supportLog, (Join-Path $logsRoot "host-integrations-evidence.log")
+        "-CommandLogPaths", "$supportLog;$(Join-Path $logsRoot "host-integrations-evidence.log")"
     )
 
     $evidenceRoot = Get-ChildItem -LiteralPath $evidenceOutputRoot -Directory | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
@@ -463,6 +574,9 @@ try {
     if ($evidenceManifest.package.evidence.packageZipSha256 -notmatch "^[a-f0-9]{64}$") {
         throw "Package zip SHA-256 was not recorded."
     }
+    if ($evidenceManifest.package.evidence.packageZipName -notlike "*.zip") {
+        throw "Package zip metadata did not point at a .zip file."
+    }
     if ($evidenceManifest.package.evidence.packagedAddin.sha256 -ne $packagedAddinSha256) {
         throw "Packaged add-in SHA-256 was not recorded in release evidence."
     }
@@ -480,6 +594,12 @@ try {
     }
     if ($evidenceManifest.liveSmoke.summary.documentFingerprint -ne "doc-synthetic-evidence-contract") {
         throw "Live smoke document fingerprint was not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.packageIdentity.expectedSha256 -ne $packagedAddinSha256) {
+        throw "Live smoke package identity did not record the expected add-in SHA-256."
+    }
+    if ($evidenceManifest.liveSmoke.summary.packageIdentity.assemblySha256 -ne $packagedAddinSha256) {
+        throw "Live smoke loaded add-in SHA-256 was not recorded."
     }
     if ($evidenceManifest.supportBundle.status -ne "captured") {
         throw "Support bundle evidence was not marked captured."
@@ -521,7 +641,32 @@ try {
     Assert-InventoryContains $evidenceManifest.contents "host-integrations/host-integrations-summary.json"
     Assert-InventoryContains $evidenceManifest.contents "release-evidence-summary.md"
 
-    $authToken = Read-AuthTokenConfig (Join-Path $installRoot "config\auth.env")
+    $readinessScript = Join-Path $repoRoot "scripts\check-release-readiness.ps1"
+    Invoke-RepoScript (Join-Path $logsRoot "readiness-external-preview.log") $readinessScript @(
+        "-EvidencePath", $evidenceRoot.FullName,
+        "-Profile", "external-preview",
+        "-AllowDirty"
+    )
+    Invoke-RepoScript (Join-Path $logsRoot "readiness-release-candidate.log") $readinessScript @(
+        "-EvidencePath", "$($evidenceRoot.FullName).zip",
+        "-Profile", "release-candidate",
+        "-AllowDirty"
+    )
+    Assert-ScriptFailsLike $readinessScript @(
+        "-EvidencePath", $evidenceRoot.FullName,
+        "-Profile", "production",
+        "-AllowDirty"
+    ) "*Production readiness requires captured signing evidence*" "Production readiness signing gate"
+
+    $tamperedEvidenceRoot = Join-Path $runRoot "tampered-missing-evidence-file"
+    Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedEvidenceRoot -Recurse -Force
+    Remove-Item -LiteralPath (Join-Path $tamperedEvidenceRoot "live-smoke\smoke-summary.json") -Force
+    Assert-ScriptFailsLike $readinessScript @(
+        "-EvidencePath", $tamperedEvidenceRoot,
+        "-Profile", "external-preview",
+        "-AllowDirty"
+    ) "*Evidence inventory file is missing*" "Missing evidence file readiness gate"
+
     Assert-NoRawTokenInEvidence $evidenceRoot.FullName $authToken
 
     Write-Step "Release evidence contract passed."

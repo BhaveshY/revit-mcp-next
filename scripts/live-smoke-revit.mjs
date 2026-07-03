@@ -97,6 +97,7 @@ async function main() {
     mode: options.statusOnly ? "status-only" : "full",
     expectedRevitYear: options.expectedRevitYear ?? null,
     revit: null,
+    addinAssembly: null,
     activeDocument: null,
     documentFingerprint: options.documentFingerprint ?? null,
     coveredTools: [],
@@ -117,6 +118,7 @@ async function main() {
     assert(status.connected === true, "revit.status did not report a connected Revit bridge.");
     assert(status.activeDocument, "Revit is connected but there is no active project document.");
     summary.revit = status.revit ?? null;
+    summary.addinAssembly = status.addinAssembly ? compactObject(status.addinAssembly) : null;
     assertExpectedRevitYear(status, options.expectedRevitYear);
 
     const activeDocument = status.activeDocument;

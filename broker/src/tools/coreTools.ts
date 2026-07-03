@@ -767,6 +767,16 @@ const statusDataSchema = z
     connected: z.boolean(),
     brokerVersion: z.string().optional(),
     addinVersion: z.string().optional(),
+    addinAssembly: z
+      .object({
+        assemblyPath: z.string().optional(),
+        assemblySha256: z.string().optional(),
+        fileVersion: z.string().optional(),
+        productVersion: z.string().optional(),
+        assemblyIdentityError: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
     protocolVersion: z.string().optional(),
     activeDocument: documentSummarySchema.optional(),
     selection: z.object({ count: z.number() }).passthrough().optional(),

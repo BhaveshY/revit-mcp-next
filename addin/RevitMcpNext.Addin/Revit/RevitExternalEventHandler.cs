@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -4778,6 +4779,38 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static Dictionary<string, object> BuildAddinAssemblyIdentity()
+        {
+            var identity = new Dictionary<string, object>();
+
+            try
+            {
+                string assemblyPath = typeof(RevitExternalEventHandler).Assembly.Location;
+                if (!string.IsNullOrWhiteSpace(assemblyPath))
+                {
+                    identity["assemblyPath"] = assemblyPath;
+                    if (File.Exists(assemblyPath))
+                    {
+                        using (SHA256 sha = SHA256.Create())
+                        using (FileStream stream = File.OpenRead(assemblyPath))
+                        {
+                            identity["assemblySha256"] = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
+                        }
+
+                        FileVersionInfo version = FileVersionInfo.GetVersionInfo(assemblyPath);
+                        if (!string.IsNullOrWhiteSpace(version.FileVersion)) identity["fileVersion"] = version.FileVersion;
+                        if (!string.IsNullOrWhiteSpace(version.ProductVersion)) identity["productVersion"] = version.ProductVersion;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                identity["assemblyIdentityError"] = ex.Message;
+            }
+
+            return identity;
+        }
+
         private static Dictionary<string, object> BuildModelReadiness(UIApplication app, Document document, long generation, Dictionary<string, object> payload)
         {
             Level[] levels = new FilteredElementCollector(document)
@@ -5024,6 +5057,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["connected"] = true,
                 ["brokerVersion"] = "unknown",
                 ["addinVersion"] = AddinVersion,
+                ["addinAssembly"] = BuildAddinAssemblyIdentity(),
                 ["protocolVersion"] = BridgeProtocol.Version,
                 ["revit"] = new Dictionary<string, object>
                 {

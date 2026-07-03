@@ -112,6 +112,13 @@ export interface RevitStatus {
   connected: boolean;
   brokerVersion: string;
   addinVersion?: string;
+  addinAssembly?: {
+    assemblyPath?: string;
+    assemblySha256?: string;
+    fileVersion?: string;
+    productVersion?: string;
+    assemblyIdentityError?: string;
+  };
   protocolVersion: ProtocolVersion;
   revit?: {
     version: string;

@@ -28,6 +28,70 @@ function Get-FullPath($Path) {
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
 }
 
+function Expand-DelimitedPathList($Values) {
+    $expanded = New-Object System.Collections.Generic.List[string]
+    foreach ($value in @($Values)) {
+        if ([string]::IsNullOrWhiteSpace([string] $value)) {
+            continue
+        }
+
+        $valueText = [string] $value
+        if (Test-Path -LiteralPath ([Environment]::ExpandEnvironmentVariables($valueText))) {
+            $expanded.Add($valueText) | Out-Null
+            continue
+        }
+
+        foreach ($part in ($valueText -split ";")) {
+            if (-not [string]::IsNullOrWhiteSpace($part)) {
+                $expanded.Add($part.Trim()) | Out-Null
+            }
+        }
+    }
+
+    return @($expanded.ToArray())
+}
+
+function Test-PotentialSecretText($Text) {
+    $patterns = @(
+        '(?i)REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*["'']?[A-Za-z0-9._~+/=-]{20,}["'']?',
+        '(?i)["'']authToken["'']\s*:\s*["''][^"'']{20,}["'']',
+        '(?i)Authorization\s*:\s*Bearer\s+[A-Za-z0-9._~+/=-]{20,}',
+        '-----BEGIN [^-]*PRIVATE KEY-----'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ([regex]::IsMatch([string] $Text, $pattern)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Assert-NoSensitiveEvidence($Root) {
+    $textExtensions = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($extension in @(".cmd", ".env", ".json", ".log", ".md", ".ps1", ".sha256", ".toml", ".txt", ".xml", ".yaml", ".yml")) {
+        $textExtensions.Add($extension) | Out-Null
+    }
+
+    $rootFull = Get-FullPath $Root
+    $textFiles = Get-ChildItem -LiteralPath $rootFull -Recurse -File |
+        Where-Object { $textExtensions.Contains($_.Extension) -and $_.Length -le 5MB }
+
+    foreach ($file in $textFiles) {
+        try {
+            $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+        } catch {
+            continue
+        }
+
+        if (Test-PotentialSecretText $text) {
+            $relativePath = (Get-RelativePath $rootFull $file.FullName) -replace "\\", "/"
+            throw "Release evidence contains a potential raw secret in $relativePath. Redact the source evidence before collecting the bundle."
+        }
+    }
+}
+
 function Add-TrailingSeparator($Path) {
     if ($Path.EndsWith("\") -or $Path.EndsWith("/")) {
         return $Path
@@ -296,11 +360,14 @@ function Resolve-LiveSmokeSummaryPath($EvidencePath) {
         return (Resolve-Path -LiteralPath $direct).Path
     }
 
-    $candidate = Get-ChildItem -LiteralPath $resolved -Recurse -Filter "smoke-summary.json" -File -ErrorAction SilentlyContinue |
-        Sort-Object FullName |
-        Select-Object -First 1
-    if ($candidate) {
-        return $candidate.FullName
+    $candidates = @(Get-ChildItem -LiteralPath $resolved -Recurse -Filter "smoke-summary.json" -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName)
+    if ($candidates.Count -eq 1) {
+        return $candidates[0].FullName
+    }
+
+    if ($candidates.Count -gt 1) {
+        throw "Live Revit smoke evidence contains multiple smoke-summary.json files. Pass the exact summary file or exact run directory: $resolved"
     }
 
     throw "Live Revit smoke evidence must include smoke-summary.json with status=passed. Missing under: $resolved"
@@ -382,11 +449,14 @@ function Resolve-HostedIntegrationSummaryPath($EvidencePath) {
         return (Resolve-Path -LiteralPath $direct).Path
     }
 
-    $candidate = Get-ChildItem -LiteralPath $resolved -Recurse -Filter "host-integrations-summary.json" -File -ErrorAction SilentlyContinue |
-        Sort-Object FullName |
-        Select-Object -First 1
-    if ($candidate) {
-        return $candidate.FullName
+    $candidates = @(Get-ChildItem -LiteralPath $resolved -Recurse -Filter "host-integrations-summary.json" -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName)
+    if ($candidates.Count -eq 1) {
+        return $candidates[0].FullName
+    }
+
+    if ($candidates.Count -gt 1) {
+        throw "Hosted pyRevit/Dynamo integration smoke evidence contains multiple host-integrations-summary.json files. Pass the exact summary file or exact run directory: $resolved"
     }
 
     throw "Hosted pyRevit/Dynamo integration smoke evidence must include host-integrations-summary.json with status=passed. Missing under: $resolved"
@@ -460,6 +530,32 @@ function Assert-HostLoadedPackageAddin($HostSummary, $HostName, $ExpectedAddinId
         assemblySha256 = $actualSha256
         fileVersion = [string] $bridge.fileVersion
         productVersion = [string] $bridge.productVersion
+    }
+}
+
+function Assert-LiveSmokePackageIdentity($LiveSmokeSummary, $ExpectedAddinIdentity) {
+    $summaryPath = $LiveSmokeSummary.path
+    $addinAssembly = $LiveSmokeSummary.data.addinAssembly
+    if ($null -eq $addinAssembly) {
+        throw "Live Revit smoke summary is missing addinAssembly identity. Rerun smoke with a build that records revit.status addinAssembly. Summary: $summaryPath"
+    }
+
+    $actualSha256 = ([string] $addinAssembly.assemblySha256).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($actualSha256)) {
+        throw "Live Revit smoke summary did not record addinAssembly.assemblySha256. Summary: $summaryPath"
+    }
+
+    if (-not [string]::Equals($actualSha256, [string] $ExpectedAddinIdentity.sha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Live Revit smoke loaded add-in SHA-256 $actualSha256, expected packaged $($ExpectedAddinIdentity.sha256). Summary: $summaryPath"
+    }
+
+    return [ordered] @{
+        expectedPackagePath = [string] $ExpectedAddinIdentity.packagePath
+        expectedSha256 = [string] $ExpectedAddinIdentity.sha256
+        assemblyPath = [string] $addinAssembly.assemblyPath
+        assemblySha256 = $actualSha256
+        fileVersion = [string] $addinAssembly.fileVersion
+        productVersion = [string] $addinAssembly.productVersion
     }
 }
 
@@ -577,6 +673,7 @@ $liveSmokeSection = [ordered] @{
 }
 if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
     $liveSmokeSummary = Read-PassedLiveSmokeSummary $LiveSmokeEvidencePath
+    $liveSmokePackageIdentity = Assert-LiveSmokePackageIdentity $liveSmokeSummary $packagedAddinIdentity
     $liveSmokeRoot = Join-Path $stageRoot "live-smoke"
     $copiedLiveSmoke = Copy-EvidencePath $LiveSmokeEvidencePath $liveSmokeRoot "Live Revit smoke evidence"
     $liveSmokeSection = [ordered] @{
@@ -592,6 +689,8 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
             revit = $liveSmokeSummary.data.revit
             activeDocument = $liveSmokeSummary.data.activeDocument
             documentFingerprint = $liveSmokeSummary.data.documentFingerprint
+            addinAssembly = $liveSmokeSummary.data.addinAssembly
+            packageIdentity = $liveSmokePackageIdentity
             coveredTools = $liveSmokeSummary.data.coveredTools
             coveredOperations = $liveSmokeSummary.data.coveredOperations
             skippedOperations = $liveSmokeSummary.data.skippedOperations
@@ -648,8 +747,8 @@ if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
     }
 }
 
-$commandLogs = Copy-PathList $CommandLogPaths (Join-Path $stageRoot "command-logs") "Command log evidence"
-$additionalEvidence = Copy-PathList $AdditionalEvidencePaths (Join-Path $stageRoot "additional") "Additional evidence"
+$commandLogs = Copy-PathList (Expand-DelimitedPathList $CommandLogPaths) (Join-Path $stageRoot "command-logs") "Command log evidence"
+$additionalEvidence = Copy-PathList (Expand-DelimitedPathList $AdditionalEvidencePaths) (Join-Path $stageRoot "additional") "Additional evidence"
 $validationRoot = Join-Path $stageRoot "validation"
 $validationSection = [ordered] @{
     validateRepoLog = Copy-NamedEvidenceFile $ValidateRepoLogPath $validationRoot "validate-repo.log" "validate-repo"
@@ -741,6 +840,7 @@ Set-Content -LiteralPath (Join-Path $stageRoot "release-evidence-summary.md") -V
 
 $evidenceManifest["contents"] = Get-InventoryEntries $stageRoot @("release-evidence-manifest.json")
 Set-Content -LiteralPath (Join-Path $stageRoot "release-evidence-manifest.json") -Value ($evidenceManifest | ConvertTo-Json -Depth 12) -Encoding UTF8
+Assert-NoSensitiveEvidence $stageRoot
 
 if (-not $NoZip) {
     Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $bundleZipPath -Force

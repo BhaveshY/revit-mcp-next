@@ -357,6 +357,12 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       connected: true,
       brokerVersion: "test",
       addinVersion: "fake",
+      addinAssembly: {
+        assemblyPath: "C:\\fake\\RevitMcpNext.Addin.dll",
+        assemblySha256: "f".repeat(64),
+        fileVersion: "0.1.0.0",
+        productVersion: "0.1.0",
+      },
       protocolVersion: PROTOCOL_VERSION,
       revit: {
         version: "2024",

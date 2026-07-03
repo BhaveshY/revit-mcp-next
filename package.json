@@ -25,6 +25,7 @@
     "sign:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-release.ps1",
     "evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-release-evidence.ps1",
     "evidence:host-integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-host-integration-evidence.ps1",
+    "evidence:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-readiness.ps1",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "package:windows:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -DryRun",
     "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1",
