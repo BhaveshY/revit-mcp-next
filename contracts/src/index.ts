@@ -823,6 +823,10 @@ export interface DeleteElementOperation extends ChangeOperationBase {
   expectedUniqueId?: UniqueId;
   expectedPinned?: boolean;
   allowPinned?: boolean;
+  allowDependentDeletes?: boolean;
+  expectedDeletedElementIds?: ElementId[];
+  expectedDeletedCount?: number;
+  dependentDeleteLimit?: number;
 }
 
 export type ChangeOperation =

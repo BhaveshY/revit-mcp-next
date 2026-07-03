@@ -244,7 +244,7 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `copy_element`: copy one model element by an explicit 3D translation vector.
 - `change_element_type`: change one non-pinned model element to a compatible Revit type ID discovered through `revit.catalog`.
 - `set_element_pinned`: pin or unpin one model element, with optional `expectedPinned` guard.
-- `delete_element`: delete one non-type element by `elementId`, with optional `expectedUniqueId`, `expectedPinned`, and `allowPinned` guards.
+- `delete_element`: delete one non-type element by `elementId`, with optional `expectedUniqueId`, `expectedPinned`, `allowPinned`, dependent-delete preview, `allowDependentDeletes`, `expectedDeletedElementIds`, and `expectedDeletedCount` guards.
 
 `revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
 

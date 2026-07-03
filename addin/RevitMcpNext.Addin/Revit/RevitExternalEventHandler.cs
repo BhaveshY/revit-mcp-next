@@ -31,6 +31,8 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxMaterialScanLimit = 100000;
         private const int MaxRoomLimit = 500;
         private const int MaxChangeSetOperations = 50;
+        private const int DefaultDeleteDependentLimit = 25;
+        private const int MaxDeleteDependentLimit = 256;
         private readonly RevitRequestQueue _queue;
         private readonly TransactionService _transactions;
         private readonly DocumentGenerationTracker _generations;
@@ -2972,12 +2974,27 @@ namespace RevitMcpNext.Addin.Revit
                 return BlockedChange(operation, index, "Element " + elementId + " is pinned. Pass allowPinned=true only after explicitly reviewing the target.");
             }
 
+            DeleteProbeResult probe;
+            try
+            {
+                probe = ProbeDeleteElement(document, element);
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, "Revit could not preview delete_element for " + elementId + ": " + FormatPreviewProbeError("delete_element", ex));
+            }
+
+            Dictionary<string, object> before = DeleteSnapshot(document, element);
+            Dictionary<string, object> after = DeleteAfterSnapshot(probe.DeletedIds, element.Id);
+            string guardFailure = ValidateDeleteProbeGuards(operation, probe);
+            if (!string.IsNullOrWhiteSpace(guardFailure))
+            {
+                return Change(operation, index, "blocked", ElementTarget(element, null), before, after, guardFailure);
+            }
+
             return Change(operation, index, "ready", ElementTarget(element, null),
-                before: DeleteSnapshot(document, element),
-                after: new Dictionary<string, object>
-                {
-                    ["deleted"] = true
-                });
+                before: before,
+                after: after);
         }
 
         private static Dictionary<string, object> ApplyDeleteElement(Document document, Dictionary<string, object> operation, int index)
@@ -2989,18 +3006,143 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             Element element = ResolveElement(document, GetString(operation, "elementId"));
+            ElementId targetId = element.Id;
             Dictionary<string, object> target = ElementTarget(element, null);
             Dictionary<string, object> before = DeleteSnapshot(document, element);
-            ICollection<ElementId> deletedIds = document.Delete(element.Id);
+            ICollection<ElementId> deletedIds = document.Delete(targetId);
 
             return Change(operation, index, "applied", target,
                 before: before,
-                after: new Dictionary<string, object>
+                after: DeleteAfterSnapshot(deletedIds ?? Array.Empty<ElementId>(), targetId));
+        }
+
+        private static string ValidateDeleteProbeGuards(Dictionary<string, object> operation, DeleteProbeResult probe)
+        {
+            int deletedCount = probe.DeletedIds.Count;
+            int dependentCount = probe.DependentIds.Count;
+            bool allowDependentDeletes = GetBool(operation, "allowDependentDeletes", false);
+            IReadOnlyList<string> expectedDeletedElementIds = GetStringList(operation, "expectedDeletedElementIds");
+            int? expectedDeletedCount = GetInt(operation, "expectedDeletedCount");
+            int dependentDeleteLimit = Math.Min(
+                MaxDeleteDependentLimit,
+                Math.Max(1, GetInt(operation, "dependentDeleteLimit") ?? DefaultDeleteDependentLimit));
+
+            if (expectedDeletedCount.HasValue && expectedDeletedCount.Value != deletedCount)
+            {
+                return "delete_element would delete " + deletedCount.ToString(CultureInfo.InvariantCulture) +
+                    " element(s), but expectedDeletedCount was " + expectedDeletedCount.Value.ToString(CultureInfo.InvariantCulture) + ".";
+            }
+
+            if (expectedDeletedElementIds.Count > 0)
+            {
+                var expected = new HashSet<string>(expectedDeletedElementIds, StringComparer.OrdinalIgnoreCase);
+                var actual = new HashSet<string>(probe.DeletedIds.Select(ToElementIdString), StringComparer.OrdinalIgnoreCase);
+                if (expected.Count != actual.Count || !expected.SetEquals(actual))
                 {
-                    ["deleted"] = true,
-                    ["deletedCount"] = deletedIds?.Count ?? 0,
-                    ["deletedElementIds"] = (deletedIds ?? Array.Empty<ElementId>()).Select(ToElementIdString).ToArray()
-                });
+                    return "delete_element expectedDeletedElementIds did not match Revit's delete set. Actual deletedElementIds: " +
+                        FormatElementIdList(actual) + ".";
+                }
+            }
+
+            if (deletedCount > dependentDeleteLimit && !allowDependentDeletes && expectedDeletedElementIds.Count == 0)
+            {
+                return "delete_element would delete " + deletedCount.ToString(CultureInfo.InvariantCulture) +
+                    " element(s), above dependentDeleteLimit " + dependentDeleteLimit.ToString(CultureInfo.InvariantCulture) +
+                    ". Pass allowDependentDeletes=true or exact expectedDeletedElementIds after reviewing the preview.";
+            }
+
+            if (dependentCount > 0 && !allowDependentDeletes && expectedDeletedElementIds.Count == 0)
+            {
+                return "delete_element would also delete " + dependentCount.ToString(CultureInfo.InvariantCulture) +
+                    " dependent element(s): " + FormatElementIdList(probe.DependentIds.Select(ToElementIdString)) +
+                    ". Pass allowDependentDeletes=true or exact expectedDeletedElementIds after reviewing the preview.";
+            }
+
+            return null;
+        }
+
+        private static DeleteProbeResult ProbeDeleteElement(Document document, Element element)
+        {
+            if (document.IsModifiable)
+            {
+                using (var subTransaction = new SubTransaction(document))
+                {
+                    bool started = false;
+                    try
+                    {
+                        if (subTransaction.Start() != TransactionStatus.Started)
+                        {
+                            throw new InvalidOperationException("Could not start Revit subtransaction for delete preview.");
+                        }
+                        started = true;
+                        ICollection<ElementId> deletedIds = document.Delete(element.Id);
+                        return new DeleteProbeResult(deletedIds ?? Array.Empty<ElementId>(), element.Id);
+                    }
+                    finally
+                    {
+                        RollBackPreviewProbeSubTransaction(subTransaction, started);
+                    }
+                }
+            }
+
+            using (var transaction = new Transaction(document, "Revit MCP preview delete_element"))
+            {
+                TransactionStatus startStatus = transaction.Start();
+                if (startStatus != TransactionStatus.Started)
+                {
+                    throw new InvalidOperationException("Could not start Revit transaction for delete preview: " + startStatus);
+                }
+
+                ConfigurePreviewProbeTransaction(transaction);
+                try
+                {
+                    ICollection<ElementId> deletedIds = document.Delete(element.Id);
+                    return new DeleteProbeResult(deletedIds ?? Array.Empty<ElementId>(), element.Id);
+                }
+                finally
+                {
+                    RollBackPreviewProbeTransaction(transaction);
+                }
+            }
+        }
+
+        private static Dictionary<string, object> DeleteAfterSnapshot(IEnumerable<ElementId> deletedIds, ElementId targetId)
+        {
+            List<ElementId> ids = (deletedIds ?? Array.Empty<ElementId>()).ToList();
+            string targetIdString = ToElementIdString(targetId);
+            List<ElementId> dependentIds = ids
+                .Where(id => !string.Equals(ToElementIdString(id), targetIdString, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var after = new Dictionary<string, object>
+            {
+                ["deleted"] = true,
+                ["deletedCount"] = ids.Count,
+                ["deletedElementIds"] = ids.Select(ToElementIdString).ToArray(),
+                ["dependentDeletedCount"] = dependentIds.Count
+            };
+
+            if (dependentIds.Count > 0)
+            {
+                after["dependentDeletedElementIds"] = dependentIds.Select(ToElementIdString).ToArray();
+            }
+
+            return after;
+        }
+
+        private sealed class DeleteProbeResult
+        {
+            public DeleteProbeResult(IEnumerable<ElementId> deletedIds, ElementId targetId)
+            {
+                DeletedIds = (deletedIds ?? Array.Empty<ElementId>()).ToList();
+                string targetIdString = ToElementIdString(targetId);
+                DependentIds = DeletedIds
+                    .Where(id => !string.Equals(ToElementIdString(id), targetIdString, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+
+            public List<ElementId> DeletedIds { get; }
+            public List<ElementId> DependentIds { get; }
         }
 
         private static Dictionary<string, object> Change(
@@ -3503,12 +3645,36 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static void RollBackPreviewProbeSubTransaction(SubTransaction subTransaction, bool started)
+        {
+            if (!started) return;
+            try
+            {
+                subTransaction.RollBack();
+            }
+            catch
+            {
+                // Preserve the original preview error if Revit already unwound the subtransaction.
+            }
+        }
+
         private static string FormatPreviewProbeError(string operationType, Exception exception)
         {
             string message = exception == null ? string.Empty : exception.Message;
             if (string.IsNullOrWhiteSpace(message)) message = exception == null ? "Unknown Revit API error." : exception.GetType().Name;
             message = message.Replace("\r", " ").Replace("\n", " ").Trim();
             return "Revit rejected " + operationType + " preview: " + message;
+        }
+
+        private static string FormatElementIdList(IEnumerable<string> ids, int max = 12)
+        {
+            List<string> values = (ids ?? Enumerable.Empty<string>())
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Take(max + 1)
+                .ToList();
+            if (values.Count <= max) return string.Join(", ", values);
+            values = values.Take(max).ToList();
+            return string.Join(", ", values) + ", ...";
         }
 
         private static bool HasIndependentTagForElementInView(Document document, Element element, View view)

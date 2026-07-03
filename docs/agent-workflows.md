@@ -119,7 +119,7 @@ For selected edits:
 }
 ```
 
-Use `expectedUniqueId` on destructive operations and avoid changing pinned elements unless the user explicitly asks for pin state changes.
+Use `expectedUniqueId` on destructive operations and avoid changing pinned elements unless the user explicitly asks for pin state changes. For `delete_element`, inspect the previewed `deletedElementIds`; if Revit reports dependents, only continue with `allowDependentDeletes` or exact `expectedDeletedElementIds` after review.
 
 ## Blocked Preview Recovery
 

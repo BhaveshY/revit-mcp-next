@@ -41,7 +41,7 @@ End-to-end supported operations:
 - `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs.
 - `change_element_type`: change one non-pinned model element to a compatible `typeId`.
 - `set_element_pinned`: set one model element's pinned state, optionally guarded by `expectedPinned`.
-- `delete_element`: delete one non-type element by `elementId`, optionally guarded by `expectedUniqueId`, `expectedPinned`, and `allowPinned`.
+- `delete_element`: delete one non-type element by `elementId`, optionally guarded by `expectedUniqueId`, `expectedPinned`, and `allowPinned`. Preview probes Revit's actual delete set in a rollback transaction and blocks dependent deletes unless `allowDependentDeletes` is true or `expectedDeletedElementIds` exactly matches the previewed IDs. Use `expectedDeletedCount` when the exact count matters.
 
 Example preview payload:
 
@@ -82,6 +82,8 @@ Example apply payload:
 ```
 
 The add-in recomputes the preview hash before applying. If the model, transaction name, or operation list no longer match, apply fails.
+
+For destructive deletes, inspect `changes[].after.deletedElementIds` and `dependentDeletedCount` from preview before apply. A blocked delete is usually useful evidence: it means Revit would remove more than the requested element, so narrow the target or echo the reviewed `expectedDeletedElementIds`.
 
 Production readiness:
 

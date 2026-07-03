@@ -444,6 +444,20 @@ const deleteElementOperationSchema = operationBaseSchema
     expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard to avoid deleting an unexpected element if ids were reused."),
     expectedPinned: z.boolean().optional().describe("Optional current pinned state guard."),
     allowPinned: z.boolean().optional().describe("Must be true to delete a currently pinned element."),
+    allowDependentDeletes: z.boolean().optional().describe("Must be true to delete dependent elements discovered by the preview probe unless expectedDeletedElementIds exactly matches the delete set."),
+    expectedDeletedElementIds: z
+      .array(boundedId)
+      .max(256)
+      .optional()
+      .describe("Optional exact set of Revit element IDs expected to be deleted, including the target and any dependents."),
+    expectedDeletedCount: z.number().int().min(1).max(256).optional().describe("Optional exact count guard for the delete set."),
+    dependentDeleteLimit: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .optional()
+      .describe("Maximum delete-set size the preview may approve without exact expectedDeletedElementIds. Defaults to a conservative add-in limit."),
   })
   .strict();
 const changeOperationSchema = z.discriminatedUnion("type", [

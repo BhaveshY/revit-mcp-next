@@ -1375,6 +1375,14 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         deleted: true,
         expectedPinned: operation.expectedPinned,
         allowPinned: operation.allowPinned,
+        allowDependentDeletes: operation.allowDependentDeletes,
+        expectedDeletedElementIds: operation.expectedDeletedElementIds,
+        expectedDeletedCount: operation.expectedDeletedCount,
+        dependentDeleteLimit: operation.dependentDeleteLimit,
+        deletedCount: operation.expectedDeletedCount ?? operation.expectedDeletedElementIds?.length ?? 1,
+        deletedElementIds: operation.expectedDeletedElementIds ?? [operation.elementId],
+        dependentDeletedCount: Math.max(0, (operation.expectedDeletedCount ?? operation.expectedDeletedElementIds?.length ?? 1) - 1),
+        dependentDeletedElementIds: operation.expectedDeletedElementIds?.filter((id) => id !== operation.elementId),
       };
     default:
       return assertNever(operation);

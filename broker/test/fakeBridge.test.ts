@@ -477,6 +477,17 @@ test("fake bridge previews and applies a bounded change set", async () => {
         hasLeader: true,
         orientation: "Horizontal" as const,
       },
+      {
+        id: "op-19",
+        type: "delete_element" as const,
+        elementId: "501",
+        expectedUniqueId: "wall-501",
+        expectedPinned: false,
+        allowDependentDeletes: true,
+        expectedDeletedElementIds: ["501", "801"],
+        expectedDeletedCount: 2,
+        dependentDeleteLimit: 10,
+      },
     ],
   } satisfies ChangeSetRequest;
 
@@ -484,8 +495,8 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 18);
-  assert.equal(preview.data.riskLevel, "medium");
+  assert.equal(preview.data.operationCount, 19);
+  assert.equal(preview.data.riskLevel, "high");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
   assert.match(preview.data.changeSetHash ?? "", /^sha256:/);
@@ -596,6 +607,9 @@ test("fake bridge previews and applies a bounded change set", async () => {
     tagTypeId: "9701",
   });
   assert.equal(preview.data.changes[17]?.after?.hasLeader, true);
+  assert.equal(preview.data.changes[18]?.type, "delete_element");
+  assert.deepEqual(preview.data.changes[18]?.after?.deletedElementIds, ["501", "801"]);
+  assert.equal(preview.data.changes[18]?.after?.dependentDeletedCount, 1);
 
   const applyPayload = {
     ...changeSet,
@@ -612,7 +626,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 18);
+  assert.equal(applied.data.changedCount, 19);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
@@ -631,4 +645,5 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.data.changes[15]?.type, "create_room");
   assert.equal(applied.data.changes[16]?.type, "tag_room");
   assert.equal(applied.data.changes[17]?.type, "tag_element");
+  assert.equal(applied.data.changes[18]?.type, "delete_element");
 });

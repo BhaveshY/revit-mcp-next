@@ -26,7 +26,7 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | `tag_walls` / `tag_rooms` | Covered as guarded `tag_element` and `tag_room` preview/apply operations for view-scoped wall/multi-category tags and room tags. Tag type discovery is through `revit.catalog kind=tagTypes`. |
 | Door/window/furniture subset of `create_point_based_element` | Covered for first production cases as guarded `place_family_instance` preview/apply operation. It supports wall-hosted doors/windows and level-based furniture/equipment/fixtures discovered through `revit.catalog kind=familySymbols preset=placement`, with symbol, host, level, pinned-host, activation, rotation, and flip validation. |
 | Parts of `operate_element` | Covered by guarded `set_parameter`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, and `set_element_pinned`. |
-| `delete_element` | Covered as high-risk guarded `delete_element` preview/apply operation with optional `expectedUniqueId`, `expectedPinned`, and `allowPinned` guards. |
+| `delete_element` | Better than the fork: covered as high-risk guarded `delete_element` preview/apply operation with optional `expectedUniqueId`, `expectedPinned`, `allowPinned`, rollback-probed dependent delete reporting, `allowDependentDeletes`, exact `expectedDeletedElementIds`, and `expectedDeletedCount` guards. |
 | Agent readiness preflight | Better than the fork: `revit.get_model_readiness` returns bounded scenario readiness for levels, wall/floor/room creation, type changes, family placement, selection workflows, and annotation prerequisites. |
 
 ## Missing Or Partial
