@@ -112,6 +112,6 @@ Production readiness:
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
-- Run `npm run smoke:revit` only against a disposable active Revit project; it creates a grid, floor, walls, a room-bounding loop, and a room, reads the room back through `revit.get_rooms`, attempts family placement when suitable symbols and hosts exist, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it checks `revit.cancel_request` no-op behavior, creates a grid, floor, walls, a room-bounding loop, and a room, reads the room back through `revit.get_rooms`, attempts family placement when suitable symbols and hosts exist, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

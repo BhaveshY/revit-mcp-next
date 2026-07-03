@@ -27,6 +27,7 @@ const REQUIRED_TOOLS = [
   "revit.describe_parameters",
   "revit.preview_change_set",
   "revit.apply_change_set",
+  "revit.cancel_request",
 ];
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -147,9 +148,23 @@ async function main() {
       `Status OK: ${activeDocument.title ?? "(untitled)"} at generation ${startingGeneration ?? "(unknown)"}`
     );
 
+    const cancelProbeRequestId = `live-smoke-noop-${Date.now()}`;
+    const cancelProbe = await callRequiredTool(client, "revit.cancel_request", {
+      requestId: cancelProbeRequestId,
+      reason: "live smoke no-op probe",
+    });
+    summary.coveredTools.push("revit.cancel_request");
+    assert(cancelProbe.cancelled === false, "revit.cancel_request no-op probe unexpectedly reported cancelled=true.");
+    assert(
+      cancelProbe.requestId === cancelProbeRequestId,
+      "revit.cancel_request did not echo the no-op probe requestId."
+    );
+    assert(typeof cancelProbe.message === "string" && cancelProbe.message.length > 0, "revit.cancel_request did not return a message.");
+    console.log(`Cancel no-op OK: ${cancelProbe.message}`);
+
     if (options.statusOnly) {
       summary.status = "passed";
-      summary.coveredTools = ["revit.status"];
+      summary.coveredTools = ["revit.status", "revit.cancel_request"];
       console.log("Status-only smoke passed.");
       return;
     }
@@ -2184,6 +2199,7 @@ Runs a live Revit MCP smoke against the active Revit project:
   27. rejected apply for mismatched changeSetHash
   28. preview/apply set_element_pinned false
   29. preview/apply delete_element for the copied smoke wall
+  30. revit.cancel_request no-op probe
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
