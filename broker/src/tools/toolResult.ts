@@ -25,7 +25,7 @@ export function asToolResult<T>(
       ],
       structuredContent: {
         data: {
-          error: response.error,
+          error: sanitizeStructuredValue(response.error),
         },
         warnings: response.warnings,
         metrics: response.metrics ?? { elapsedMs: 0 },
@@ -41,7 +41,7 @@ export function asToolResult<T>(
       },
     ],
     structuredContent: {
-      data: response.data,
+      data: sanitizeStructuredValue(response.data),
       warnings: response.warnings,
       metrics: response.metrics,
       generation: response.generation,
@@ -62,4 +62,22 @@ function appendResultHints(text: string, data: unknown): string {
 
 function isRecord(value: unknown): value is ToolDataShape {
   return typeof value === "object" && value !== null;
+}
+
+function sanitizeStructuredValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => (item === undefined ? null : sanitizeStructuredValue(item)));
+  }
+
+  if (!isPlainRecord(value)) return value;
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (child !== undefined) sanitized[key] = sanitizeStructuredValue(child);
+  }
+  return sanitized;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Object.prototype.toString.call(value) === "[object Object]";
 }

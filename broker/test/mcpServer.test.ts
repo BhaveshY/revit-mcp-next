@@ -25,6 +25,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(statusTool.annotations?.readOnlyHint, true);
     assert.equal(statusTool.annotations?.destructiveHint, false);
     assert.ok(statusTool.outputSchema, "revit.status should declare outputSchema");
+    assert.match(JSON.stringify(statusTool.outputSchema), /connected/);
 
     const result = (await client.callTool({
       name: "revit.status",
@@ -59,7 +60,9 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.apply_change_set",
       "revit.cancel_request",
     ]) {
-      assert.ok(tools.tools.find((tool) => tool.name === expected), `${expected} tool should be listed`);
+      const tool = tools.tools.find((candidate) => candidate.name === expected);
+      assert.ok(tool, `${expected} tool should be listed`);
+      assertStructuredEnvelopeSchema(tool.outputSchema, expected);
     }
 
     const currentViewTool = tools.tools.find((tool) => tool.name === "revit.get_current_view");
@@ -81,6 +84,11 @@ test("broker exposes annotated tools with output schemas and callable structured
     const viewsTool = tools.tools.find((tool) => tool.name === "revit.get_views");
     assert.ok(viewsTool?.inputSchema, "revit.get_views should declare inputSchema");
     assert.match(JSON.stringify(viewsTool.inputSchema), /sheetPlacement/);
+    const viewsOutputSchema = JSON.stringify(viewsTool.outputSchema);
+    assert.match(viewsOutputSchema, /returnedCount/);
+    assert.match(viewsOutputSchema, /truncated/);
+    assert.match(viewsOutputSchema, /cursor/);
+    assert.match(viewsOutputSchema, /items/);
     const views = (await client.callTool({
       name: "revit.get_views",
       arguments: { filter: { viewTypes: ["FloorPlan"] }, includeTotalCount: true },
@@ -236,6 +244,13 @@ test("broker exposes annotated tools with output schemas and callable structured
     const querySchema = JSON.stringify(queryTool.inputSchema);
     assert.match(querySchema, /elementIds/);
     assert.match(querySchema, /uniqueIds/);
+    assert.match(querySchema, /parameterEquals/);
+    const queryOutputSchema = JSON.stringify(queryTool.outputSchema);
+    assert.match(queryOutputSchema, /returnedCount/);
+    assert.match(queryOutputSchema, /truncated/);
+    assert.match(queryOutputSchema, /cursor/);
+    assert.match(queryOutputSchema, /fields/);
+    assert.match(queryOutputSchema, /units/);
     const explicitQuery = (await client.callTool({
       name: "revit.query",
       arguments: {
@@ -351,6 +366,11 @@ test("broker exposes annotated tools with output schemas and callable structured
     ]) {
       assert.match(catalogSchema, new RegExp(expectedCatalogSchemaTerm));
     }
+    const catalogOutputSchema = JSON.stringify(catalogTool.outputSchema);
+    assert.match(catalogOutputSchema, /kind/);
+    assert.match(catalogOutputSchema, /target/);
+    assert.match(catalogOutputSchema, /returnedCount/);
+    assert.match(catalogOutputSchema, /cursor/);
 
     const catalogArgs = {
       kind: "elementTypes",
@@ -901,3 +921,19 @@ test("broker exposes MCP discovery resources and workflow prompts", async () => 
     await server.close();
   }
 });
+
+function assertStructuredEnvelopeSchema(outputSchema: unknown, toolName: string): void {
+  assert.ok(outputSchema && typeof outputSchema === "object", `${toolName} should expose an object output schema`);
+  const schema = outputSchema as {
+    type?: string;
+    required?: string[];
+    additionalProperties?: unknown;
+    properties?: Record<string, unknown>;
+  };
+  assert.equal(schema.type, "object", `${toolName} output schema root should be an object`);
+  assert.equal(schema.additionalProperties, false, `${toolName} output schema root should be strict`);
+  for (const required of ["data", "warnings", "metrics"]) {
+    assert.ok(schema.required?.includes(required), `${toolName} output schema should require ${required}`);
+    assert.ok(schema.properties?.[required], `${toolName} output schema should define ${required}`);
+  }
+}

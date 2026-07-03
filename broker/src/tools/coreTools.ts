@@ -579,25 +579,359 @@ const cancelSchema = {
   reason: z.string().max(256).optional(),
 };
 
-const warningSchema = z.object({
-  code: z.string(),
-  message: z.string(),
-  details: z.record(z.unknown()).optional(),
-});
+const warningSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+    details: z.record(z.unknown()).optional(),
+  })
+  .strict();
 
-const metricsSchema = z.object({
-  elapsedMs: z.number(),
-  collectorElapsedMs: z.number().optional(),
-  cacheHit: z.boolean().optional(),
-  returnedCount: z.number().optional(),
-  totalCount: z.number().optional(),
-});
+const metricsSchema = z
+  .object({
+    elapsedMs: z.number(),
+    collectorElapsedMs: z.number().optional(),
+    cacheHit: z.boolean().optional(),
+    returnedCount: z.number().optional(),
+    totalCount: z.number().optional(),
+  })
+  .strict();
 
-const toolOutputSchema = {
-  data: z.unknown(),
-  warnings: z.array(warningSchema),
-  metrics: metricsSchema,
-  generation: z.number().optional(),
+const bridgeErrorSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+    recoverable: z.boolean(),
+    details: z.record(z.unknown()).optional(),
+    suggestedNextAction: z.string().optional(),
+  })
+  .passthrough();
+
+const errorDataSchema = z
+  .object({
+    error: bridgeErrorSchema,
+  })
+  .passthrough();
+
+function toolOutputSchema(dataSchema: z.ZodTypeAny) {
+  return z
+    .object({
+      data: z.union([dataSchema, errorDataSchema]),
+      warnings: z.array(warningSchema),
+      metrics: metricsSchema,
+      generation: z.number().optional(),
+    })
+    .strict();
+}
+
+const jsonValueSchema: z.ZodTypeAny = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(jsonValueSchema)])
+);
+
+const unitValueSchema = z
+  .object({
+    value: z.number(),
+    unit: z.string(),
+    system: z.string(),
+  })
+  .passthrough();
+
+const point3Schema = z
+  .object({
+    x: unitValueSchema,
+    y: unitValueSchema,
+    z: unitValueSchema,
+  })
+  .passthrough();
+
+const documentReferenceSchema = z
+  .object({
+    fingerprint: z.string(),
+    title: z.string(),
+    path: z.string().optional(),
+    generation: z.number(),
+  })
+  .passthrough();
+
+const viewSummarySchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    name: z.string(),
+    type: z.string(),
+    isGraphical: z.boolean().optional(),
+    isTemplate: z.boolean().optional(),
+    canBePrinted: z.boolean().optional(),
+    scale: z.number().optional(),
+    detailLevel: z.string().optional(),
+    discipline: z.string().optional(),
+  })
+  .passthrough();
+
+const documentSummarySchema = documentReferenceSchema
+  .extend({
+    documentId: z.string().optional(),
+    isActive: z.boolean().optional(),
+    isWorkshared: z.boolean().optional(),
+    isModified: z.boolean().optional(),
+    activeView: viewSummarySchema.nullable().optional(),
+  })
+  .passthrough();
+
+const pageBaseSchema = z
+  .object({
+    returnedCount: z.number(),
+    totalCount: z.number().optional(),
+    limit: z.number(),
+    cursor: z.string().optional(),
+    truncated: z.boolean(),
+    scope: z.string(),
+    source: z.string(),
+  })
+  .passthrough();
+
+const queryItemSchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    class: z.string().nullable().optional(),
+    name: z.string().nullable().optional(),
+    typeId: z.string().nullable().optional(),
+    levelId: z.string().nullable().optional(),
+    fields: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+const queryResultSchema = pageBaseSchema
+  .extend({
+    items: z.array(queryItemSchema),
+    fields: z.array(z.string()),
+    units: z.record(z.string()),
+  })
+  .passthrough();
+
+const statusDataSchema = z
+  .object({
+    connected: z.boolean(),
+    brokerVersion: z.string().optional(),
+    addinVersion: z.string().optional(),
+    protocolVersion: z.string().optional(),
+    activeDocument: documentSummarySchema.optional(),
+    selection: z.object({ count: z.number() }).passthrough().optional(),
+    capabilities: z.array(z.string()).optional(),
+    warnings: z.array(warningSchema).optional(),
+  })
+  .passthrough();
+
+const levelSummarySchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    name: z.string(),
+    elevation: unitValueSchema,
+    isBuildingStory: z.boolean().optional(),
+  })
+  .passthrough();
+
+const currentViewDataSchema = z
+  .object({
+    document: documentReferenceSchema,
+    view: viewSummarySchema,
+    source: z.string(),
+  })
+  .passthrough();
+
+const viewsResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(viewSummarySchema),
+    fields: z.array(z.string()),
+  })
+  .passthrough();
+
+const sheetSummarySchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    sheetNumber: z.string().nullable().optional(),
+    name: z.string().nullable().optional(),
+    titleBlockIds: z.array(z.string()).optional(),
+    placedViews: z.array(z.object({ viewId: z.string() }).passthrough()).optional(),
+  })
+  .passthrough();
+
+const sheetsResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(sheetSummarySchema),
+    fields: z.array(z.string()),
+  })
+  .passthrough();
+
+const scopedElementListResultSchema = queryResultSchema
+  .extend({
+    document: documentReferenceSchema,
+    view: viewSummarySchema.nullable().optional(),
+    selection: z.object({ count: z.number(), available: z.boolean() }).passthrough().optional(),
+  })
+  .passthrough();
+
+const modelStatisticsResultSchema = z
+  .object({
+    document: documentReferenceSchema,
+    totals: z.object({ elements: z.number() }).passthrough(),
+    scannedElements: z.number(),
+    bucketLimit: z.number(),
+    truncated: z.boolean(),
+    byCategory: z.array(z.object({ key: z.string(), count: z.number() }).passthrough()).optional(),
+    byClass: z.array(z.object({ key: z.string(), count: z.number() }).passthrough()).optional(),
+    byLevel: z.array(z.object({ key: z.string(), count: z.number() }).passthrough()).optional(),
+    source: z.string(),
+  })
+  .passthrough();
+
+const modelReadinessResultSchema = z
+  .object({
+    document: documentReferenceSchema,
+    activeView: viewSummarySchema.nullable().optional(),
+    scenarios: z.array(z.object({ name: z.string(), ready: z.boolean(), missing: z.array(z.string()) }).passthrough()),
+    readyCount: z.number(),
+    totalCount: z.number(),
+    source: z.string(),
+  })
+  .passthrough();
+
+const materialQuantityItemSchema = z
+  .object({
+    materialId: z.string(),
+    materialName: z.string(),
+    elementCount: z.number(),
+    area: unitValueSchema,
+    volume: unitValueSchema,
+    source: z.string(),
+  })
+  .passthrough();
+
+const materialQuantitiesResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(materialQuantityItemSchema),
+    elementsScanned: z.number(),
+    elementsWithMaterials: z.number(),
+    units: z.object({ area: z.string(), volume: z.string() }).passthrough(),
+  })
+  .passthrough();
+
+const roomSummarySchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    number: z.string().nullable().optional(),
+    name: z.string().nullable().optional(),
+    levelId: z.string().nullable().optional(),
+    levelName: z.string().nullable().optional(),
+    phaseId: z.string().nullable().optional(),
+    phaseName: z.string().nullable().optional(),
+    area: unitValueSchema.optional(),
+    volume: unitValueSchema.optional(),
+    location: point3Schema.optional(),
+    fields: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+const roomsResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(roomSummarySchema),
+    fields: z.array(z.string()),
+    units: z.object({ area: z.string(), volume: z.string(), location: z.string() }).passthrough(),
+  })
+  .passthrough();
+
+const catalogItemSchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    class: z.string(),
+    category: z.string().nullable().optional(),
+    builtInCategory: z.string().nullable().optional(),
+    name: z.string(),
+    familyName: z.string().nullable().optional(),
+    fields: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+const catalogTargetSchema = z
+  .object({
+    elementId: z.string(),
+    class: z.string(),
+    canChangeType: z.boolean(),
+    currentTypeId: z.string().nullable().optional(),
+    currentTypeName: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const catalogResultSchema = pageBaseSchema
+  .extend({
+    kind: z.string(),
+    target: catalogTargetSchema.optional(),
+    items: z.array(catalogItemSchema),
+    fields: z.array(z.string()),
+    units: z.record(z.string()),
+  })
+  .passthrough();
+
+const parameterSummarySchema = z
+  .object({
+    name: z.string(),
+    storageType: z.string(),
+    source: z.string(),
+    isReadOnly: z.boolean(),
+  })
+  .passthrough();
+
+const parameterTargetSchema = queryItemSchema
+  .extend({
+    typeName: z.string().nullable().optional(),
+    parameters: z.array(parameterSummarySchema),
+    parameterCount: z.number(),
+    truncated: z.boolean(),
+  })
+  .passthrough();
+
+const parameterDescribeResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(parameterTargetSchema),
+    parameterLimit: z.number(),
+    preset: z.string().optional(),
+  })
+  .passthrough();
+
+const outputSchemas = {
+  unknown: z
+    .object({
+      data: jsonValueSchema,
+      warnings: z.array(warningSchema),
+      metrics: metricsSchema,
+      generation: z.number().optional(),
+    })
+    .strict(),
+  status: toolOutputSchema(statusDataSchema),
+  documents: toolOutputSchema(z.array(documentSummarySchema)),
+  levels: toolOutputSchema(z.array(levelSummarySchema)),
+  currentView: toolOutputSchema(currentViewDataSchema),
+  views: toolOutputSchema(viewsResultSchema),
+  sheets: toolOutputSchema(sheetsResultSchema),
+  scopedElements: toolOutputSchema(scopedElementListResultSchema),
+  modelStatistics: toolOutputSchema(modelStatisticsResultSchema),
+  modelReadiness: toolOutputSchema(modelReadinessResultSchema),
+  materialQuantities: toolOutputSchema(materialQuantitiesResultSchema),
+  rooms: toolOutputSchema(roomsResultSchema),
+  catalog: toolOutputSchema(catalogResultSchema),
+  query: toolOutputSchema(queryResultSchema),
+  parameters: toolOutputSchema(parameterDescribeResultSchema),
 };
 
 export function registerCoreTools(server: McpServer, context: CoreToolContext): void {
@@ -608,7 +942,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Check Revit bridge health, active document/view, versions, capabilities, and selection count. Start every Revit workflow here.",
       inputSchema: {},
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.status,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -633,7 +967,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "List Revit Documents",
       description: "List open Revit documents with title, path, active flag, fingerprint, active view, and generation.",
       inputSchema: {},
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.documents,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -656,7 +990,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       inputSchema: {
         documentFingerprint: z.string().optional().describe("Optional document fingerprint from revit.status."),
       },
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.levels,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -678,7 +1012,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return compact, paginated Revit view inventory for view/sheet planning. Filter by view type, name, template state, graphical state, or exact IDs.",
       inputSchema: viewsSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.views,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -717,7 +1051,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return compact, paginated Revit sheet inventory with sheet numbers, names, title block IDs, and optional placed views.",
       inputSchema: sheetsSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.sheets,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -756,7 +1090,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return the active Revit view with stable IDs, view type, scale, detail metadata, generation, and optional crop box.",
       inputSchema: currentViewSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.currentView,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -778,7 +1112,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return a bounded, paginated element list from the active Revit view. Use fields/preset and filters to keep responses compact.",
       inputSchema: scopedElementListSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.scopedElements,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -816,7 +1150,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "Get Revit Selection",
       description: "Return currently selected Revit elements as a bounded, paginated structured list.",
       inputSchema: scopedElementListSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.scopedElements,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -854,7 +1188,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return compact model statistics: totals plus bounded category, class, and level breakdowns for audit and planning workflows.",
       inputSchema: modelStatisticsSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.modelStatistics,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -880,7 +1214,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return compact scenario readiness for common agent workflows: levels, walls, floors, rooms, type changes, family placement, selection, and annotations.",
       inputSchema: modelReadinessSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.modelReadiness,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -911,7 +1245,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return bounded material takeoff quantities with normalized m2/m3 units, paging, filters, and scan limits.",
       inputSchema: materialQuantitiesSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.materialQuantities,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -950,7 +1284,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return compact, paginated room export data with room numbers, names, levels, area/volume units, location, and schedule fields.",
       inputSchema: roomsSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.rooms,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -989,7 +1323,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return compact Revit catalog IDs for safe writes and discovery: element types, family symbols, title blocks, view family types, and annotation type catalogs. Use kind=elementTypes with filter.forElementId before change_element_type.",
       inputSchema: catalogSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.catalog,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1028,7 +1362,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Run a bounded Revit model query with native filters, explicit projection, counts, units, and pagination. Use this instead of broad list dumps.",
       inputSchema: querySchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.query,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1064,7 +1398,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Return bounded parameter metadata for targeted elements, including writable/read-only state, storage type, values, and optional type parameters. Use before set_parameter.",
       inputSchema: parameterDescribeSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.parameters,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1107,7 +1441,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.unknown,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1133,7 +1467,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Apply a previously previewed bounded change set in one named Revit transaction. Requires confirm=true and the matching previewId.",
       inputSchema: applyChangeSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.unknown,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -1160,7 +1494,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "Cancel Revit Request",
       description: "Ask the Revit add-in to cancel queued or cancellable work when supported.",
       inputSchema: cancelSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: outputSchemas.unknown,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

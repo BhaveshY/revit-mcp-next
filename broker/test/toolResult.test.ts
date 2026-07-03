@@ -40,6 +40,30 @@ test("asToolResult appends cursor hints for truncated result pages", () => {
   );
 });
 
+test("asToolResult omits undefined object properties from structured content", () => {
+  const result = asToolResult(
+    {
+      ok: true,
+      requestId: "1",
+      data: {
+        keep: "value",
+        omit: undefined,
+        nested: { keep: 1, omit: undefined },
+        array: [undefined, { keep: true, omit: undefined }],
+      },
+      warnings: [],
+      metrics: { elapsedMs: 2 },
+    },
+    () => "sanitized"
+  );
+
+  assert.deepEqual(result.structuredContent?.data, {
+    keep: "value",
+    nested: { keep: 1 },
+    array: [null, { keep: true }],
+  });
+});
+
 test("asToolResult marks bridge failures as MCP tool errors", () => {
   const result = asToolResult(
     {
