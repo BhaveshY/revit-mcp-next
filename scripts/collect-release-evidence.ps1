@@ -691,6 +691,7 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
             documentFingerprint = $liveSmokeSummary.data.documentFingerprint
             addinAssembly = $liveSmokeSummary.data.addinAssembly
             packageIdentity = $liveSmokePackageIdentity
+            operationKindGuard = $liveSmokeSummary.data.operationKindGuard
             requiredCoverage = $liveSmokeSummary.data.requiredCoverage
             tagSelectors = $liveSmokeSummary.data.tagSelectors
             tagCoverage = $liveSmokeSummary.data.result.tagCoverage

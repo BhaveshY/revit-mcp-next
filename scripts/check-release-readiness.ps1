@@ -338,6 +338,15 @@ function Test-LiveSmoke($Manifest, $Inventory) {
         Warn "liveSmoke.coveredTools.cancel" "Live smoke did not record revit.cancel_request coverage; rerun smoke with a newer build for cancellation evidence."
     }
 
+    $operationKindGuard = $Manifest.liveSmoke.summary.operationKindGuard
+    if ($operationKindGuard -and $operationKindGuard.errorCode -eq "OPERATION_KIND_MISMATCH") {
+        Pass "liveSmoke.operationKindGuard" "Live smoke proved the loaded add-in rejects mismatched operationKind bridge calls."
+    } elseif ($Profile -eq "external-preview") {
+        Warn "liveSmoke.operationKindGuard" "Live smoke did not record operationKind mismatch guard evidence; rerun smoke with a newer build before release-candidate use."
+    } else {
+        Fail "liveSmoke.operationKindGuard" "Release-candidate and production readiness require live smoke evidence that the loaded add-in rejects mismatched operationKind bridge calls."
+    }
+
     $coveredOperations = @($Manifest.liveSmoke.summary.coveredOperations)
     $requiredCoverage = $Manifest.liveSmoke.summary.requiredCoverage
     $requiresCuratedTagEvidence = $Profile -eq "release-candidate" -or $Profile -eq "production"

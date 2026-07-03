@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -113,6 +114,7 @@ async function main() {
     coveredTools: [],
     coveredOperations: [],
     skippedOperations: [],
+    operationKindGuard: null,
     requiredCoverage: {
       typeChange: options.requireTypeChange,
       roomTag: options.requireRoomTag,
@@ -183,9 +185,14 @@ async function main() {
     assert(typeof cancelProbe.message === "string" && cancelProbe.message.length > 0, "revit.cancel_request did not return a message.");
     console.log(`Cancel no-op OK: ${cancelProbe.message}`);
 
+    const operationKindProbe = await probeOperationKindMismatch(launcherPath);
+    summary.coveredTools.push("revitctl.operation_kind_mismatch");
+    summary.operationKindGuard = operationKindProbe;
+    console.log(`Operation-kind guard OK: ${operationKindProbe.errorCode}`);
+
     if (options.statusOnly) {
       summary.status = "passed";
-      summary.coveredTools = ["revit.status", "revit.cancel_request"];
+      summary.coveredTools = ["revit.status", "revit.cancel_request", "revitctl.operation_kind_mismatch"];
       console.log("Status-only smoke passed.");
       return;
     }
@@ -887,7 +894,7 @@ async function main() {
     console.log(`Delete copied wall OK: element ${copiedWallId} removed`);
 
     summary.status = "passed";
-    summary.coveredTools = REQUIRED_TOOLS.slice();
+    summary.coveredTools = [...REQUIRED_TOOLS, "revitctl.operation_kind_mismatch"];
     summary.coveredOperations = [
       "create_level",
       "create_grid",
@@ -1219,6 +1226,99 @@ async function loadMcpSdk(launcherPath) {
       `Checked roots: ${candidateRoots.join(", ")}`,
     ].join("\n")
   );
+}
+
+async function probeOperationKindMismatch(launcherPath) {
+  const installRoot = path.dirname(launcherPath);
+  const revitCtlPath = path.join(installRoot, process.platform === "win32" ? "revitctl.cmd" : "revitctl");
+  if (!existsSync(revitCtlPath)) {
+    throw new Error(`revitctl launcher was not found beside the MCP launcher: ${revitCtlPath}`);
+  }
+
+  const result = await runRevitCtlProbe(revitCtlPath, [
+    "call",
+    "apply_change_set",
+    "--operation-kind",
+    "read",
+    "--confirm",
+    "--payload",
+    "{}",
+    "--install-root",
+    installRoot,
+    "--timeout-ms",
+    "10000",
+    "--json",
+  ]);
+
+  assert(
+    result.exitCode === 2,
+    `operationKind mismatch probe expected revitctl exit code 2 but received ${result.exitCode}.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+  );
+
+  let response;
+  try {
+    response = JSON.parse(result.stdout.trim());
+  } catch (error) {
+    throw new Error(
+      `operationKind mismatch probe did not return JSON: ${error instanceof Error ? error.message : String(error)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
+
+  assert(response.ok === false, "operationKind mismatch probe unexpectedly returned ok=true.");
+  assert(
+    response.error?.code === "OPERATION_KIND_MISMATCH",
+    `operationKind mismatch probe returned ${response.error?.code ?? "(missing error code)"} instead of OPERATION_KIND_MISMATCH.`
+  );
+
+  return compactObject({
+    command: "revitctl call apply_change_set --operation-kind read",
+    exitCode: result.exitCode,
+    errorCode: response.error.code,
+    message: stringOrUndefined(response.error?.message),
+  });
+}
+
+function runRevitCtlProbe(revitCtlPath, args) {
+  return new Promise((resolve, reject) => {
+    const command = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : revitCtlPath;
+    const spawnArgs =
+      process.platform === "win32"
+        ? ["/d", "/s", "/c", [revitCtlPath, ...args].map(quoteCmdArg).join(" ")]
+        : args;
+    const child = spawn(command, spawnArgs, {
+      cwd: process.cwd(),
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`revitctl probe timed out after 15000 ms: ${revitCtlPath}`));
+    }, 15000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (exitCode) => {
+      clearTimeout(timeout);
+      resolve({
+        exitCode: exitCode ?? -1,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+function quoteCmdArg(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
 }
 
 function uniquePaths(values) {
@@ -2500,6 +2600,7 @@ Runs a live Revit MCP smoke against the active Revit project:
   30. preview/apply guarded set_element_pinned false
   31. preview/apply guarded delete_element for the copied smoke wall
   32. revit.cancel_request no-op probe
+  33. revitctl direct bridge probe proving apply_change_set cannot be mislabeled as operationKind=read
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.

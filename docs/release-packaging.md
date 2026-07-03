@@ -296,7 +296,7 @@ Minimum evidence for a release candidate:
 - SHA-256 hash of the package `.zip`.
 - Output from `node scripts\validate-repo.mjs`.
 - Output from `npm run package:windows` or `npm run package:windows -- -Sign -RequireSigned`, plus `npm run doctor:windows`.
-- Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`, loaded add-in identity matching the package manifest, `requiredCoverage.roomTag=true`, `requiredCoverage.elementTag=true`, populated `result.tagCoverage`, and `tagSelectors` when the curated runner pins tag symbols.
+- Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`, loaded add-in identity matching the package manifest, `operationKindGuard.errorCode=OPERATION_KIND_MISMATCH`, `requiredCoverage.roomTag=true`, `requiredCoverage.elementTag=true`, populated `result.tagCoverage`, and `tagSelectors` when the curated runner pins tag symbols.
 - `npm run support:bundle` output after install or after any failed smoke.
 - pyRevit and Dynamo hosted-smoke output from the installed package. Hosted integration evidence must include `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries. Release evidence verifies the `assemblySha256` loaded by both hosts against `payload/addin/RevitMcpNext.Addin.dll` in the package manifest.
 - Authenticode signing and verification output when signing is enabled.

@@ -34,6 +34,28 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxChangeSetOperations = 50;
         private const int DefaultDeleteDependentLimit = 25;
         private const int MaxDeleteDependentLimit = 256;
+        private static readonly IReadOnlyDictionary<string, string> ExpectedOperationKinds =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["status"] = "read",
+                ["list_documents"] = "read",
+                ["get_levels"] = "read",
+                ["get_views"] = "read",
+                ["get_sheets"] = "read",
+                ["get_current_view"] = "read",
+                ["get_current_view_elements"] = "read",
+                ["get_selection"] = "read",
+                ["analyze_model"] = "read",
+                ["get_model_readiness"] = "read",
+                ["get_material_quantities"] = "read",
+                ["get_rooms"] = "read",
+                ["catalog"] = "read",
+                ["query"] = "read",
+                ["describe_parameters"] = "read",
+                ["preview_change_set"] = "preview",
+                ["apply_change_set"] = "write",
+                ["cancel_request"] = "debug"
+            };
         private readonly RevitRequestQueue _queue;
         private readonly TransactionService _transactions;
         private readonly DocumentGenerationTracker _generations;
@@ -112,6 +134,9 @@ namespace RevitMcpNext.Addin.Revit
             var sw = Stopwatch.StartNew();
             try
             {
+                BridgeResponseEnvelope operationKindFailure = ValidateOperationKind(request, sw);
+                if (operationKindFailure != null) return operationKindFailure;
+
                 return _transactions.Read(() =>
                 {
                     switch (request.Operation)
@@ -162,6 +187,27 @@ namespace RevitMcpNext.Addin.Revit
                 DiagnosticsLogger.Error("Revit command failed. requestId=" + request.RequestId + " operation=" + request.Operation, ex);
                 return Failure(request, "REVIT_COMMAND_FAILED", ex.Message, sw);
             }
+        }
+
+        private static BridgeResponseEnvelope ValidateOperationKind(BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            if (request == null) return null;
+            if (!ExpectedOperationKinds.TryGetValue(request.Operation ?? string.Empty, out string expectedKind))
+            {
+                return null;
+            }
+
+            string actualKind = string.IsNullOrWhiteSpace(request.OperationKind) ? "read" : request.OperationKind.Trim();
+            if (string.Equals(actualKind, expectedKind, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return Failure(
+                request,
+                "OPERATION_KIND_MISMATCH",
+                "Bridge request operation '" + request.Operation + "' must use operationKind '" + expectedKind + "' but received '" + actualKind + "'.",
+                sw);
         }
 
         private BridgeResponseEnvelope HandleGetLevels(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)

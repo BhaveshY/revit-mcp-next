@@ -352,9 +352,15 @@ try {
             generation = 42
         }
         documentFingerprint = "doc-synthetic-evidence-contract"
-        coveredTools = @("revit.status", "revit.cancel_request", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
+        coveredTools = @("revit.status", "revit.cancel_request", "revitctl.operation_kind_mismatch", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level", "create_wall", "create_room", "tag_room", "tag_element")
         skippedOperations = @()
+        operationKindGuard = [ordered] @{
+            command = "revitctl call apply_change_set --operation-kind read"
+            exitCode = 2
+            errorCode = "OPERATION_KIND_MISMATCH"
+            message = "Bridge request operation 'apply_change_set' must use operationKind 'write' but received 'read'."
+        }
         requiredCoverage = [ordered] @{
             typeChange = $false
             roomTag = $true
@@ -630,6 +636,9 @@ try {
     }
     if ($evidenceManifest.liveSmoke.summary.packageIdentity.assemblySha256 -ne $packagedAddinSha256) {
         throw "Live smoke loaded add-in SHA-256 was not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.operationKindGuard.errorCode -ne "OPERATION_KIND_MISMATCH") {
+        throw "Live smoke operationKind guard evidence was not recorded."
     }
     if ($evidenceManifest.liveSmoke.summary.requiredCoverage.roomTag -ne $true -or $evidenceManifest.liveSmoke.summary.requiredCoverage.elementTag -ne $true) {
         throw "Live smoke required tag coverage flags were not recorded."
