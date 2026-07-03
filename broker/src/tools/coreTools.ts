@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { ProtocolVersion } from "@revit-mcp-next/contracts";
+import type { BridgeResponse, ProtocolVersion } from "@revit-mcp-next/contracts";
 import type { RevitBridgeClient } from "../ipc/RevitBridgeClient.js";
 import { makeRequest } from "../ipc/RequestFactory.js";
+import { applyDecodedPageCursor, decodePageCursor, encodePageCursorResponse } from "./pageCursor.js";
 import { asToolResult } from "./toolResult.js";
 
 interface CoreToolContext {
@@ -112,6 +114,34 @@ function resolveParameterDescribeOptions(args: {
     limit: args.limit ?? defaults.limit,
     parameterLimit: args.parameterLimit ?? defaults.parameterLimit,
   };
+}
+
+function preparePagedPayload<TPayload extends Record<string, unknown>>(
+  context: CoreToolContext,
+  operation: string,
+  cursor: string | undefined,
+  basePayload: TPayload
+): { ok: true; payload: TPayload } | { ok: false; result: CallToolResult } {
+  const decoded = decodePageCursor(
+    cursor,
+    { sessionId: context.sessionId, protocolVersion: context.protocolVersion },
+    operation,
+    basePayload
+  );
+  if (!decoded.ok) {
+    return { ok: false, result: asToolResult(decoded.response, () => "") };
+  }
+
+  return { ok: true, payload: applyDecodedPageCursor(basePayload, decoded) };
+}
+
+function withOpaqueCursor<TData>(
+  response: BridgeResponse<TData>,
+  context: CoreToolContext,
+  operation: string,
+  basePayload: Record<string, unknown>
+): BridgeResponse<TData> {
+  return encodePageCursorResponse(response, { sessionId: context.sessionId, protocolVersion: context.protocolVersion }, operation, basePayload);
 }
 
 const currentViewSchema = {
@@ -657,7 +687,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -665,13 +695,15 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         preset: args.preset ?? "summary",
         includeCropBox: args.includeCropBox ?? false,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "get_views", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_views", "read", payload, 30000);
       const response = await context.bridge.getViews(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "get_views", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} Revit view(s) returned.`
       );
@@ -694,7 +726,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -702,13 +734,15 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         preset: args.preset ?? "summary",
         includePlacedViews: args.includePlacedViews ?? false,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "get_sheets", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_sheets", "read", payload, 30000);
       const response = await context.bridge.getSheets(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "get_sheets", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} Revit sheet(s) returned.`
       );
@@ -753,7 +787,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -761,13 +795,15 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         preset: args.preset,
         includeHidden: args.includeHidden ?? false,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "get_current_view_elements", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_current_view_elements", "read", payload, 30000);
       const response = await context.bridge.getCurrentViewElements(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "get_current_view_elements", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} active-view element(s) returned.`
       );
@@ -789,20 +825,22 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: { ...(args.filter ?? {}), selectionOnly: true },
         fields: args.fields,
         preset: args.preset,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "get_selection", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_selection", "read", payload, 30000);
       const response = await context.bridge.getSelection(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "get_selection", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} selected element(s) returned.`
       );
@@ -882,7 +920,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -890,13 +928,15 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         includePaint: args.includePaint ?? false,
         maxElementsScanned: args.maxElementsScanned ?? 20000,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "get_material_quantities", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_material_quantities", "read", payload, 60000);
       const response = await context.bridge.getMaterialQuantities(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "get_material_quantities", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} material quantity row(s) returned from ${result.scope}.`
       );
@@ -919,21 +959,23 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
         fields: args.fields,
         preset: args.preset ?? "summary",
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
         includeUnplaced: args.includeUnplaced ?? false,
       };
+      const page = preparePagedPayload(context, "get_rooms", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_rooms", "read", payload, 30000);
       const response = await context.bridge.getRooms(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "get_rooms", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} room(s) returned from ${result.scope}.`
       );
@@ -956,7 +998,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         kind: args.kind,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -964,13 +1006,15 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         preset: args.preset ?? "compact",
         fields: args.fields,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "catalog", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "catalog", "read", payload, 30000);
       const response = await context.bridge.catalog(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "catalog", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} ${result.kind} catalog item(s) returned from ${result.scope}.`
       );
@@ -993,18 +1037,20 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
-      const payload = {
+      const basePayload = {
         filter: args.filter,
         fields: args.fields,
         preset: args.preset,
         limit: args.limit ?? 50,
-        cursor: args.cursor,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "query", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "query", "read", payload, 30000);
       const response = await context.bridge.query(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "query", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} item(s) returned from ${result.scope}.`
       );
@@ -1028,7 +1074,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, extra) => {
       const options = resolveParameterDescribeOptions(args);
-      const payload = {
+      const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter,
@@ -1038,14 +1084,16 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         includeValues: options.includeValues,
         nameContains: args.nameContains,
         limit: options.limit,
-        cursor: args.cursor,
         parameterLimit: options.parameterLimit,
         includeTotalCount: args.includeTotalCount ?? false,
       };
+      const page = preparePagedPayload(context, "describe_parameters", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
       const request = makeRequest(context.sessionId, "describe_parameters", "read", payload, 30000);
       const response = await context.bridge.describeParameters(request, { signal: extra.signal });
       return asToolResult(
-        response,
+        withOpaqueCursor(response, context, "describe_parameters", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} element parameter set(s) returned from ${result.scope}.`
       );

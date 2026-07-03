@@ -9,20 +9,20 @@ Use this sequence when the user asks what is in the model, what is selected, or 
 1. `revit.status` for connection, Revit version, active document, and generation.
 2. `revit.get_views` and `revit.get_sheets` when the task mentions documentation, sheets, view placement, templates, or drawing organization.
 3. `revit.get_current_view` for view type, scale, and crop state.
-4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; follow `cursor` when the response says more results are available.
+4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; when more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
 5. `revit.get_selection` when the user references selected elements.
 6. `revit.analyze_model` for category, class, and level distribution.
 7. `revit.get_material_quantities` for bounded material takeoff.
 8. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
 
-Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed. Leave `includeTotalCount` false unless the user needs an exact total for reporting; cursor-first reads avoid full model counts on large projects.
+Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed. Leave `includeTotalCount` false unless the user needs an exact total for reporting; cursor-first reads avoid full model counts on large projects. Cursors are opaque and bound to the same tool arguments/session/document state; do not parse, increment, construct, or reuse a cursor after changing filters, fields, presets, limits, document guards, or count settings.
 
 ## View And Sheet Planning
 
 Use this sequence when the user asks what sheets/views exist, which views are placed, or what documentation setup is available:
 
 1. `revit.status` for active document fingerprint and generation.
-2. `revit.get_views` with `filter.isTemplate: false` and a low `limit`; follow `cursor` for additional pages.
+2. `revit.get_views` with `filter.isTemplate: false` and a low `limit`; use `structuredContent.data.cursor` with the same arguments for additional pages.
 3. `revit.get_sheets` with `includePlacedViews: true` when the task involves sheet composition.
 4. `revit.catalog` with `kind: "titleBlocks"` and `preset: "sheet"` when sheet creation or title block availability matters.
 5. `revit.catalog` with `kind: "viewFamilyTypes"` when plan/section/elevation view creation is being evaluated.

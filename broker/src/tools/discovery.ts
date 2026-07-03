@@ -67,7 +67,7 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use for finding graphical views, drafting views, templates, and sheet-placement candidates.",
-    compactUse: "Use preset=summary or sheetPlacement, tight filters, and cursor paging.",
+    compactUse: "Use preset=summary or sheetPlacement, tight filters, and opaque cursor paging from structuredContent.data.cursor.",
     related: ["revit.get_sheets", "revit.catalog"],
   },
   {
@@ -103,7 +103,7 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use for visible-context edits, tags, and view-local audits.",
-    compactUse: "Use preset=idOnly/summary or explicit fields; page with cursor.",
+    compactUse: "Use preset=idOnly/summary or explicit fields; page with the returned opaque cursor and unchanged arguments.",
     related: ["revit.query", "revit.get_current_view"],
   },
   {
@@ -151,7 +151,7 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use for material audits and quantity takeoff.",
-    compactUse: "Use materialNameContains, maxElementsScanned, limit, and cursor to bound work.",
+    compactUse: "Use materialNameContains, maxElementsScanned, limit, and the returned opaque cursor to bound work.",
     related: ["revit.query"],
   },
   {
@@ -175,7 +175,7 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use before any write requiring a Revit type, symbol, view family type, tag type, or title block ID.",
-    compactUse: "Use kind, preset, filter.forElementId, category/class filters, fields, limit, and cursor.",
+    compactUse: "Use kind, preset, filter.forElementId, category/class filters, fields, limit, and opaque cursor paging.",
     related: ["revit.preview_change_set"],
   },
   {
@@ -187,7 +187,7 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use instead of broad model dumps whenever you need element IDs or compact metadata.",
-    compactUse: "Prefer explicit fields, preset=idOnly/summary/schedule, includeTotalCount=false, and cursor paging.",
+    compactUse: "Prefer explicit fields, preset=idOnly/summary/schedule, includeTotalCount=false, and opaque cursor paging.",
     related: ["revit.describe_parameters", "revit.get_current_view_elements", "revit.get_selection"],
   },
   {
@@ -295,7 +295,8 @@ function discoveryDocument(context: DiscoveryContext): Record<string, unknown> {
       "Treat blocked previews as useful model evidence; do not guess Revit IDs or force unsupported operations.",
     ],
     tokenEfficiency: {
-      paging: "Prefer includeTotalCount=false and follow cursor hints until enough evidence is collected.",
+      paging:
+        "Prefer includeTotalCount=false. Cursors are opaque; repeat the same tool call with the same arguments and structuredContent.data.cursor, and stop when cursor is absent.",
       projection: "Use fields or presets whenever available.",
       parameters: "revit.describe_parameters defaults to preset=writableEdit; use full only when needed.",
     },
@@ -405,7 +406,7 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
           content: {
             type: "text",
             text:
-              "Plan a safe Revit MCP workflow. Start with revit.status, use bounded reads with fields/presets/cursors, discover IDs with revit.query/revit.catalog/revit.describe_parameters, preview every mutation with revit.preview_change_set, and only apply a ready preview with matching preview token metadata.",
+              "Plan a safe Revit MCP workflow. Start with revit.status, use bounded reads with fields/presets and opaque cursors from structuredContent.data.cursor, discover IDs with revit.query/revit.catalog/revit.describe_parameters, preview every mutation with revit.preview_change_set, and only apply a ready preview with matching preview token metadata.",
           },
         },
       ],

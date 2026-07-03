@@ -162,7 +162,7 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   if (!selection.ok) return;
   assert.equal(selection.data.scope, "selection");
   assert.equal(selection.data.selection?.available, true);
-  assert.equal(selection.data.selection?.count, 1);
+  assert.equal(selection.data.selection?.count, 2);
 
   const model = await bridge.analyzeModel(
     makeRequest("test", "analyze_model", "read", { bucketLimit: 10 }, 60000)

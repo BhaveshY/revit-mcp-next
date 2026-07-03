@@ -1392,6 +1392,7 @@ function isLevelBasedPlacementSymbol(item) {
 async function queryElementById(client, className, elementId) {
   let cursor = undefined;
   let scanned = 0;
+  const seenCursors = new Set();
   do {
     const query = await callRequiredTool(client, "revit.query", {
       filter: { classes: [className] },
@@ -1405,7 +1406,7 @@ async function queryElementById(client, className, elementId) {
     scanned += items.length;
     const match = items.find((item) => String(item.id) === String(elementId));
     if (match) return match;
-    cursor = typeof query.cursor === "string" && query.cursor.length > 0 ? query.cursor : undefined;
+    cursor = checkedNextCursor(query.cursor, seenCursors, "revit.query");
   } while (cursor);
 
   throw new Error(`Created ${className} ${elementId} was not found by revit.query after scanning ${scanned} item(s).`);
@@ -1414,6 +1415,7 @@ async function queryElementById(client, className, elementId) {
 async function queryElementByParameter(client, className, elementId, parameterName, value) {
   let cursor = undefined;
   let scanned = 0;
+  const seenCursors = new Set();
   do {
     const query = await callRequiredTool(client, "revit.query", {
       filter: {
@@ -1432,12 +1434,20 @@ async function queryElementByParameter(client, className, elementId, parameterNa
     scanned += items.length;
     const match = items.find((item) => String(item.id) === String(elementId));
     if (match) return match;
-    cursor = typeof query.cursor === "string" && query.cursor.length > 0 ? query.cursor : undefined;
+    cursor = checkedNextCursor(query.cursor, seenCursors, "revit.query");
   } while (cursor);
 
   throw new Error(
     `${className} ${elementId} was not found by revit.query with ${parameterName}=${value} after scanning ${scanned} matching item(s).`
   );
+}
+
+function checkedNextCursor(cursor, seenCursors, toolName) {
+  if (typeof cursor !== "string" || cursor.length === 0) return undefined;
+  assert(cursor.startsWith("rvc1_"), `${toolName} returned a non-opaque cursor.`);
+  assert(!seenCursors.has(cursor), `${toolName} returned a repeated cursor; refusing to replay a page.`);
+  seenCursors.add(cursor);
+  return cursor;
 }
 
 async function getRoomByNumber(client, { documentFingerprint, levelId, number }) {

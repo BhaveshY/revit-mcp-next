@@ -159,6 +159,15 @@ const fakeQueryItems = [
     typeId: "9001",
     levelId: "311",
   },
+  {
+    id: "502",
+    uniqueId: "door-502",
+    category: "OST_Doors",
+    class: "FamilyInstance",
+    name: "Single-Flush",
+    typeId: "9200",
+    levelId: "311",
+  },
 ];
 
 const fakeRooms: RoomSummary[] = [
@@ -465,7 +474,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<ScopedElementListResult>> {
     maybeAbort(options);
     const result = buildScopedElementList(request, "selection");
-    result.selection = { count: 1, available: true };
+    result.selection = { count: fakeQueryItems.length, available: true };
     return ok(request, result);
   }
 
@@ -856,15 +865,21 @@ function buildScopedElementList(
   scope: string
 ): ScopedElementListResult {
   const limit = Math.min(request.payload.limit ?? 50, 500);
-  const items = fakeQueryItems.slice(0, limit);
+  const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+  const filter = request.payload.filter ?? {};
+  const fields = request.payload.fields ?? queryFieldsForPreset(request.payload.preset);
+  const filteredItems = fakeQueryItems.filter((item) => matchesQueryFilter(item, filter));
+  const items = filteredItems.slice(offset, offset + limit).map((item) => projectQueryItem(item, fields));
+  const truncated = offset + items.length < filteredItems.length;
   return {
     document: documentReference(),
     items,
-    totalCount: request.payload.includeTotalCount ? fakeQueryItems.length : undefined,
+    totalCount: request.payload.includeTotalCount ? filteredItems.length : undefined,
     returnedCount: items.length,
     limit,
-    truncated: false,
-    fields: request.payload.fields ?? ["id", "category", "class", "name"],
+    cursor: truncated ? String(offset + items.length) : undefined,
+    truncated,
+    fields,
     units: {},
     scope,
     source: "fake-bridge",

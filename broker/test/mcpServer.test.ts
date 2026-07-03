@@ -115,12 +115,14 @@ test("broker exposes annotated tools with output schemas and callable structured
       arguments: { preset: "summary", limit: 1, includeTotalCount: true },
     })) as {
       isError?: boolean;
-      structuredContent?: { data?: { scope?: string; returnedCount?: number; totalCount?: number; items?: Array<{ id?: string }> } };
+      structuredContent?: { data?: { scope?: string; returnedCount?: number; totalCount?: number; truncated?: boolean; cursor?: string; items?: Array<{ id?: string }> } };
     };
     assert.equal(viewElements.isError, undefined);
     assert.equal(viewElements.structuredContent?.data?.scope, "activeView");
     assert.equal(viewElements.structuredContent?.data?.returnedCount, 1);
-    assert.equal(viewElements.structuredContent?.data?.totalCount, 1);
+    assert.equal(viewElements.structuredContent?.data?.totalCount, 2);
+    assert.equal(viewElements.structuredContent?.data?.truncated, true);
+    assert.match(viewElements.structuredContent?.data?.cursor ?? "", /^rvc1_/);
     assert.equal(viewElements.structuredContent?.data?.items?.[0]?.id, "501");
 
     const selection = (await client.callTool({
@@ -132,7 +134,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(selection.isError, undefined);
     assert.equal(selection.structuredContent?.data?.scope, "selection");
-    assert.equal(selection.structuredContent?.data?.selection?.count, 1);
+    assert.equal(selection.structuredContent?.data?.selection?.count, 2);
     assert.equal(selection.structuredContent?.data?.selection?.available, true);
 
     const modelStats = (await client.callTool({
@@ -350,17 +352,19 @@ test("broker exposes annotated tools with output schemas and callable structured
       assert.match(catalogSchema, new RegExp(expectedCatalogSchemaTerm));
     }
 
+    const catalogArgs = {
+      kind: "elementTypes",
+      filter: { forElementId: "501" },
+      preset: "typeChange",
+      limit: 1,
+      includeTotalCount: true,
+    };
     const catalog = (await client.callTool({
       name: "revit.catalog",
-      arguments: {
-        kind: "elementTypes",
-        filter: { forElementId: "501" },
-        preset: "typeChange",
-        limit: 1,
-        includeTotalCount: true,
-      },
+      arguments: catalogArgs,
     })) as {
       isError?: boolean;
+      content?: Array<{ type: "text"; text: string }>;
       structuredContent?: {
         data?: {
           kind?: string;
@@ -380,9 +384,58 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(catalog.structuredContent?.data?.returnedCount, 1);
     assert.equal(catalog.structuredContent?.data?.totalCount, 2);
     assert.equal(catalog.structuredContent?.data?.truncated, true);
-    assert.equal(catalog.structuredContent?.data?.cursor, "1");
+    assert.match(catalog.structuredContent?.data?.cursor ?? "", /^rvc1_/);
+    assert.notEqual(catalog.structuredContent?.data?.cursor, "1");
+    assert.doesNotMatch(catalog.content?.[0]?.text ?? "", /rvc1_/);
+    assert.match(catalog.content?.[0]?.text ?? "", /structuredContent\.data\.cursor/);
     assert.equal(catalog.structuredContent?.data?.items?.[0]?.validForTarget, true);
     assert.equal(catalog.structuredContent?.data?.items?.[0]?.isCurrentType, true);
+
+    const catalogSecondPage = (await client.callTool({
+      name: "revit.catalog",
+      arguments: {
+        ...catalogArgs,
+        cursor: catalog.structuredContent?.data?.cursor,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { returnedCount?: number; truncated?: boolean; cursor?: string; items?: Array<{ id?: string; isCurrentType?: boolean }> } };
+    };
+    assert.equal(catalogSecondPage.isError, undefined);
+    assert.equal(catalogSecondPage.structuredContent?.data?.returnedCount, 1);
+    assert.equal(catalogSecondPage.structuredContent?.data?.truncated, false);
+    assert.equal(catalogSecondPage.structuredContent?.data?.cursor, undefined);
+    assert.equal(catalogSecondPage.structuredContent?.data?.items?.[0]?.id, "9002");
+    assert.equal(catalogSecondPage.structuredContent?.data?.items?.[0]?.isCurrentType, undefined);
+
+    const rawCursor = (await client.callTool({
+      name: "revit.catalog",
+      arguments: {
+        ...catalogArgs,
+        cursor: "1",
+      },
+    })) as {
+      isError?: boolean;
+      content?: Array<{ type: "text"; text: string }>;
+      structuredContent?: { data?: { error?: { code?: string } } };
+    };
+    assert.equal(rawCursor.isError, true);
+    assert.equal(rawCursor.structuredContent?.data?.error?.code, "INVALID_CURSOR");
+
+    const mismatchedCursor = (await client.callTool({
+      name: "revit.catalog",
+      arguments: {
+        ...catalogArgs,
+        limit: 2,
+        cursor: catalog.structuredContent?.data?.cursor,
+      },
+    })) as {
+      isError?: boolean;
+      content?: Array<{ type: "text"; text: string }>;
+      structuredContent?: { data?: { error?: { code?: string } } };
+    };
+    assert.equal(mismatchedCursor.isError, true);
+    assert.equal(mismatchedCursor.structuredContent?.data?.error?.code, "CURSOR_SCOPE_MISMATCH");
 
     const tagCatalog = (await client.callTool({
       name: "revit.catalog",

@@ -54,7 +54,7 @@ function appendResultHints(text: string, data: unknown): string {
 
   const cursor = typeof data.cursor === "string" && data.cursor.length > 0 ? data.cursor : undefined;
   const hint = cursor
-    ? `More results available; pass cursor="${cursor}".`
+    ? "More results available; call the same tool with the same arguments and structuredContent.data.cursor."
     : "Result was truncated; narrow the filters or request the next page if the tool returned a cursor.";
   const separator = text.endsWith(".") ? " " : ". ";
   return `${text}${separator}${hint}`;

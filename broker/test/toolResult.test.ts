@@ -34,7 +34,10 @@ test("asToolResult appends cursor hints for truncated result pages", () => {
     (data) => `${data.returnedCount} item returned`
   );
 
-  assert.equal(textContent(result), '1 item returned. More results available; pass cursor="1".');
+  assert.equal(
+    textContent(result),
+    "1 item returned. More results available; call the same tool with the same arguments and structuredContent.data.cursor."
+  );
 });
 
 test("asToolResult marks bridge failures as MCP tool errors", () => {
