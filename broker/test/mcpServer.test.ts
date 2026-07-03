@@ -667,6 +667,26 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.ok(preview.structuredContent?.data?.previewId);
     assert.ok(preview.structuredContent?.data?.changeSetHash);
 
+    try {
+      const missingMetadataApply = (await client.callTool({
+        name: "revit.apply_change_set",
+        arguments: {
+          transactionName: "Update Mark Wall Move",
+          documentFingerprint: preview.structuredContent?.data?.documentFingerprint,
+          operations,
+          previewId: preview.structuredContent?.data?.previewId,
+          confirm: true,
+        },
+      })) as {
+        isError?: boolean;
+        content?: Array<{ type: "text"; text: string }>;
+      };
+      assert.equal(missingMetadataApply.isError, true);
+      assert.match(missingMetadataApply.content?.[0]?.text ?? "", /baseGeneration|changeSetHash|expiresAt|Invalid/i);
+    } catch (error) {
+      assert.match(String(error), /baseGeneration|changeSetHash|expiresAt|Invalid/i);
+    }
+
     const apply = (await client.callTool({
       name: "revit.apply_change_set",
       arguments: {

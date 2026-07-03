@@ -77,5 +77,8 @@ Common states:
 
 - `BRIDGE_UNAVAILABLE`: Revit is closed, the add-in did not load, or the named pipe is not listening.
 - `PROTOCOL_VERSION_MISMATCH`: rebuild and reinstall so broker and add-in contracts match.
+- `PREVIEW_METADATA_REQUIRED` or `CHANGE_SET_HASH_REQUIRED`: call `revit.preview_change_set` again and echo `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt` into `revit.apply_change_set`.
 - `PREVIEW_ID_MISMATCH`: rerun `revit.preview_change_set`; the change set or document fingerprint no longer matches.
+- `CHANGE_SET_HASH_MISMATCH`: the apply payload does not match the reviewed preview; rebuild it from the latest preview response.
+- `PREVIEW_EXPIRED`: rerun `revit.preview_change_set`; preview tokens are short-lived and single-use.
 - `REQUEST_CANCELLED`: the MCP client cancelled or the request exceeded its timeout before Revit processed it.

@@ -7,7 +7,7 @@ Write operations use a preview/apply contract.
    For parameter edits, run `revit.describe_parameters` on the target element IDs before choosing `set_parameter`.
 3. Run `revit.preview_change_set` with a bounded change set.
 4. Inspect every returned change. Do not apply blocked previews.
-5. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, and `confirm: true`.
+5. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, `baseGeneration`, `changeSetHash`, `expiresAt`, and `confirm: true`.
 
 ## Discover Before Writing
 
@@ -68,6 +68,9 @@ Example apply payload:
   "documentFingerprint": "active-document-fingerprint",
   "transactionName": "Update room mark",
   "previewId": "preview-id-from-preview",
+  "baseGeneration": 12,
+  "changeSetHash": "hash-from-preview",
+  "expiresAt": "timestamp-from-preview",
   "confirm": true,
   "operations": [
     {

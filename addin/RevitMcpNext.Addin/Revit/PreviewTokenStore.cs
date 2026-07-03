@@ -67,6 +67,11 @@ namespace RevitMcpNext.Addin.Revit
             string changesHash,
             string changeSetHash)
         {
+            if (string.IsNullOrWhiteSpace(changeSetHash))
+            {
+                return PreviewTokenValidation.Failure("CHANGE_SET_HASH_REQUIRED", "revit.apply_change_set requires the changeSetHash returned by revit.preview_change_set.");
+            }
+
             if (string.IsNullOrWhiteSpace(previewId))
             {
                 return PreviewTokenValidation.Failure("PREVIEW_ID_REQUIRED", "revit.apply_change_set requires a previewId returned by revit.preview_change_set.");
@@ -109,8 +114,63 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewTokenValidation.Failure("PREVIEW_STALE", "The current document no longer matches the reviewed preview. Run revit.preview_change_set again before applying.");
                 }
 
-                if (!string.IsNullOrWhiteSpace(changeSetHash) &&
-                    !string.Equals(token.ChangeSetHash, changeSetHash, StringComparison.Ordinal))
+                if (!string.Equals(token.ChangeSetHash, changeSetHash, StringComparison.Ordinal))
+                {
+                    return PreviewTokenValidation.Failure("CHANGE_SET_HASH_MISMATCH", "The supplied changeSetHash does not match the reviewed preview.");
+                }
+
+                if (!token.Ready)
+                {
+                    return PreviewTokenValidation.Failure("PREVIEW_NOT_READY", "The preview contained blocked operations and cannot be applied.");
+                }
+
+                return PreviewTokenValidation.Success(token);
+            }
+        }
+
+        public PreviewTokenValidation ValidateMetadata(
+            string previewId,
+            string documentFingerprint,
+            long generation,
+            string changeSetHash)
+        {
+            if (string.IsNullOrWhiteSpace(changeSetHash))
+            {
+                return PreviewTokenValidation.Failure("CHANGE_SET_HASH_REQUIRED", "revit.apply_change_set requires the changeSetHash returned by revit.preview_change_set.");
+            }
+
+            if (string.IsNullOrWhiteSpace(previewId))
+            {
+                return PreviewTokenValidation.Failure("PREVIEW_ID_REQUIRED", "revit.apply_change_set requires a previewId returned by revit.preview_change_set.");
+            }
+
+            lock (_gate)
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                RemoveExpiredUnsafe(now);
+
+                if (!_tokens.TryGetValue(previewId, out PreviewToken token))
+                {
+                    return PreviewTokenValidation.Failure("PREVIEW_NOT_FOUND", "The supplied previewId was not issued by this add-in session or has already been consumed.");
+                }
+
+                if (token.ExpiresAtUtc <= now)
+                {
+                    _tokens.Remove(previewId);
+                    return PreviewTokenValidation.Failure("PREVIEW_EXPIRED", "The preview has expired. Run revit.preview_change_set again before applying.");
+                }
+
+                if (!string.Equals(token.DocumentFingerprint, documentFingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    return PreviewTokenValidation.Failure("PREVIEW_DOCUMENT_MISMATCH", "The preview was issued for a different document.");
+                }
+
+                if (token.Generation != generation)
+                {
+                    return PreviewTokenValidation.Failure("PREVIEW_GENERATION_MISMATCH", "The document changed after preview. Run revit.preview_change_set again before applying.");
+                }
+
+                if (!string.Equals(token.ChangeSetHash, changeSetHash, StringComparison.Ordinal))
                 {
                     return PreviewTokenValidation.Failure("CHANGE_SET_HASH_MISMATCH", "The supplied changeSetHash does not match the reviewed preview.");
                 }

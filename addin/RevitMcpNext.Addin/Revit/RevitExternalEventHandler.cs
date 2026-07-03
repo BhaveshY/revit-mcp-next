@@ -1146,6 +1146,29 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "CONFIRMATION_REQUIRED", "revit.apply_change_set requires confirm=true.", sw);
             }
 
+            string providedPreviewId = GetString(payload, "previewId");
+            string providedChangeSetHash = GetString(payload, "changeSetHash");
+            string providedExpiresAt = GetString(payload, "expiresAt");
+            long? providedBaseGeneration = GetLong(payload, "baseGeneration");
+            if (string.IsNullOrWhiteSpace(providedPreviewId) ||
+                string.IsNullOrWhiteSpace(providedChangeSetHash) ||
+                string.IsNullOrWhiteSpace(providedExpiresAt) ||
+                !providedBaseGeneration.HasValue)
+            {
+                return Failure(request, "PREVIEW_METADATA_REQUIRED", "revit.apply_change_set requires previewId, baseGeneration, changeSetHash, and expiresAt from revit.preview_change_set.", sw);
+            }
+
+            if (!DateTimeOffset.TryParse(providedExpiresAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsedExpiresAt))
+            {
+                return Failure(request, "PREVIEW_EXPIRES_AT_INVALID", "revit.apply_change_set expiresAt must be the ISO 8601 timestamp returned by revit.preview_change_set.", sw);
+            }
+
+            if (parsedExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                _previewTokens.Consume(providedPreviewId);
+                return Failure(request, "PREVIEW_EXPIRED", "The preview has expired. Run revit.preview_change_set again before applying.", sw);
+            }
+
             List<Dictionary<string, object>> operations = GetOperations(payload);
             if (operations.Count == 0)
             {
@@ -1159,10 +1182,21 @@ namespace RevitMcpNext.Addin.Revit
             string transactionName = GetTransactionName(payload);
             string documentFingerprint = ComputeDocumentFingerprint(document);
             string expectedPreviewId = ComputePreviewId(document, transactionName, operations);
-            string providedPreviewId = GetString(payload, "previewId");
             if (!string.Equals(providedPreviewId, expectedPreviewId, StringComparison.Ordinal))
             {
+                _previewTokens.Consume(providedPreviewId);
                 return Failure(request, "PREVIEW_ID_MISMATCH", "The supplied previewId does not match the current change set and document.", sw);
+            }
+
+            PreviewTokenValidation metadataValidation = _previewTokens.ValidateMetadata(
+                providedPreviewId,
+                documentFingerprint,
+                generation,
+                providedChangeSetHash);
+            if (!metadataValidation.Ok)
+            {
+                _previewTokens.Consume(providedPreviewId);
+                return Failure(request, metadataValidation.Code, metadataValidation.Message, sw);
             }
 
             var previewChanges = new List<Dictionary<string, object>>();
@@ -1180,12 +1214,14 @@ namespace RevitMcpNext.Addin.Revit
                 transactionName,
                 ComputeChangeSetHash(operations),
                 ComputeChangeSetHash(previewChanges),
-                GetString(payload, "changeSetHash"));
+                providedChangeSetHash);
             if (!tokenValidation.Ok)
             {
+                _previewTokens.Consume(providedPreviewId);
                 return Failure(request, tokenValidation.Code, tokenValidation.Message, sw);
             }
 
+            _previewTokens.Consume(providedPreviewId);
             List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
             {
                 var results = new List<Dictionary<string, object>>();
@@ -1195,7 +1231,6 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 return results;
             });
-            _previewTokens.Consume(providedPreviewId);
             long appliedGeneration = _generations.GetGeneration(document);
 
             var data = new Dictionary<string, object>

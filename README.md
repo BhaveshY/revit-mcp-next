@@ -246,7 +246,7 @@ Write tools are intentionally bounded. End-to-end preview/apply support currentl
 - `set_element_pinned`: pin or unpin one model element, with optional `expectedPinned` guard.
 - `delete_element`: delete one non-type element by `elementId`, with optional `expectedUniqueId`, `expectedPinned`, `allowPinned`, dependent-delete preview, `allowDependentDeletes`, `expectedDeletedElementIds`, and `expectedDeletedCount` guards.
 
-`revit.preview_change_set` validates supported operations without mutation and returns a `previewId`; `revit.apply_change_set` requires that matching `previewId` plus `confirm: true` and applies the full change set in one named Revit transaction.
+`revit.preview_change_set` validates supported operations without mutation and returns `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt`; `revit.apply_change_set` requires those exact preview fields plus `confirm: true` and applies the full change set in one named Revit transaction.
 
 Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`, including room tag types and independent tag symbols. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
 

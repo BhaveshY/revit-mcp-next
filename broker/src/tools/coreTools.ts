@@ -493,6 +493,10 @@ const changeSetSchema = {
 
 const applyChangeSchema = {
   ...changeSetSchema,
+  documentFingerprint: boundedString.describe("Active document fingerprint returned by preview_change_set."),
+  baseGeneration: generationSchema.describe("Document generation captured by preview_change_set and echoed to apply."),
+  changeSetHash: changeSetHashSchema.describe("Opaque hash for the exact previewed change set."),
+  expiresAt: expiresAtSchema,
   previewId: boundedString.describe("The previewId returned by revit.preview_change_set for the exact same change set."),
   confirm: z.literal(true).describe("Must be true to apply a previewed change set."),
 };
