@@ -6,6 +6,9 @@ param(
     [switch] $NoLaunch,
     [switch] $NoEvidence,
     [switch] $RequireTypeChange,
+    [switch] $RequireRoomTag,
+    [switch] $RequireElementTag,
+    [switch] $RequireTags,
     [int] $RevitYear = 2024,
     [string] $RevitApiPath = "",
     [string] $RevitExePath = "",
@@ -74,6 +77,9 @@ Options:
   -NoLaunch                  Require Revit to already be running.
   -NoEvidence                Skip release evidence bundle collection.
   -RequireTypeChange         Require change_element_type smoke coverage.
+  -RequireRoomTag            Require tag_room smoke coverage.
+  -RequireElementTag         Require tag_element smoke coverage.
+  -RequireTags               Require both tag_room and tag_element smoke coverage.
   -DryRun                    Print the planned paths and commands without running them.
 "@
 }
@@ -560,6 +566,9 @@ $runInputs = [ordered] @{
     noLaunch = [bool] $NoLaunch
     noEvidence = [bool] $NoEvidence
     requireTypeChange = [bool] $RequireTypeChange
+    requireRoomTag = [bool] $RequireRoomTag
+    requireElementTag = [bool] $RequireElementTag
+    requireTags = [bool] $RequireTags
     trustRevitAlwaysLoad = [bool] $TrustRevitAlwaysLoad
     localDevSigningEnabled = [bool] $localDevSigningEnabled
     signingCertificateThumbprint = $runSigningCertificateThumbprint
@@ -690,6 +699,17 @@ $smokeArgs = @(
 )
 if ($RequireTypeChange) {
     $smokeArgs += "-RequireTypeChange"
+}
+if ($RequireTags) {
+    $smokeArgs += "-RequireTags"
+} else {
+    if ($RequireRoomTag) {
+        $smokeArgs += "-RequireRoomTag"
+    }
+
+    if ($RequireElementTag) {
+        $smokeArgs += "-RequireElementTag"
+    }
 }
 Invoke-Logged "Run live Revit smoke" (Join-Path $evidenceDir "smoke-revit.log") $npm $smokeArgs
 

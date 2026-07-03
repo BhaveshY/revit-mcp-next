@@ -338,6 +338,52 @@ function Test-LiveSmoke($Manifest, $Inventory) {
         Warn "liveSmoke.coveredTools.cancel" "Live smoke did not record revit.cancel_request coverage; rerun smoke with a newer build for cancellation evidence."
     }
 
+    $coveredOperations = @($Manifest.liveSmoke.summary.coveredOperations)
+    $requiredCoverage = $Manifest.liveSmoke.summary.requiredCoverage
+    $requiresCuratedTagEvidence = $Profile -eq "release-candidate" -or $Profile -eq "production"
+    if ($requiresCuratedTagEvidence) {
+        if ($requiredCoverage -and $requiredCoverage.roomTag -eq $true -and $requiredCoverage.elementTag -eq $true) {
+            Pass "liveSmoke.requiredCoverage.tags" "Release readiness required curated room and element tag smoke coverage."
+        } else {
+            Fail "liveSmoke.requiredCoverage.tags" "Release-candidate and production readiness require live smoke evidence captured with required tag_room and tag_element coverage."
+        }
+    }
+
+    if ($requiredCoverage -and $requiredCoverage.roomTag -eq $true) {
+        if ($coveredOperations -contains "tag_room") {
+            Pass "liveSmoke.requiredCoverage.roomTag" "Live smoke required and covered tag_room."
+        } else {
+            Fail "liveSmoke.requiredCoverage.roomTag" "Live smoke required tag_room but did not record tag_room coverage."
+        }
+        $roomTagCoverage = $Manifest.liveSmoke.summary.tagCoverage.room
+        if ($roomTagCoverage -and
+            -not (Test-Blank $roomTagCoverage.createdTagId) -and
+            -not (Test-Blank $roomTagCoverage.roomId) -and
+            -not (Test-Blank $roomTagCoverage.viewId) -and
+            -not (Test-Blank $roomTagCoverage.tagTypeId)) {
+            Pass "liveSmoke.tagCoverage.room" "Live smoke recorded room tag target, view, type, and created tag IDs."
+        } else {
+            Fail "liveSmoke.tagCoverage.room" "Live smoke required tag_room but tagCoverage.room is missing target, view, type, or created tag IDs."
+        }
+    }
+    if ($requiredCoverage -and $requiredCoverage.elementTag -eq $true) {
+        if ($coveredOperations -contains "tag_element") {
+            Pass "liveSmoke.requiredCoverage.elementTag" "Live smoke required and covered tag_element."
+        } else {
+            Fail "liveSmoke.requiredCoverage.elementTag" "Live smoke required tag_element but did not record tag_element coverage."
+        }
+        $elementTagCoverage = $Manifest.liveSmoke.summary.tagCoverage.element
+        if ($elementTagCoverage -and
+            -not (Test-Blank $elementTagCoverage.createdTagId) -and
+            -not (Test-Blank $elementTagCoverage.elementId) -and
+            -not (Test-Blank $elementTagCoverage.viewId) -and
+            -not (Test-Blank $elementTagCoverage.tagTypeId)) {
+            Pass "liveSmoke.tagCoverage.element" "Live smoke recorded element tag target, view, type, and created tag IDs."
+        } else {
+            Fail "liveSmoke.tagCoverage.element" "Live smoke required tag_element but tagCoverage.element is missing target, view, type, or created tag IDs."
+        }
+    }
+
     $packageIdentity = $Manifest.liveSmoke.summary.packageIdentity
     if ($packageIdentity -and
         (Test-HexSha256 $packageIdentity.expectedSha256) -and

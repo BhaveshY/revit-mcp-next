@@ -200,6 +200,14 @@ npm run evidence:release:windows -- `
   -HostedIntegrationEvidencePath artifacts\host-integrations
 ```
 
+For release-candidate live smoke, use a curated disposable model and run the smoke with tag coverage required:
+
+```powershell
+npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
+```
+
+The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. `smoke-summary.json.requiredCoverage` records that requirement and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
+
 Build hosted pyRevit/Dynamo summary evidence from raw host-smoke JSON before passing `-HostedIntegrationEvidencePath`.
 
 Preferred release-candidate path:
@@ -271,7 +279,7 @@ npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-nex
 npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-next-<version>-windows-evidence-<timestamp>-<id> -Profile production
 ```
 
-`external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package.
+`external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke with required room and element tag coverage, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package.
 
 Minimum evidence for a release candidate:
 
@@ -282,7 +290,7 @@ Minimum evidence for a release candidate:
 - SHA-256 hash of the package `.zip`.
 - Output from `node scripts\validate-repo.mjs`.
 - Output from `npm run package:windows` or `npm run package:windows -- -Sign -RequireSigned`, plus `npm run doctor:windows`.
-- Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"` and loaded add-in identity matching the package manifest.
+- Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`, loaded add-in identity matching the package manifest, `requiredCoverage.roomTag=true`, `requiredCoverage.elementTag=true`, and populated `result.tagCoverage`.
 - `npm run support:bundle` output after install or after any failed smoke.
 - pyRevit and Dynamo hosted-smoke output from the installed package. Hosted integration evidence must include `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries. Release evidence verifies the `assemblySha256` loaded by both hosts against `payload/addin/RevitMcpNext.Addin.dll` in the package manifest.
 - Authenticode signing and verification output when signing is enabled.

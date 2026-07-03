@@ -73,6 +73,21 @@ on:
         required: true
         type: boolean
         default: true
+      require_room_tag:
+        description: Fail unless the smoke can apply tag_room against a placed room.
+        required: true
+        type: boolean
+        default: false
+      require_element_tag:
+        description: Fail unless the smoke can apply tag_element against a visible wall.
+        required: true
+        type: boolean
+        default: false
+      require_tags:
+        description: Convenience switch to require both tag_room and tag_element coverage.
+        required: true
+        type: boolean
+        default: true
       signing_mode:
         description: Package signing mode. Use none, local-dev, or release-cert.
         required: true
@@ -118,6 +133,9 @@ jobs:
       PYREVIT_BUILDS: ${{ inputs.pyrevit_builds }}
       DYNAMO_TIMEOUT_SECONDS: ${{ inputs.dynamo_timeout_seconds }}
       REQUIRE_TYPE_CHANGE: ${{ inputs.require_type_change }}
+      REQUIRE_ROOM_TAG: ${{ inputs.require_room_tag }}
+      REQUIRE_ELEMENT_TAG: ${{ inputs.require_element_tag }}
+      REQUIRE_TAGS: ${{ inputs.require_tags }}
       SIGNING_MODE: ${{ inputs.signing_mode }}
       REQUIRE_TRUSTED_SIGNATURES: ${{ inputs.require_trusted_signatures }}
       SIGNING_NO_TIMESTAMP: ${{ inputs.signing_no_timestamp }}
@@ -173,6 +191,10 @@ jobs:
             skipInstall = "${{ inputs.skip_install }}"
             signingMode = $env:SIGNING_MODE
             requireTrustedSignatures = $env:REQUIRE_TRUSTED_SIGNATURES
+            requireTypeChange = $env:REQUIRE_TYPE_CHANGE
+            requireRoomTag = $env:REQUIRE_ROOM_TAG
+            requireElementTag = $env:REQUIRE_ELEMENT_TAG
+            requireTags = $env:REQUIRE_TAGS
             signingNoTimestamp = $env:SIGNING_NO_TIMESTAMP
             runnerName = $env:RUNNER_NAME
             runnerOs = $env:RUNNER_OS
@@ -449,6 +471,16 @@ jobs:
           }
           if ($env:REQUIRE_TYPE_CHANGE -eq "true") {
             $smokeArgs += @("-RequireTypeChange")
+          }
+          if ($env:REQUIRE_TAGS -eq "true") {
+            $smokeArgs += @("-RequireTags")
+          } else {
+            if ($env:REQUIRE_ROOM_TAG -eq "true") {
+              $smokeArgs += @("-RequireRoomTag")
+            }
+            if ($env:REQUIRE_ELEMENT_TAG -eq "true") {
+              $smokeArgs += @("-RequireElementTag")
+            }
           }
 
           & npm.cmd @smokeArgs 2>&1 | Tee-Object -FilePath $log

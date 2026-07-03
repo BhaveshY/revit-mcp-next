@@ -10,6 +10,9 @@ param(
     [int]$ExpectedRevitYear = 0,
     [string]$SummaryPath = "",
     [switch]$RequireTypeChange,
+    [switch]$RequireRoomTag,
+    [switch]$RequireElementTag,
+    [switch]$RequireTags,
     [switch]$StatusOnly
 )
 
@@ -80,6 +83,18 @@ $nodeArgs = @(
 
 if ($RequireTypeChange) {
     $nodeArgs += @("--require-type-change")
+}
+
+if ($RequireTags) {
+    $nodeArgs += @("--require-tags")
+} else {
+    if ($RequireRoomTag) {
+        $nodeArgs += @("--require-room-tag")
+    }
+
+    if ($RequireElementTag) {
+        $nodeArgs += @("--require-element-tag")
+    }
 }
 
 if ($StatusOnly) {

@@ -353,11 +353,33 @@ try {
         }
         documentFingerprint = "doc-synthetic-evidence-contract"
         coveredTools = @("revit.status", "revit.cancel_request", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
-        coveredOperations = @("create_level", "create_wall", "create_room")
-        skippedOperations = @(
-            @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },
-            @{ type = "tag_element"; reason = "Synthetic evidence contract does not load element tag families." }
-        )
+        coveredOperations = @("create_level", "create_wall", "create_room", "tag_room", "tag_element")
+        skippedOperations = @()
+        requiredCoverage = [ordered] @{
+            typeChange = $false
+            roomTag = $true
+            elementTag = $true
+        }
+        result = [ordered] @{
+            tagCoverage = [ordered] @{
+                room = [ordered] @{
+                    roomId = "601"
+                    roomUniqueId = "room-601"
+                    viewId = "1024"
+                    tagTypeId = "9700"
+                    tagTypeName = "Room Tag"
+                    createdTagId = "1601"
+                }
+                element = [ordered] @{
+                    elementId = "501"
+                    elementUniqueId = "wall-501"
+                    viewId = "1024"
+                    tagTypeId = "9701"
+                    tagTypeName = "Wall Tag"
+                    createdTagId = "1602"
+                }
+            }
+        }
     } | ConvertTo-Json -Depth 8) -Encoding UTF8
 
     $failedLiveSmokeRoot = Join-Path $runRoot "live-failed"
@@ -601,6 +623,12 @@ try {
     if ($evidenceManifest.liveSmoke.summary.packageIdentity.assemblySha256 -ne $packagedAddinSha256) {
         throw "Live smoke loaded add-in SHA-256 was not recorded."
     }
+    if ($evidenceManifest.liveSmoke.summary.requiredCoverage.roomTag -ne $true -or $evidenceManifest.liveSmoke.summary.requiredCoverage.elementTag -ne $true) {
+        throw "Live smoke required tag coverage flags were not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.tagCoverage.room.createdTagId -ne "1601" -or $evidenceManifest.liveSmoke.summary.tagCoverage.element.createdTagId -ne "1602") {
+        throw "Live smoke tag coverage details were not recorded."
+    }
     if ($evidenceManifest.supportBundle.status -ne "captured") {
         throw "Support bundle evidence was not marked captured."
     }
@@ -657,6 +685,19 @@ try {
         "-Profile", "production",
         "-AllowDirty"
     ) "*Production readiness requires captured signing evidence*" "Production readiness signing gate"
+
+    $tamperedTagEvidenceRoot = Join-Path $runRoot "tampered-required-tag-skipped"
+    Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedTagEvidenceRoot -Recurse -Force
+    $tamperedTagManifestPath = Join-Path $tamperedTagEvidenceRoot "release-evidence-manifest.json"
+    $tamperedTagManifest = Get-Content -LiteralPath $tamperedTagManifestPath -Raw | ConvertFrom-Json
+    $tamperedTagManifest.liveSmoke.summary.coveredOperations = @($tamperedTagManifest.liveSmoke.summary.coveredOperations | Where-Object { [string] $_ -ne "tag_element" })
+    $tamperedTagManifest.liveSmoke.summary.tagCoverage.element = $null
+    Set-Content -LiteralPath $tamperedTagManifestPath -Value ($tamperedTagManifest | ConvertTo-Json -Depth 12) -Encoding UTF8
+    Assert-ScriptFailsLike $readinessScript @(
+        "-EvidencePath", $tamperedTagEvidenceRoot,
+        "-Profile", "release-candidate",
+        "-AllowDirty"
+    ) "*Live smoke required tag_element*" "Required tag coverage readiness gate"
 
     $tamperedEvidenceRoot = Join-Path $runRoot "tampered-missing-evidence-file"
     Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedEvidenceRoot -Recurse -Force

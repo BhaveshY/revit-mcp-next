@@ -71,7 +71,7 @@ npm run test:evidence:release:windows
 
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
 
-`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It checks `revit.cancel_request` no-op behavior, creates test geometry, a room, optional family placement when the model has suitable symbols, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
+`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It checks `revit.cancel_request` no-op behavior, creates test geometry, a room, optional family placement when the model has suitable symbols, optional or required room/element tags when the model has loaded tag families and suitable views, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
 `npm run smoke:release-local` is the one-command disposable-machine path: it builds, installs to a stable per-year root under `%APPDATA%\Autodesk\Revit\Addins`, copies a sample RVT, launches Revit when needed, waits for `revit.status` readiness, runs doctor/live smoke, closes and relaunches its own Revit process for a second status-only no-prompt probe, collects support output, and attempts release evidence collection. Evidence and package work directories default to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
 
 Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`. The application manifest now uses `<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>`, but the durable no-prompt path is trusted Authenticode signing. `npm run smoke:release-local` creates/trusts a disposable CurrentUser dev certificate, signs the package, and verifies trusted signatures before launch. For an unsigned external preview, label the package as unsigned and include checksums plus smoke/evidence artifacts; only claim a signed release when signature verification evidence exists for that exact build. See [external-preview.md](docs/external-preview.md) for the concise sharing checklist.
@@ -90,10 +90,10 @@ If `pyrevit run` fails before a hosted smoke script runs because pyRevit does no
 npm run pyrevit:hosts -- -Builds 20230106_1515,20241105_1515
 ```
 
-Release-candidate smoke runs should use a disposable model with at least two compatible wall types and require type-change coverage:
+Release-candidate smoke runs should use a curated disposable model with at least two compatible wall types, a usable room tag type, a wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall:
 
 ```powershell
-npm run smoke:revit -- -RequireTypeChange
+npm run smoke:revit -- -RequireTypeChange -RequireTags
 ```
 
 ## Packaging And Support
@@ -268,7 +268,7 @@ See [production-readiness.md](docs/production-readiness.md) for the current evid
 Remaining blockers:
 
 - Optional signed release artifacts if a release certificate is available. Unsigned preview packages are acceptable when clearly labeled, with checksums and smoke/evidence artifacts attached.
-- Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, room read/write support, and preview/apply flows.
+- Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, room read/write support, curated `tag_room`/`tag_element` coverage when required, and preview/apply flows.
 - Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json`.
 - Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, live-smoke output, and hosted integration output for that build.
 - More real-model write-operation and failure-mode evidence before calling the mutation surface production-complete.

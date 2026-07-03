@@ -65,6 +65,8 @@ async function main() {
   console.log(`Move Y: ${options.moveYMm} mm`);
   console.log(`Transaction prefix: ${options.transactionPrefix}`);
   console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
+  console.log(`Require room tag: ${options.requireRoomTag ? "yes" : "no"}`);
+  console.log(`Require element tag: ${options.requireElementTag ? "yes" : "no"}`);
   if (options.expectedRevitYear) {
     console.log(`Expected Revit year: ${options.expectedRevitYear}`);
   }
@@ -103,6 +105,11 @@ async function main() {
     coveredTools: [],
     coveredOperations: [],
     skippedOperations: [],
+    requiredCoverage: {
+      typeChange: options.requireTypeChange,
+      roomTag: options.requireRoomTag,
+      elementTag: options.requireElementTag,
+    },
     result: null,
     error: null,
   };
@@ -604,7 +611,7 @@ async function main() {
     if (roomTagResult.apply) {
       annotationGeneration = numericOrUndefined(roomTagResult.apply.generation);
     } else {
-      summary.skippedOperations.push({ type: "tag_room", reason: roomTagResult.reason });
+      summary.skippedOperations.push(compactObject({ type: "tag_room", reason: roomTagResult.reason, evidence: roomTagResult.evidence }));
       console.log(`Tag room skipped: ${roomTagResult.reason}`);
     }
 
@@ -619,7 +626,9 @@ async function main() {
     if (elementTagResult.apply) {
       annotationGeneration = numericOrUndefined(elementTagResult.apply.generation);
     } else {
-      summary.skippedOperations.push({ type: "tag_element", reason: elementTagResult.reason });
+      summary.skippedOperations.push(
+        compactObject({ type: "tag_element", reason: elementTagResult.reason, evidence: elementTagResult.evidence })
+      );
       console.log(`Tag element skipped: ${elementTagResult.reason}`);
     }
 
@@ -627,6 +636,8 @@ async function main() {
     const elementTagApply = elementTagResult.apply;
     const createdRoomTagId = roomTagResult.roomTagId;
     const createdElementTagId = elementTagResult.elementTagId;
+    assertRequiredCoverage("tag_room", options.requireRoomTag, roomTagResult.apply, roomTagResult.reason);
+    assertRequiredCoverage("tag_element", options.requireElementTag, elementTagResult.apply, elementTagResult.reason);
 
     const parameterGeneration = annotationGeneration;
     const parameterValue = `MCP-${runId}`;
@@ -915,6 +926,28 @@ async function main() {
         elementTag: createdElementTagId,
         copiedWall: copiedWallId,
       },
+      tagCoverage: {
+        room: roomTagApply
+          ? {
+              roomId: roomTagResult.roomId,
+              roomUniqueId: roomTagResult.roomUniqueId,
+              viewId: roomTagResult.viewId,
+              tagTypeId: roomTagResult.tagTypeId,
+              tagTypeName: roomTagResult.tagTypeName,
+              createdTagId: createdRoomTagId,
+            }
+          : undefined,
+        element: elementTagApply
+          ? {
+              elementId: elementTagResult.elementId,
+              elementUniqueId: elementTagResult.elementUniqueId,
+              viewId: elementTagResult.viewId,
+              tagTypeId: elementTagResult.tagTypeId,
+              tagTypeName: elementTagResult.tagTypeName,
+              createdTagId: createdElementTagId,
+            }
+          : undefined,
+      },
       finalGeneration: numericOrUndefined(deleteApply.generation),
     });
     console.log("Live smoke passed.");
@@ -944,6 +977,8 @@ function parseArgs(args) {
     expectedRevitYear: undefined,
     summaryPath: undefined,
     requireTypeChange: false,
+    requireRoomTag: false,
+    requireElementTag: false,
     statusOnly: false,
     help: false,
   };
@@ -998,6 +1033,26 @@ function parseArgs(args) {
         break;
       case "--skip-type-change":
         options.requireTypeChange = false;
+        break;
+      case "--require-room-tag":
+        options.requireRoomTag = true;
+        break;
+      case "--skip-room-tag":
+        options.requireRoomTag = false;
+        break;
+      case "--require-element-tag":
+        options.requireElementTag = true;
+        break;
+      case "--skip-element-tag":
+        options.requireElementTag = false;
+        break;
+      case "--require-tags":
+        options.requireRoomTag = true;
+        options.requireElementTag = true;
+        break;
+      case "--skip-tags":
+        options.requireRoomTag = false;
+        options.requireElementTag = false;
         break;
       case "--status-only":
         options.statusOnly = true;
@@ -1062,6 +1117,17 @@ function assertExpectedRevitYear(status, expectedRevitYear) {
       "Connected Revit version does not match the expected smoke year.",
       `Expected: ${expectedRevitYear}`,
       `Actual revit.status.revit.version: ${actualVersion || "(missing)"}`,
+    ].join("\n")
+  );
+}
+
+function assertRequiredCoverage(operationType, required, applyResult, reason) {
+  if (!required || applyResult) return;
+  throw new Error(
+    [
+      `Required live smoke coverage for ${operationType} was not achieved.`,
+      reason ? `Last skip/block reason: ${reason}` : "No skip reason was recorded.",
+      "Use a curated disposable model with the required tag family, view, and target element/room, or rerun without the corresponding require flag for preview-only evidence.",
     ].join("\n")
   );
 }
@@ -1772,14 +1838,25 @@ async function tryTagRoom(
     includeTotalCount: true,
   });
   assertCatalogPage(roomTagTypes, "tagTypes");
+  const evidence = {
+    tagTypeCount: Array.isArray(roomTagTypes.items) ? roomTagTypes.items.length : 0,
+    tagTypeSamples: sampleEvidenceItems(roomTagTypes.items),
+    viewCount: 0,
+    viewSamples: [],
+    candidateRoomCount: 0,
+    candidateRoomSamples: [],
+    blockedPreviewMessages: [],
+  };
   const tagType = roomTagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
   if (!tagType) {
-    return { reason: "No room tag type was available in the active model." };
+    return { reason: "No room tag type was available in the active model.", evidence };
   }
 
   const views = await listAnnotationViews(client, documentFingerprint, ["FloorPlan", "CeilingPlan", "EngineeringPlan", "Section"]);
+  evidence.viewCount = views.length;
+  evidence.viewSamples = sampleEvidenceItems(views);
   if (views.length === 0) {
-    return { reason: "No printable non-template plan or section view was available for room tags." };
+    return { reason: "No printable non-template plan or section view was available for room tags.", evidence };
   }
 
   let generation = expectedGeneration;
@@ -1796,6 +1873,8 @@ async function tryTagRoom(
       includeTotalCount: true,
     });
     const candidates = prioritizeById(Array.isArray(rooms.items) ? rooms.items : [], preferredRoomId);
+    evidence.candidateRoomCount += candidates.filter((room) => room?.id).length;
+    appendEvidenceSamples(evidence.candidateRoomSamples, candidates);
     for (const room of candidates) {
       if (!room?.id) continue;
       const location = roomTagLocation(room, preferredRoomId, preferredLocation);
@@ -1821,6 +1900,7 @@ async function tryTagRoom(
       const previewResult = await tryPreviewChangeSet(client, changeSet, "tag_room");
       if (!previewResult.ready) {
         lastBlockedReason = previewResult.reason;
+        appendBoundedItem(evidence.blockedPreviewMessages, previewResult.reason, 5);
         continue;
       }
       const apply = await applyChangeSet(client, changeSet, previewResult.preview, "tag_room");
@@ -1828,7 +1908,16 @@ async function tryTagRoom(
       const roomTagId = getCreatedElementId(change);
       assert(roomTagId, "tag_room applied but did not return a room tag id.");
       console.log(`Tag room OK: room ${room.id} tagged as ${roomTagId} in view ${view.id}`);
-      return { apply, roomTagId, roomId: String(room.id), viewId: String(view.id) };
+      return {
+        apply,
+        roomTagId,
+        roomId: String(room.id),
+        roomUniqueId: stringOrUndefined(room.uniqueId),
+        viewId: String(view.id),
+        tagTypeId: String(tagType.id),
+        tagTypeName: stringOrUndefined(tagType.name),
+        evidence,
+      };
     }
   }
 
@@ -1836,6 +1925,7 @@ async function tryTagRoom(
     reason: lastBlockedReason
       ? `No room tag candidate previewed ready. Last blocked reason: ${lastBlockedReason}`
       : "No placed room with a taggable location was available in a printable plan or section view.",
+    evidence,
   };
 }
 
@@ -1851,6 +1941,20 @@ async function tryTagElement(
     includeTotalCount: true,
   });
   assertCatalogPage(tagTypes, "tagTypes");
+  const evidence = {
+    tagTypeCatalogs: [
+      {
+        categories: ["OST_WallTags"],
+        tagTypeCount: Array.isArray(tagTypes.items) ? tagTypes.items.length : 0,
+        tagTypeSamples: sampleEvidenceItems(tagTypes.items),
+      },
+    ],
+    viewCount: 0,
+    viewSamples: [],
+    candidateElementCount: 0,
+    candidateElementSamples: [],
+    blockedPreviewMessages: [],
+  };
   let tagType = tagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
   if (!tagType) {
     tagTypes = await catalog(client, {
@@ -1861,15 +1965,22 @@ async function tryTagElement(
       includeTotalCount: true,
     });
     assertCatalogPage(tagTypes, "tagTypes");
+    evidence.tagTypeCatalogs.push({
+      categories: ["OST_MultiCategoryTags"],
+      tagTypeCount: Array.isArray(tagTypes.items) ? tagTypes.items.length : 0,
+      tagTypeSamples: sampleEvidenceItems(tagTypes.items),
+    });
     tagType = tagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
   }
   if (!tagType) {
-    return { reason: "No wall or multi-category tag FamilySymbol was available in the active model." };
+    return { reason: "No wall or multi-category tag FamilySymbol was available in the active model.", evidence };
   }
 
   const views = await listAnnotationViews(client, documentFingerprint, ["FloorPlan", "CeilingPlan", "EngineeringPlan", "Section", "DraftingView"]);
+  evidence.viewCount = views.length;
+  evidence.viewSamples = sampleEvidenceItems(views);
   if (views.length === 0) {
-    return { reason: "No printable non-template graphical view was available for element tags." };
+    return { reason: "No printable non-template graphical view was available for element tags.", evidence };
   }
 
   let generation = expectedGeneration;
@@ -1884,12 +1995,15 @@ async function tryTagElement(
       includeTotalCount: true,
     });
     const candidates = prioritizeById(Array.isArray(query.items) ? query.items : [], preferredElementId);
+    evidence.candidateElementCount += candidates.filter((element) => element?.id).length;
+    appendEvidenceSamples(evidence.candidateElementSamples, candidates);
     for (const element of candidates) {
       if (!element?.id) continue;
       const operation = {
         id: "tag-smoke-element",
         type: "tag_element",
         elementId: String(element.id),
+        expectedUniqueId: stringOrUndefined(element.uniqueId),
         viewId: String(view.id),
         tagTypeId: String(tagType.id),
         position: pointMm(1000, 1000, numericOrDefault(levelElevationMm, 0)),
@@ -1905,6 +2019,7 @@ async function tryTagElement(
       const previewResult = await tryPreviewChangeSet(client, changeSet, "tag_element");
       if (!previewResult.ready) {
         lastBlockedReason = previewResult.reason;
+        appendBoundedItem(evidence.blockedPreviewMessages, previewResult.reason, 5);
         continue;
       }
       const apply = await applyChangeSet(client, changeSet, previewResult.preview, "tag_element");
@@ -1912,7 +2027,16 @@ async function tryTagElement(
       const elementTagId = getCreatedElementId(change);
       assert(elementTagId, "tag_element applied but did not return an element tag id.");
       console.log(`Tag element OK: element ${element.id} tagged as ${elementTagId} in view ${view.id}`);
-      return { apply, elementTagId, elementId: String(element.id), viewId: String(view.id) };
+      return {
+        apply,
+        elementTagId,
+        elementId: String(element.id),
+        elementUniqueId: stringOrUndefined(element.uniqueId),
+        viewId: String(view.id),
+        tagTypeId: String(tagType.id),
+        tagTypeName: stringOrUndefined(tagType.name),
+        evidence,
+      };
     }
   }
 
@@ -1920,6 +2044,7 @@ async function tryTagElement(
     reason: lastBlockedReason
       ? `No element tag candidate previewed ready. Last blocked reason: ${lastBlockedReason}`
       : "No wall visible in a printable non-template graphical view was available for element tags.",
+    evidence,
   };
 }
 
@@ -2173,6 +2298,38 @@ function stringOrUndefined(value) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function sampleEvidenceItems(items, limit = 5) {
+  if (!Array.isArray(items)) return [];
+  return items.slice(0, limit).map((item) =>
+    compactObject({
+      id: item?.id !== undefined ? String(item.id) : undefined,
+      uniqueId: stringOrUndefined(item?.uniqueId),
+      name: stringOrUndefined(item?.name),
+      number: stringOrUndefined(item?.number),
+      category: stringOrUndefined(item?.category),
+      class: stringOrUndefined(item?.class),
+      type: stringOrUndefined(item?.type ?? item?.viewType),
+      familyName: stringOrUndefined(item?.familyName),
+      levelId: item?.levelId !== undefined ? String(item.levelId) : undefined,
+      associatedLevelId: item?.associatedLevelId !== undefined ? String(item.associatedLevelId) : undefined,
+    })
+  );
+}
+
+function appendEvidenceSamples(buffer, items, limit = 5) {
+  if (!Array.isArray(buffer) || buffer.length >= limit || !Array.isArray(items)) return;
+  for (const sample of sampleEvidenceItems(items, limit)) {
+    if (!sample.id || buffer.some((existing) => existing.id === sample.id)) continue;
+    buffer.push(sample);
+    if (buffer.length >= limit) break;
+  }
+}
+
+function appendBoundedItem(buffer, item, limit) {
+  if (!Array.isArray(buffer) || item === undefined || item === null || buffer.length >= limit) return;
+  buffer.push(String(item));
+}
+
 function round(value) {
   return Math.round(value * 1000000) / 1000000;
 }
@@ -2272,6 +2429,12 @@ Options:
   --summary-path <path>           Write machine-readable smoke-summary.json evidence.
   --require-type-change           Fail when no alternate valid wall type is available for change_element_type.
   --skip-type-change              Allow type-change coverage to be skipped when no alternate type exists. Default.
+  --require-room-tag              Fail when tag_room cannot be applied.
+  --require-element-tag           Fail when tag_element cannot be applied.
+  --require-tags                  Require both tag_room and tag_element coverage.
+  --skip-room-tag                 Allow tag_room coverage to be skipped. Default.
+  --skip-element-tag              Allow tag_element coverage to be skipped. Default.
+  --skip-tags                     Allow both tag operations to be skipped. Default.
   --status-only                   Only verify tool discovery, revit.status, and active document readiness.
   -h, --help                      Show this help.
 `);
