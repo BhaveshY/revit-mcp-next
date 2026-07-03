@@ -349,9 +349,8 @@ namespace RevitMcpNext.Addin.Revit
 
             string scope;
             IEnumerable<Element> elements = CreateFilteredElements(app, document, filter, warnings, out scope);
-            List<Element> materialized = elements.ToList();
-            int totalCount = materialized.Count;
-            List<Element> page = materialized.Skip(offset).Take(limit).ToList();
+            PageResult<Element> pageResult = PageItems(elements, offset, limit, includeTotalCount);
+            List<Element> page = pageResult.Items;
             collectorSw.Stop();
 
             var data = new Dictionary<string, object>
@@ -359,7 +358,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["items"] = page.Select(element => BuildQueryItem(element, fields)).ToArray(),
                 ["returnedCount"] = page.Count,
                 ["limit"] = limit,
-                ["truncated"] = offset + page.Count < totalCount,
+                ["truncated"] = pageResult.Truncated,
                 ["fields"] = fields,
                 ["units"] = new Dictionary<string, object>
                 {
@@ -370,8 +369,8 @@ namespace RevitMcpNext.Addin.Revit
                 ["source"] = "revit-addin"
             };
 
-            if (includeTotalCount) data["totalCount"] = totalCount;
-            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+            if (includeTotalCount && pageResult.TotalCount.HasValue) data["totalCount"] = pageResult.TotalCount.Value;
+            if (pageResult.Truncated) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
 
             return Success(
                 request,
@@ -383,7 +382,7 @@ namespace RevitMcpNext.Addin.Revit
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = page.Count,
-                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                    TotalCount = pageResult.TotalCount
                 },
                 generation: generation);
         }
@@ -414,9 +413,8 @@ namespace RevitMcpNext.Addin.Revit
 
             string scope;
             IEnumerable<Element> elements = CreateFilteredElements(app, document, filter, warnings, out scope);
-            List<Element> materialized = elements.ToList();
-            int totalCount = materialized.Count;
-            List<Element> page = materialized.Skip(offset).Take(limit).ToList();
+            PageResult<Element> pageResult = PageItems(elements, offset, limit, includeTotalCount);
+            List<Element> page = pageResult.Items;
             collectorSw.Stop();
 
             var data = new Dictionary<string, object>
@@ -432,14 +430,14 @@ namespace RevitMcpNext.Addin.Revit
                     parameterLimit)).ToArray(),
                 ["returnedCount"] = page.Count,
                 ["limit"] = limit,
-                ["truncated"] = offset + page.Count < totalCount,
+                ["truncated"] = pageResult.Truncated,
                 ["parameterLimit"] = parameterLimit,
                 ["scope"] = scope,
                 ["source"] = "revit-addin"
             };
 
-            if (includeTotalCount) data["totalCount"] = totalCount;
-            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+            if (includeTotalCount && pageResult.TotalCount.HasValue) data["totalCount"] = pageResult.TotalCount.Value;
+            if (pageResult.Truncated) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
 
             return Success(
                 request,
@@ -451,7 +449,7 @@ namespace RevitMcpNext.Addin.Revit
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = page.Count,
-                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                    TotalCount = pageResult.TotalCount
                 },
                 generation: generation);
         }
@@ -882,9 +880,8 @@ namespace RevitMcpNext.Addin.Revit
 
             string scope;
             IEnumerable<Element> elements = CreateFilteredElements(app, document, filter, warnings, out scope);
-            List<Element> materialized = elements.ToList();
-            int totalCount = materialized.Count;
-            List<Element> page = materialized.Skip(offset).Take(limit).ToList();
+            PageResult<Element> pageResult = PageItems(elements, offset, limit, includeTotalCount);
+            List<Element> page = pageResult.Items;
             collectorSw.Stop();
 
             var data = new Dictionary<string, object>
@@ -893,7 +890,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["items"] = page.Select(element => BuildQueryItem(element, fields)).ToArray(),
                 ["returnedCount"] = page.Count,
                 ["limit"] = limit,
-                ["truncated"] = offset + page.Count < totalCount,
+                ["truncated"] = pageResult.Truncated,
                 ["fields"] = fields,
                 ["units"] = new Dictionary<string, object>
                 {
@@ -916,8 +913,8 @@ namespace RevitMcpNext.Addin.Revit
                 };
             }
 
-            if (includeTotalCount) data["totalCount"] = totalCount;
-            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+            if (includeTotalCount && pageResult.TotalCount.HasValue) data["totalCount"] = pageResult.TotalCount.Value;
+            if (pageResult.Truncated) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
 
             return Success(
                 request,
@@ -929,7 +926,7 @@ namespace RevitMcpNext.Addin.Revit
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = page.Count,
-                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                    TotalCount = pageResult.TotalCount
                 },
                 generation: generation);
         }
@@ -7174,6 +7171,41 @@ namespace RevitMcpNext.Addin.Revit
                 Message = "Cursor '" + cursor + "' is invalid; returning the first page."
             });
             return 0;
+        }
+
+        private static PageResult<T> PageItems<T>(IEnumerable<T> items, int offset, int limit, bool includeTotalCount)
+        {
+            if (items == null)
+            {
+                return new PageResult<T>(new List<T>(), includeTotalCount ? 0 : (int?)null, false);
+            }
+
+            if (includeTotalCount)
+            {
+                List<T> materialized = items.ToList();
+                int totalCount = materialized.Count;
+                List<T> page = materialized.Skip(offset).Take(limit).ToList();
+                return new PageResult<T>(page, totalCount, offset + page.Count < totalCount);
+            }
+
+            List<T> window = items.Skip(offset).Take(limit + 1).ToList();
+            bool truncated = window.Count > limit;
+            if (truncated) window.RemoveAt(window.Count - 1);
+            return new PageResult<T>(window, null, truncated);
+        }
+
+        private sealed class PageResult<T>
+        {
+            public PageResult(List<T> items, int? totalCount, bool truncated)
+            {
+                Items = items;
+                TotalCount = totalCount;
+                Truncated = truncated;
+            }
+
+            public List<T> Items { get; }
+            public int? TotalCount { get; }
+            public bool Truncated { get; }
         }
 
         private static Dictionary<string, object> GetDictionary(Dictionary<string, object> root, string key)

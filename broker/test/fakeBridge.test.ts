@@ -34,6 +34,52 @@ test("fake bridge returns bounded query result shape", async () => {
   assert.equal(response.data.items[0]?.id, "501");
 });
 
+test("fake bridge query honors cursor and field projection", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const firstPage = await bridge.query(
+    makeRequest(
+      "test",
+      "query",
+      "read",
+      {
+        filter: { elementIds: ["501"] },
+        fields: ["id"],
+        limit: 1,
+        includeTotalCount: true,
+      },
+      30000
+    )
+  );
+
+  assert.equal(firstPage.ok, true);
+  if (!firstPage.ok) return;
+  assert.equal(firstPage.data.returnedCount, 1);
+  assert.equal(firstPage.data.totalCount, 1);
+  assert.equal(firstPage.data.items[0]?.id, "501");
+  assert.equal(firstPage.data.items[0]?.uniqueId, undefined);
+
+  const secondPage = await bridge.query(
+    makeRequest(
+      "test",
+      "query",
+      "read",
+      {
+        filter: { elementIds: ["501"] },
+        fields: ["id"],
+        limit: 1,
+        cursor: "1",
+        includeTotalCount: true,
+      },
+      30000
+    )
+  );
+
+  assert.equal(secondPage.ok, true);
+  if (!secondPage.ok) return;
+  assert.equal(secondPage.data.returnedCount, 0);
+  assert.equal(secondPage.data.truncated, false);
+});
+
 test("fake bridge returns read and analysis parity result shapes", async () => {
   const bridge = new FakeRevitBridgeClient();
 

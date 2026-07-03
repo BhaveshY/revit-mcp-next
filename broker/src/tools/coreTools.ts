@@ -20,26 +20,28 @@ const parameterEqualsSchema = z
   .record(boundedString, parameterScalar)
   .refine((value) => Object.keys(value).length <= 16, "At most 16 parameter equality filters are allowed.");
 
-const queryFilterSchema = z.object({
-  elementIds: z
-    .array(boundedId)
-    .max(256)
-    .optional()
-    .describe("Explicit Revit element IDs to retrieve before applying any secondary filters."),
-  uniqueIds: z
-    .array(boundedString)
-    .max(256)
-    .optional()
-    .describe("Explicit Revit UniqueId values to retrieve before applying any secondary filters."),
-  categories: z.array(boundedString).max(16).optional(),
-  classes: z.array(boundedString).max(16).optional(),
-  viewId: boundedId.optional(),
-  selectionOnly: z.boolean().optional(),
-  levelIds: z.array(boundedId).max(64).optional(),
-  worksetIds: z.array(boundedId).max(64).optional(),
-  designOptionIds: z.array(boundedId).max(64).optional(),
-  parameterEquals: parameterEqualsSchema.optional(),
-});
+const queryFilterSchema = z
+  .object({
+    elementIds: z
+      .array(boundedId)
+      .max(256)
+      .optional()
+      .describe("Explicit Revit element IDs to retrieve before applying any secondary filters."),
+    uniqueIds: z
+      .array(boundedString)
+      .max(256)
+      .optional()
+      .describe("Explicit Revit UniqueId values to retrieve before applying any secondary filters."),
+    categories: z.array(boundedString).max(16).optional(),
+    classes: z.array(boundedString).max(16).optional(),
+    viewId: boundedId.optional(),
+    selectionOnly: z.boolean().optional(),
+    levelIds: z.array(boundedId).max(64).optional(),
+    worksetIds: z.array(boundedId).max(64).optional(),
+    designOptionIds: z.array(boundedId).max(64).optional(),
+    parameterEquals: parameterEqualsSchema.optional(),
+  })
+  .strict();
 const scopedQueryFilterSchema = queryFilterSchema.omit({ viewId: true, selectionOnly: true });
 
 const documentGuardSchema = {

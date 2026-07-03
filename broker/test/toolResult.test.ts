@@ -22,6 +22,21 @@ test("asToolResult returns short text plus structured data on success", () => {
   assert.deepEqual(result.structuredContent?.data, { connected: true });
 });
 
+test("asToolResult appends cursor hints for truncated result pages", () => {
+  const result = asToolResult(
+    {
+      ok: true,
+      requestId: "1",
+      data: { returnedCount: 1, limit: 1, truncated: true, cursor: "1" },
+      warnings: [],
+      metrics: { elapsedMs: 2 },
+    },
+    (data) => `${data.returnedCount} item returned`
+  );
+
+  assert.equal(textContent(result), '1 item returned. More results available; pass cursor="1".');
+});
+
 test("asToolResult marks bridge failures as MCP tool errors", () => {
   const result = asToolResult(
     {
@@ -31,6 +46,7 @@ test("asToolResult marks bridge failures as MCP tool errors", () => {
         code: "BRIDGE_UNAVAILABLE",
         message: "Revit is closed",
         recoverable: true,
+        suggestedNextAction: "Start Revit, then call revit.status.",
       },
       warnings: [],
     },
@@ -39,6 +55,7 @@ test("asToolResult marks bridge failures as MCP tool errors", () => {
 
   assert.equal(result.isError, true);
   assert.match(textContent(result), /BRIDGE_UNAVAILABLE/);
+  assert.match(textContent(result), /Start Revit/);
   assert.equal((result.structuredContent?.data as { error: { code: string } }).error.code, "BRIDGE_UNAVAILABLE");
   assert.deepEqual(result.structuredContent?.metrics, { elapsedMs: 0 });
 });

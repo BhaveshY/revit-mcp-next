@@ -253,6 +253,23 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.uniqueId, "wall-501");
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.class, "Wall");
 
+    try {
+      const invalidQuery = (await client.callTool({
+        name: "revit.query",
+        arguments: {
+          filter: { category: "Walls" },
+          limit: 1,
+        },
+      })) as {
+        isError?: boolean;
+        content?: Array<{ type: "text"; text: string }>;
+      };
+      assert.equal(invalidQuery.isError, true);
+      assert.match(invalidQuery.content?.[0]?.text ?? "", /category|Unrecognized|Invalid/i);
+    } catch (error) {
+      assert.match(String(error), /category|Unrecognized|Invalid/i);
+    }
+
     const parametersTool = tools.tools.find((tool) => tool.name === "revit.describe_parameters");
     assert.ok(parametersTool?.inputSchema, "revit.describe_parameters should declare inputSchema");
     assert.match(JSON.stringify(parametersTool.inputSchema), /includeTypeParameters/);

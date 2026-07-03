@@ -1,17 +1,26 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { BridgeResponse } from "@revit-mcp-next/contracts";
 
+type ToolDataShape = {
+  truncated?: unknown;
+  cursor?: unknown;
+};
+
 export function asToolResult<T>(
   response: BridgeResponse<T>,
   summarize: (data: T) => string
 ): CallToolResult {
   if (!response.ok) {
+    const suggestedNextAction = response.error.suggestedNextAction
+      ? ` Next: ${response.error.suggestedNextAction}`
+      : "";
+
     return {
       isError: true,
       content: [
         {
           type: "text",
-          text: `${response.error.code}: ${response.error.message}`,
+          text: `${response.error.code}: ${response.error.message}${suggestedNextAction}`,
         },
       ],
       structuredContent: {
@@ -28,7 +37,7 @@ export function asToolResult<T>(
     content: [
       {
         type: "text",
-        text: summarize(response.data),
+        text: appendResultHints(summarize(response.data), response.data),
       },
     ],
     structuredContent: {
@@ -38,4 +47,19 @@ export function asToolResult<T>(
       generation: response.generation,
     },
   };
+}
+
+function appendResultHints(text: string, data: unknown): string {
+  if (!isRecord(data) || data.truncated !== true) return text;
+
+  const cursor = typeof data.cursor === "string" && data.cursor.length > 0 ? data.cursor : undefined;
+  const hint = cursor
+    ? `More results available; pass cursor="${cursor}".`
+    : "Result was truncated; narrow the filters or request the next page if the tool returned a cursor.";
+  const separator = text.endsWith(".") ? " " : ". ";
+  return `${text}${separator}${hint}`;
+}
+
+function isRecord(value: unknown): value is ToolDataShape {
+  return typeof value === "object" && value !== null;
 }

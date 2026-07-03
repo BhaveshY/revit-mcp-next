@@ -223,7 +223,7 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
-Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields.
+Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects.
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 

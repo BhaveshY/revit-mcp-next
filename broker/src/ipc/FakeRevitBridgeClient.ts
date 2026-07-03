@@ -24,6 +24,7 @@ import type {
   ModelStatisticsResult,
   ParameterDescribeRequest,
   ParameterDescribeResult,
+  QueryItem,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
@@ -570,30 +571,28 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<QueryResult>> {
     maybeAbort(options);
     const limit = Math.min(request.payload.limit ?? 50, 500);
-    let filteredItems = fakeQueryItems;
-    const elementIds = request.payload.filter.elementIds ?? [];
-    const uniqueIds = request.payload.filter.uniqueIds ?? [];
-    if (elementIds.length > 0) {
-      filteredItems = filteredItems.filter((item) => elementIds.includes(item.id));
-    }
-    if (uniqueIds.length > 0) {
-      filteredItems = filteredItems.filter((item) => item.uniqueId && uniqueIds.includes(item.uniqueId));
-    }
-    const items = filteredItems.slice(0, limit);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    const fields = request.payload.fields ?? queryFieldsForPreset(request.payload.preset);
+    const filteredItems = fakeQueryItems.filter((item) => matchesQueryFilter(item, filter));
+    const items = filteredItems.slice(offset, offset + limit).map((item) => projectQueryItem(item, fields));
+    const truncated = offset + items.length < filteredItems.length;
+    const hasExplicitIdentityFilter = Boolean(filter.elementIds?.length || filter.uniqueIds?.length);
 
     return ok(request, {
       items,
       totalCount: request.payload.includeTotalCount ? filteredItems.length : undefined,
       returnedCount: items.length,
       limit,
-      truncated: false,
-      fields: request.payload.fields ?? ["id", "category", "class", "name"],
+      cursor: truncated ? String(offset + items.length) : undefined,
+      truncated,
+      fields,
       units: {},
       scope:
-        elementIds.length > 0 || uniqueIds.length > 0
+        hasExplicitIdentityFilter
           ? "elements"
-          : request.payload.filter.viewId
-            ? `view:${request.payload.filter.viewId}`
+          : filter.viewId
+            ? `view:${filter.viewId}`
             : "document",
       source: "fake-bridge",
     });
@@ -781,6 +780,42 @@ function documentReference() {
     path: activeDocument.path,
     generation: activeDocument.generation,
   };
+}
+
+function queryFieldsForPreset(preset: QueryRequest["preset"]): string[] {
+  switch (preset) {
+    case "idOnly":
+      return ["id"];
+    case "schedule":
+      return ["id", "category", "class", "name", "typeId", "levelId"];
+    case "geometrySummary":
+    case "summary":
+    default:
+      return ["id", "category", "class", "name"];
+  }
+}
+
+function matchesQueryFilter(item: QueryItem, filter: QueryRequest["filter"]): boolean {
+  if (filter.elementIds?.length && !filter.elementIds.includes(item.id)) return false;
+  if (filter.uniqueIds?.length && (!item.uniqueId || !filter.uniqueIds.includes(item.uniqueId))) return false;
+  if (filter.categories?.length && !filter.categories.some((category) => equalsCatalogToken(category, item.category))) return false;
+  if (filter.classes?.length && !filter.classes.some((className) => equalsCatalogToken(className, item.class))) return false;
+  if (filter.levelIds?.length && (!item.levelId || !filter.levelIds.includes(item.levelId))) return false;
+  if (filter.viewId && filter.viewId !== activeDocument.activeView?.id) return false;
+  return true;
+}
+
+function projectQueryItem(item: QueryItem, fields: string[]): QueryItem {
+  const projected: QueryItem = { id: item.id };
+  const source = item as unknown as Record<string, unknown>;
+  const target = projected as unknown as Record<string, unknown>;
+
+  for (const field of fields) {
+    if (field === "id") continue;
+    if (source[field] !== undefined) target[field] = source[field];
+  }
+
+  return projected;
 }
 
 function buildScopedElementList(
