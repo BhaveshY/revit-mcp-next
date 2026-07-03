@@ -211,10 +211,13 @@ export interface ParameterTargetSummary {
   truncated: boolean;
 }
 
+export type ParameterDescribePreset = "writableEdit" | "namesOnly" | "full";
+
 export interface ParameterDescribeRequest {
   documentFingerprint?: string;
   expectedGeneration?: number;
   filter: QueryFilter;
+  preset?: ParameterDescribePreset;
   includeTypeParameters?: boolean;
   includeReadOnly?: boolean;
   includeValues?: boolean;
@@ -234,6 +237,7 @@ export interface ParameterDescribeResult {
   cursor?: string;
   truncated: boolean;
   parameterLimit: number;
+  preset?: ParameterDescribePreset;
   scope: string;
   source: string;
 }

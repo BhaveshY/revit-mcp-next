@@ -404,13 +404,14 @@ namespace RevitMcpNext.Addin.Revit
             var collectorSw = Stopwatch.StartNew();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
-            int limit = Math.Min(MaxParameterElementLimit, Math.Max(1, GetInt(payload, "limit") ?? 20));
-            int parameterLimit = Math.Min(MaxParameterLimit, Math.Max(1, GetInt(payload, "parameterLimit") ?? 80));
+            string preset = NormalizeParameterDescribePreset(GetString(payload, "preset"));
+            int limit = Math.Min(MaxParameterElementLimit, Math.Max(1, GetInt(payload, "limit") ?? DefaultParameterElementLimit(preset)));
+            int parameterLimit = Math.Min(MaxParameterLimit, Math.Max(1, GetInt(payload, "parameterLimit") ?? DefaultParameterLimit(preset)));
             int offset = ParseCursor(GetString(payload, "cursor"), warnings);
             bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
-            bool includeTypeParameters = GetBool(payload, "includeTypeParameters", true);
-            bool includeReadOnly = GetBool(payload, "includeReadOnly", true);
-            bool includeValues = GetBool(payload, "includeValues", true);
+            bool includeTypeParameters = GetBool(payload, "includeTypeParameters", DefaultIncludeTypeParameters(preset));
+            bool includeReadOnly = GetBool(payload, "includeReadOnly", DefaultIncludeReadOnlyParameters(preset));
+            bool includeValues = GetBool(payload, "includeValues", DefaultIncludeParameterValues(preset));
             string nameContains = GetString(payload, "nameContains");
 
             string scope;
@@ -434,6 +435,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["limit"] = limit,
                 ["truncated"] = pageResult.Truncated,
                 ["parameterLimit"] = parameterLimit,
+                ["preset"] = preset,
                 ["scope"] = scope,
                 ["source"] = "revit-addin"
             };
@@ -6127,6 +6129,42 @@ namespace RevitMcpNext.Addin.Revit
             item["parameterCount"] = ordered.Count;
             item["truncated"] = ordered.Count > parameterLimit;
             return item;
+        }
+
+        private static string NormalizeParameterDescribePreset(string preset)
+        {
+            if (string.Equals(preset, "full", StringComparison.OrdinalIgnoreCase)) return "full";
+            if (string.Equals(preset, "namesOnly", StringComparison.OrdinalIgnoreCase)) return "namesOnly";
+            return "writableEdit";
+        }
+
+        private static int DefaultParameterElementLimit(string preset)
+        {
+            return string.Equals(preset, "full", StringComparison.Ordinal) ? 20 : 10;
+        }
+
+        private static int DefaultParameterLimit(string preset)
+        {
+            if (string.Equals(preset, "full", StringComparison.Ordinal)) return 80;
+            if (string.Equals(preset, "namesOnly", StringComparison.Ordinal)) return 120;
+            return 40;
+        }
+
+        private static bool DefaultIncludeTypeParameters(string preset)
+        {
+            return string.Equals(preset, "full", StringComparison.Ordinal) ||
+                string.Equals(preset, "namesOnly", StringComparison.Ordinal);
+        }
+
+        private static bool DefaultIncludeReadOnlyParameters(string preset)
+        {
+            return string.Equals(preset, "full", StringComparison.Ordinal) ||
+                string.Equals(preset, "namesOnly", StringComparison.Ordinal);
+        }
+
+        private static bool DefaultIncludeParameterValues(string preset)
+        {
+            return string.Equals(preset, "full", StringComparison.Ordinal);
         }
 
         private static void AddParameterSummaries(

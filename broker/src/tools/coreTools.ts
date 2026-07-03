@@ -58,18 +58,61 @@ const querySchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const parameterDescribePresetSchema = z
+  .enum(["writableEdit", "namesOnly", "full"])
+  .default("writableEdit")
+  .describe(
+    "writableEdit returns compact writable instance parameter metadata for edits; namesOnly returns names without values; full preserves legacy read-only/type/value detail."
+  );
+
+type ParameterDescribePreset = z.infer<typeof parameterDescribePresetSchema>;
+
 const parameterDescribeSchema = {
   ...documentGuardSchema,
   filter: queryFilterSchema.describe("Revit-native filters for elements whose parameters should be described. Prefer explicit elementIds, selectionOnly, or tight category/class filters."),
-  includeTypeParameters: z.boolean().default(true),
-  includeReadOnly: z.boolean().default(true),
-  includeValues: z.boolean().default(true),
+  preset: parameterDescribePresetSchema,
+  includeTypeParameters: z.boolean().optional().describe("Override the preset and include or omit type parameters."),
+  includeReadOnly: z.boolean().optional().describe("Override the preset and include or omit read-only parameters."),
+  includeValues: z.boolean().optional().describe("Override the preset and include or omit current parameter values."),
   nameContains: z.string().min(1).max(128).optional(),
-  limit: z.number().int().min(1).max(100).default(20),
+  limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().optional(),
-  parameterLimit: z.number().int().min(1).max(200).default(80),
+  parameterLimit: z.number().int().min(1).max(200).optional(),
   includeTotalCount: z.boolean().default(false),
 };
+
+function resolveParameterDescribeOptions(args: {
+  preset?: ParameterDescribePreset;
+  includeTypeParameters?: boolean;
+  includeReadOnly?: boolean;
+  includeValues?: boolean;
+  limit?: number;
+  parameterLimit?: number;
+}): {
+  preset: ParameterDescribePreset;
+  includeTypeParameters: boolean;
+  includeReadOnly: boolean;
+  includeValues: boolean;
+  limit: number;
+  parameterLimit: number;
+} {
+  const preset = args.preset ?? "writableEdit";
+  const defaults =
+    preset === "full"
+      ? { includeTypeParameters: true, includeReadOnly: true, includeValues: true, limit: 20, parameterLimit: 80 }
+      : preset === "namesOnly"
+        ? { includeTypeParameters: true, includeReadOnly: true, includeValues: false, limit: 10, parameterLimit: 120 }
+        : { includeTypeParameters: false, includeReadOnly: false, includeValues: false, limit: 10, parameterLimit: 40 };
+
+  return {
+    preset,
+    includeTypeParameters: args.includeTypeParameters ?? defaults.includeTypeParameters,
+    includeReadOnly: args.includeReadOnly ?? defaults.includeReadOnly,
+    includeValues: args.includeValues ?? defaults.includeValues,
+    limit: args.limit ?? defaults.limit,
+    parameterLimit: args.parameterLimit ?? defaults.parameterLimit,
+  };
+}
 
 const currentViewSchema = {
   ...documentGuardSchema,
@@ -984,17 +1027,19 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, extra) => {
+      const options = resolveParameterDescribeOptions(args);
       const payload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter,
-        includeTypeParameters: args.includeTypeParameters ?? true,
-        includeReadOnly: args.includeReadOnly ?? true,
-        includeValues: args.includeValues ?? true,
+        preset: options.preset,
+        includeTypeParameters: options.includeTypeParameters,
+        includeReadOnly: options.includeReadOnly,
+        includeValues: options.includeValues,
         nameContains: args.nameContains,
-        limit: args.limit ?? 20,
+        limit: options.limit,
         cursor: args.cursor,
-        parameterLimit: args.parameterLimit ?? 80,
+        parameterLimit: options.parameterLimit,
         includeTotalCount: args.includeTotalCount ?? false,
       };
       const request = makeRequest(context.sessionId, "describe_parameters", "read", payload, 30000);

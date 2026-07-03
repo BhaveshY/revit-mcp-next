@@ -56,7 +56,7 @@ cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"limit":5}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" sheets --payload '{"limit":5}' --pretty
-cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"limit":5}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"preset":"writableEdit","limit":5}' --pretty
 ```
 
 If the installer used a non-default `-InstallRoot`, use that installed `revitctl.cmd` path instead.
@@ -67,7 +67,7 @@ The preview is useful for agent workflows that need:
 
 - compact Revit status, document, level, view, sheet, room, selection, and active-view reads
 - model statistics and material quantity reads
-- parameter discovery before edits
+- compact writable parameter discovery before edits, with full read-only/type/value detail available through `preset: "full"`
 - type/family/title-block/view-family/annotation catalog discovery
 - guarded preview/apply writes for levels, grids, walls, floors, rooms, family placement, sheets, view placement, text notes, room tags, element tags, parameter changes, movement, rotation, copy, type changes, pinning, and guarded deletes
 - pyRevit and Dynamo in-process examples for hosted automation

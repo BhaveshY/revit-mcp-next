@@ -103,7 +103,7 @@ For selected edits:
 
 1. Call `revit.get_selection`.
 2. Call `revit.query` with `filter.elementIds` and explicit fields such as `id`, `uniqueId`, `category`, `class`, `name`, `typeId`, and target parameter fields.
-3. Call `revit.describe_parameters` for the target element IDs before `set_parameter`; prefer writable instance parameters unless the user explicitly asks for type-level changes.
+3. Call `revit.describe_parameters` for the target element IDs before `set_parameter`; the default `preset: "writableEdit"` returns compact writable instance parameters. Use `preset: "full"` only when the user explicitly asks for type-level, read-only, or current-value details.
 4. For type changes, call `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"`.
 5. Preview `set_parameter` or `change_element_type`.
 

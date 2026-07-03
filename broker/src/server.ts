@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import type { RevitBridgeClient } from "./ipc/RevitBridgeClient.js";
 import { registerCoreTools } from "./tools/coreTools.js";
+import { registerDiscovery } from "./tools/discovery.js";
 
 export interface BrokerServerOptions {
   bridge: RevitBridgeClient;
@@ -25,7 +26,10 @@ export function createBrokerServer(options: BrokerServerOptions): McpServer {
     ...options,
     protocolVersion: PROTOCOL_VERSION,
   });
+  registerDiscovery(server, {
+    brokerVersion: options.brokerVersion,
+    protocolVersion: PROTOCOL_VERSION,
+  });
 
   return server;
 }
-

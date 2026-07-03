@@ -80,6 +80,53 @@ test("fake bridge query honors cursor and field projection", async () => {
   assert.equal(secondPage.data.truncated, false);
 });
 
+test("fake bridge describeParameters honors compact presets", async () => {
+  const bridge = new FakeRevitBridgeClient();
+
+  const compact = await bridge.describeParameters(
+    makeRequest("test", "describe_parameters", "read", { filter: { elementIds: ["501"] } }, 30000)
+  );
+  assert.equal(compact.ok, true);
+  if (!compact.ok) return;
+  assert.equal(compact.data.preset, "writableEdit");
+  assert.equal(compact.data.limit, 10);
+  assert.equal(compact.data.parameterLimit, 40);
+  assert.equal(compact.data.items[0]?.parameters.length, 1);
+  assert.equal(compact.data.items[0]?.parameters[0]?.name, "Mark");
+  assert.equal(compact.data.items[0]?.parameters[0]?.source, "instance");
+  assert.equal(compact.data.items[0]?.parameters[0]?.value, undefined);
+  assert.equal(compact.data.items[0]?.parameters[0]?.valueString, undefined);
+
+  const full = await bridge.describeParameters(
+    makeRequest("test", "describe_parameters", "read", { filter: { elementIds: ["501"] }, preset: "full" }, 30000)
+  );
+  assert.equal(full.ok, true);
+  if (!full.ok) return;
+  assert.equal(full.data.preset, "full");
+  assert.equal(full.data.limit, 20);
+  assert.equal(full.data.parameterLimit, 80);
+  assert.ok(full.data.items[0]?.parameters.some((parameter) => parameter.source === "type"));
+  assert.ok(full.data.items[0]?.parameters.some((parameter) => parameter.value !== undefined));
+
+  const namesOnly = await bridge.describeParameters(
+    makeRequest(
+      "test",
+      "describe_parameters",
+      "read",
+      { filter: { elementIds: ["501"] }, preset: "namesOnly", nameContains: "Type" },
+      30000
+    )
+  );
+  assert.equal(namesOnly.ok, true);
+  if (!namesOnly.ok) return;
+  assert.equal(namesOnly.data.preset, "namesOnly");
+  assert.equal(namesOnly.data.parameterLimit, 120);
+  assert.equal(namesOnly.data.items[0]?.parameters.length, 1);
+  assert.equal(namesOnly.data.items[0]?.parameters[0]?.name, "Type Name");
+  assert.equal(namesOnly.data.items[0]?.parameters[0]?.source, "type");
+  assert.equal(namesOnly.data.items[0]?.parameters[0]?.value, undefined);
+});
+
 test("fake bridge returns read and analysis parity result shapes", async () => {
   const bridge = new FakeRevitBridgeClient();
 

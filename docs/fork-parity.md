@@ -13,7 +13,7 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | `get_selected_elements` | Covered by `revit.get_selection`. |
 | `get_available_family_types` | Covered more generally by `revit.catalog` for element types, family symbols, title blocks, and view family types. |
 | `ai_element_filter` | Covered by `revit.query` filters and compact presets. |
-| Parameter discovery before edits | Better than the fork: `revit.describe_parameters` returns bounded writable/read-only parameter metadata and optional type parameters before `set_parameter`. |
+| Parameter discovery before edits | Better than the fork: `revit.describe_parameters` defaults to compact writable instance parameter metadata before `set_parameter`, with `namesOnly` and `full` presets for broader read-only/type/value discovery. |
 | Annotation type discovery | Better than the fork: `revit.catalog` supports `textNoteTypes`, `dimensionTypes`, and `tagTypes` for bounded annotation planning. |
 | `analyze_model_statistics` | Covered by `revit.analyze_model`. |
 | `get_material_quantities` | Covered by `revit.get_material_quantities` with normalized metric units. |

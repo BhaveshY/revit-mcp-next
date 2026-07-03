@@ -312,6 +312,32 @@ const catalogItems: FakeCatalogItem[] = [
   },
 ];
 
+function resolveParameterDescribeOptions(payload: ParameterDescribeRequest): {
+  preset: NonNullable<ParameterDescribeRequest["preset"]>;
+  includeTypeParameters: boolean;
+  includeReadOnly: boolean;
+  includeValues: boolean;
+  limit: number;
+  parameterLimit: number;
+} {
+  const preset = payload.preset ?? "writableEdit";
+  const defaults =
+    preset === "full"
+      ? { includeTypeParameters: true, includeReadOnly: true, includeValues: true, limit: 20, parameterLimit: 80 }
+      : preset === "namesOnly"
+        ? { includeTypeParameters: true, includeReadOnly: true, includeValues: false, limit: 10, parameterLimit: 120 }
+        : { includeTypeParameters: false, includeReadOnly: false, includeValues: false, limit: 10, parameterLimit: 40 };
+
+  return {
+    preset,
+    includeTypeParameters: payload.includeTypeParameters ?? defaults.includeTypeParameters,
+    includeReadOnly: payload.includeReadOnly ?? defaults.includeReadOnly,
+    includeValues: payload.includeValues ?? defaults.includeValues,
+    limit: Math.min(payload.limit ?? defaults.limit, 100),
+    parameterLimit: Math.min(payload.parameterLimit ?? defaults.parameterLimit, 200),
+  };
+}
+
 export class FakeRevitBridgeClient implements RevitBridgeClient {
   async status(
     request: BridgeRequest<Record<string, never>>,
@@ -603,7 +629,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<ParameterDescribeResult>> {
     maybeAbort(options);
-    const limit = Math.min(request.payload.limit ?? 20, 100);
+    const describeOptions = resolveParameterDescribeOptions(request.payload);
+    const limit = describeOptions.limit;
     const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
     let targets = fakeQueryItems;
     const elementIds = request.payload.filter.elementIds ?? [];
@@ -631,11 +658,16 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
           valueString: "Generic - 200mm",
         },
       ].filter((parameter) => {
-        if (request.payload.includeReadOnly === false && parameter.isReadOnly) return false;
+        if (!describeOptions.includeTypeParameters && parameter.source === "type") return false;
+        if (!describeOptions.includeReadOnly && parameter.isReadOnly) return false;
         if (request.payload.nameContains && !containsIgnoreCase(parameter.name, request.payload.nameContains)) return false;
         return true;
+      }).map((parameter) => {
+        if (describeOptions.includeValues) return parameter;
+        const { value: _value, valueString: _valueString, ...compactParameter } = parameter;
+        return compactParameter;
       });
-      const parameterLimit = Math.min(request.payload.parameterLimit ?? 80, 200);
+      const parameterLimit = describeOptions.parameterLimit;
       return {
         id: item.id,
         uniqueId: item.uniqueId,
@@ -658,7 +690,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       limit,
       cursor: truncated ? String(offset + page.length) : undefined,
       truncated,
-      parameterLimit: Math.min(request.payload.parameterLimit ?? 80, 200),
+      parameterLimit: describeOptions.parameterLimit,
+      preset: describeOptions.preset,
       scope: elementIds.length > 0 ? "elements" : "document",
       source: "fake-bridge",
     });

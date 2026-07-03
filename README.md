@@ -141,10 +141,12 @@ MCP remains the main agent interface. The installed `revitctl.cmd` is a lower-le
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"limit":5}' --pretty
-cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"limit":5}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"preset":"writableEdit","limit":5}' --pretty
 ```
 
 The CLI reads the same installed discovery and auth config as the MCP launcher. It does not print the raw auth token. See [revitctl.md](docs/revitctl.md).
+
+MCP clients can also read `revit://discovery` for compact workflow guidance and `revit://tools/{name}` for per-tool guidance. The broker exposes `revit.start_workflow` and `revit.workflow` prompts for clients that support MCP prompts.
 
 ## pyRevit, Dynamo, And Python
 
@@ -223,7 +225,7 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
-Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects.
+Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_material_quantities` for normalized material takeoffs, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects. `revit.describe_parameters` defaults to `preset: "writableEdit"` for compact writable instance parameter metadata; use `preset: "namesOnly"` for broader name discovery without values or `preset: "full"` for legacy read-only/type/value detail.
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 

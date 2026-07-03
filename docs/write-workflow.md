@@ -4,7 +4,7 @@ Write operations use a preview/apply contract.
 
 1. Run `revit.status` and record the active document fingerprint.
 2. Run `revit.get_levels`, `revit.catalog`, and, for room changes, `revit.get_rooms` for IDs and existing room numbers that the change set needs.
-   For parameter edits, run `revit.describe_parameters` on the target element IDs before choosing `set_parameter`.
+   For parameter edits, run `revit.describe_parameters` on the target element IDs before choosing `set_parameter`. The default `preset: "writableEdit"` returns compact writable instance parameter metadata; use `preset: "full"` only when read-only, type-parameter, or current-value details are needed.
 3. Run `revit.preview_change_set` with a bounded change set.
 4. Inspect every returned change. Do not apply blocked previews.
 5. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, `baseGeneration`, `changeSetHash`, `expiresAt`, and `confirm: true`.

@@ -42,6 +42,8 @@ test("broker exposes annotated tools with output schemas and callable structured
 
     for (const expected of [
       "revit.get_current_view",
+      "revit.list_documents",
+      "revit.get_levels",
       "revit.get_views",
       "revit.get_sheets",
       "revit.get_current_view_elements",
@@ -273,24 +275,57 @@ test("broker exposes annotated tools with output schemas and callable structured
     const parametersTool = tools.tools.find((tool) => tool.name === "revit.describe_parameters");
     assert.ok(parametersTool?.inputSchema, "revit.describe_parameters should declare inputSchema");
     assert.match(JSON.stringify(parametersTool.inputSchema), /includeTypeParameters/);
+    assert.match(JSON.stringify(parametersTool.inputSchema), /writableEdit/);
     const parameters = (await client.callTool({
       name: "revit.describe_parameters",
       arguments: {
         filter: { elementIds: ["501"] },
-        includeTypeParameters: true,
-        includeReadOnly: true,
+        preset: "full",
         includeTotalCount: true,
       },
     })) as {
       isError?: boolean;
       structuredContent?: {
-        data?: { returnedCount?: number; items?: Array<{ id?: string; parameters?: Array<{ name?: string; isReadOnly?: boolean; source?: string }> }> };
+        data?: {
+          preset?: string;
+          returnedCount?: number;
+          parameterLimit?: number;
+          items?: Array<{ id?: string; parameters?: Array<{ name?: string; isReadOnly?: boolean; source?: string; value?: unknown }> }>;
+        };
       };
     };
     assert.equal(parameters.isError, undefined);
+    assert.equal(parameters.structuredContent?.data?.preset, "full");
+    assert.equal(parameters.structuredContent?.data?.parameterLimit, 80);
     assert.equal(parameters.structuredContent?.data?.returnedCount, 1);
     assert.equal(parameters.structuredContent?.data?.items?.[0]?.id, "501");
     assert.ok(parameters.structuredContent?.data?.items?.[0]?.parameters?.some((parameter) => parameter.name === "Mark" && parameter.isReadOnly === false));
+    assert.ok(parameters.structuredContent?.data?.items?.[0]?.parameters?.some((parameter) => parameter.source === "type"));
+
+    const compactParameters = (await client.callTool({
+      name: "revit.describe_parameters",
+      arguments: {
+        filter: { elementIds: ["501"] },
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          preset?: string;
+          limit?: number;
+          parameterLimit?: number;
+          items?: Array<{ parameters?: Array<{ source?: string; isReadOnly?: boolean; value?: unknown; valueString?: string }> }>;
+        };
+      };
+    };
+    assert.equal(compactParameters.isError, undefined);
+    assert.equal(compactParameters.structuredContent?.data?.preset, "writableEdit");
+    assert.equal(compactParameters.structuredContent?.data?.limit, 10);
+    assert.equal(compactParameters.structuredContent?.data?.parameterLimit, 40);
+    assert.ok(compactParameters.structuredContent?.data?.items?.[0]?.parameters?.every((parameter) => parameter.source === "instance"));
+    assert.ok(compactParameters.structuredContent?.data?.items?.[0]?.parameters?.every((parameter) => parameter.isReadOnly === false));
+    assert.ok(compactParameters.structuredContent?.data?.items?.[0]?.parameters?.every((parameter) => parameter.value === undefined));
+    assert.ok(compactParameters.structuredContent?.data?.items?.[0]?.parameters?.every((parameter) => parameter.valueString === undefined));
 
     const catalogTool = tools.tools.find((tool) => tool.name === "revit.catalog");
     assert.ok(catalogTool?.inputSchema, "revit.catalog should declare inputSchema");
@@ -726,6 +761,88 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(invalidPreview.isError, true);
     assert.match(invalidPreview.content[0]?.text ?? "", /elementId/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("broker exposes MCP discovery resources and workflow prompts", async () => {
+  const server = createBrokerServer({
+    bridge: new FakeRevitBridgeClient(),
+    brokerVersion: "test",
+    sessionId: "mcp-discovery-test",
+  });
+
+  const client = new Client({ name: "test-client", version: "0.1.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    const capabilities = client.getServerCapabilities() as {
+      resources?: { listChanged?: boolean };
+      prompts?: { listChanged?: boolean };
+    };
+    assert.equal(capabilities.resources?.listChanged, true);
+    assert.equal(capabilities.prompts?.listChanged, true);
+
+    const resources = await client.listResources();
+    assert.ok(resources.resources.find((resource) => resource.uri === "revit://discovery"));
+    assert.ok(resources.resources.find((resource) => resource.uri === "revit://tools/revit.query"));
+
+    const templates = await client.listResourceTemplates();
+    assert.ok(templates.resourceTemplates.find((template) => template.uriTemplate === "revit://tools/{name}"));
+
+    const discoveryResource = await client.readResource({ uri: "revit://discovery" });
+    assert.equal(discoveryResource.contents[0]?.mimeType, "application/json");
+    assert.equal(discoveryResource.contents[0]?.uri, "revit://discovery");
+    assert.ok("text" in discoveryResource.contents[0], "discovery resource should be text JSON");
+    const discovery = JSON.parse(discoveryResource.contents[0].text) as {
+      brokerVersion?: string;
+      protocolVersion?: string;
+      tools?: Array<{ name?: string; resource?: string }>;
+      workflow?: string[];
+      writeOperations?: string[];
+    };
+    assert.equal(discovery.brokerVersion, "test");
+    assert.ok(discovery.protocolVersion);
+    assert.ok(discovery.workflow?.some((step) => step.includes("revit.status")));
+    assert.ok(discovery.tools?.some((tool) => tool.name === "revit.apply_change_set" && tool.resource === "revit://tools/revit.apply_change_set"));
+    assert.ok(discovery.writeOperations?.includes("tag_element"));
+    assert.doesNotMatch(JSON.stringify(discovery), /auth\.env|pipeToken|Bhavesh/i);
+
+    const queryResource = await client.readResource({ uri: "revit://tools/revit.query" });
+    assert.ok("text" in queryResource.contents[0], "tool resource should be text JSON");
+    const queryDoc = JSON.parse(queryResource.contents[0].text) as {
+      name?: string;
+      title?: string;
+      readOnly?: boolean;
+      compactUse?: string;
+    };
+    assert.equal(queryDoc.name, "revit.query");
+    assert.equal(queryDoc.title, "Query Revit Model");
+    assert.equal(queryDoc.readOnly, true);
+    assert.match(queryDoc.compactUse ?? "", /fields|preset|cursor/i);
+
+    await assert.rejects(
+      () => client.readResource({ uri: "revit://tools/not-a-tool" }),
+      /Unknown Revit MCP tool resource|Invalid/
+    );
+
+    const prompts = await client.listPrompts();
+    assert.ok(prompts.prompts.find((prompt) => prompt.name === "revit.start_workflow"));
+    assert.ok(prompts.prompts.find((prompt) => prompt.name === "revit.workflow"));
+
+    const startPrompt = await client.getPrompt({ name: "revit.start_workflow" });
+    assert.match(startPrompt.messages[0]?.content.type === "text" ? startPrompt.messages[0].content.text : "", /revit\.status/);
+
+    const workflowPrompt = await client.getPrompt({
+      name: "revit.workflow",
+      arguments: { workflow: "selection-update" },
+    });
+    assert.match(workflowPrompt.messages[0]?.content.type === "text" ? workflowPrompt.messages[0].content.text : "", /describe_parameters/);
   } finally {
     await client.close();
     await server.close();
