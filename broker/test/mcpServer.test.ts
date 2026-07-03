@@ -5,6 +5,18 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBrokerServer } from "../src/server.js";
 import { FakeRevitBridgeClient } from "../src/ipc/FakeRevitBridgeClient.js";
 
+function assertNoUndefinedValues(value: unknown, path = "value"): void {
+  assert.notEqual(value, undefined, `${path} should not be undefined`);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoUndefinedValues(item, `${path}[${index}]`));
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    assertNoUndefinedValues(child, `${path}.${key}`);
+  }
+}
+
 test("broker exposes annotated tools with output schemas and callable structured results", async () => {
   const server = createBrokerServer({
     bridge: new FakeRevitBridgeClient(),
@@ -550,6 +562,55 @@ test("broker exposes annotated tools with output schemas and callable structured
     ]) {
       assert.match(previewSchema, new RegExp(expectedSchemaTerm));
     }
+    const previewOutputSchema = JSON.stringify(previewTool.outputSchema);
+    for (const expectedSchemaTerm of [
+      "previewId",
+      "documentFingerprint",
+      "changeSetHash",
+      "baseGeneration",
+      "expiresAt",
+      "transactionName",
+      "operationCount",
+      "ready",
+      "requiresConfirmation",
+      "riskLevel",
+      "changes",
+      "operationIndex",
+      "status",
+      "target",
+      "before",
+      "after",
+      "message",
+    ]) {
+      assert.match(previewOutputSchema, new RegExp(expectedSchemaTerm));
+    }
+
+    const applyTool = tools.tools.find((tool) => tool.name === "revit.apply_change_set");
+    assert.ok(applyTool?.outputSchema, "revit.apply_change_set should declare outputSchema");
+    const applyOutputSchema = JSON.stringify(applyTool.outputSchema);
+    for (const expectedSchemaTerm of [
+      "previewId",
+      "documentFingerprint",
+      "changeSetHash",
+      "baseGeneration",
+      "transactionName",
+      "applied",
+      "changedCount",
+      "changes",
+      "operationIndex",
+      "status",
+      "target",
+      "after",
+    ]) {
+      assert.match(applyOutputSchema, new RegExp(expectedSchemaTerm));
+    }
+
+    const cancelTool = tools.tools.find((tool) => tool.name === "revit.cancel_request");
+    assert.ok(cancelTool?.outputSchema, "revit.cancel_request should declare outputSchema");
+    const cancelOutputSchema = JSON.stringify(cancelTool.outputSchema);
+    for (const expectedSchemaTerm of ["cancelled", "requestId", "message"]) {
+      assert.match(cancelOutputSchema, new RegExp(expectedSchemaTerm));
+    }
 
     const wallStart = {
       x: { value: 0, unit: "mm", system: "metric" },
@@ -585,7 +646,6 @@ test("broker exposes annotated tools with output schemas and callable structured
       {
         type: "place_family_instance",
         familySymbolId: "9200",
-        hostElementId: "501",
         levelId: "311",
         location: {
           x: { value: 1200, unit: "mm", system: "metric" },
@@ -766,14 +826,42 @@ test("broker exposes annotated tools with output schemas and callable structured
           documentFingerprint?: string;
           baseGeneration?: number;
           expiresAt?: string;
+          transactionName?: string;
+          operationCount?: number;
+          requiresConfirmation?: boolean;
+          changes?: Array<{ operationIndex?: number; type?: string; status?: string; target?: Record<string, unknown>; after?: Record<string, unknown> }>;
         };
       };
     };
     assert.equal(preview.isError, undefined);
+    assertNoUndefinedValues(preview.structuredContent, "preview.structuredContent");
     assert.equal(preview.structuredContent?.data?.ready, true);
     assert.equal(preview.structuredContent?.data?.riskLevel, "high");
     assert.ok(preview.structuredContent?.data?.previewId);
+    assert.equal(preview.structuredContent?.data?.documentFingerprint, "sample-doc-fingerprint");
+    assert.equal(preview.structuredContent?.data?.baseGeneration, 7);
     assert.ok(preview.structuredContent?.data?.changeSetHash);
+    assert.ok(preview.structuredContent?.data?.expiresAt);
+    assert.equal(preview.structuredContent?.data?.transactionName, "Update Mark Wall Move");
+    assert.equal(preview.structuredContent?.data?.operationCount, 17);
+    assert.equal(preview.structuredContent?.data?.requiresConfirmation, true);
+    assert.equal(preview.structuredContent?.data?.changes?.length, 17);
+    const firstPreviewChange = preview.structuredContent?.data?.changes?.[0];
+    assert.equal(Object.hasOwn(firstPreviewChange ?? {}, "operationId"), false);
+    assert.deepEqual(firstPreviewChange, {
+      operationIndex: 0,
+      type: "set_parameter",
+      status: "ready",
+      target: { elementId: "501", parameterName: "Mark" },
+      after: { value: "A-101" },
+    });
+    const familyPreviewChange = preview.structuredContent?.data?.changes?.find((change) => change.type === "place_family_instance");
+    assert.deepEqual(familyPreviewChange?.target, {
+      document: "Sample.rvt",
+      familySymbolId: "9200",
+      levelId: "311",
+    });
+    assert.equal(Object.hasOwn(familyPreviewChange?.target ?? {}, "hostElementId"), false);
 
     try {
       const missingMetadataApply = (await client.callTool({
@@ -809,12 +897,32 @@ test("broker exposes annotated tools with output schemas and callable structured
       },
     })) as {
       isError?: boolean;
-      structuredContent?: { data?: { applied?: boolean; changedCount?: number; changeSetHash?: string } };
+      structuredContent?: {
+        data?: {
+          applied?: boolean;
+          changedCount?: number;
+          changeSetHash?: string;
+          previewId?: string;
+          documentFingerprint?: string;
+          baseGeneration?: number;
+          transactionName?: string;
+          changes?: Array<{ operationIndex?: number; type?: string; status?: string; target?: Record<string, unknown>; after?: Record<string, unknown> }>;
+        };
+      };
     };
     assert.equal(apply.isError, undefined);
+    assertNoUndefinedValues(apply.structuredContent, "apply.structuredContent");
     assert.equal(apply.structuredContent?.data?.applied, true);
     assert.equal(apply.structuredContent?.data?.changedCount, 17);
+    assert.equal(apply.structuredContent?.data?.previewId, preview.structuredContent?.data?.previewId);
+    assert.equal(apply.structuredContent?.data?.documentFingerprint, preview.structuredContent?.data?.documentFingerprint);
+    assert.equal(apply.structuredContent?.data?.baseGeneration, preview.structuredContent?.data?.baseGeneration);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
+    assert.equal(apply.structuredContent?.data?.transactionName, "Update Mark Wall Move");
+    assert.equal(apply.structuredContent?.data?.changes?.length, 17);
+    assert.equal(Object.hasOwn(apply.structuredContent?.data?.changes?.[0] ?? {}, "operationId"), false);
+    assert.equal(apply.structuredContent?.data?.changes?.[0]?.status, "applied");
+    assert.deepEqual(apply.structuredContent?.data?.changes?.[0]?.after, { value: "A-101" });
 
     const invalidPreview = (await client.callTool({
       name: "revit.preview_change_set",
@@ -834,6 +942,19 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(invalidPreview.isError, true);
     assert.match(invalidPreview.content[0]?.text ?? "", /elementId/);
+
+    const cancel = (await client.callTool({
+      name: "revit.cancel_request",
+      arguments: { requestId: "fake-pending-request", reason: "schema test" },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { cancelled?: boolean; requestId?: string; message?: string } };
+    };
+    assert.equal(cancel.isError, undefined);
+    assertNoUndefinedValues(cancel.structuredContent, "cancel.structuredContent");
+    assert.equal(cancel.structuredContent?.data?.cancelled, false);
+    assert.equal(cancel.structuredContent?.data?.requestId, "fake-pending-request");
+    assert.match(cancel.structuredContent?.data?.message ?? "", /No queued fake request/);
   } finally {
     await client.close();
     await server.close();

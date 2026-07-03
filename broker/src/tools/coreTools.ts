@@ -627,6 +627,57 @@ function toolOutputSchema(dataSchema: z.ZodTypeAny) {
 const jsonValueSchema: z.ZodTypeAny = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(jsonValueSchema)])
 );
+const jsonObjectSchema = z.record(jsonValueSchema);
+
+const changePreviewItemSchema = z
+  .object({
+    operationIndex: z.number(),
+    operationId: z.string().optional(),
+    type: z.string(),
+    status: z.enum(["ready", "warning", "blocked", "applied"]),
+    target: jsonObjectSchema.optional(),
+    before: jsonObjectSchema.optional(),
+    after: jsonObjectSchema.optional(),
+    message: z.string().optional(),
+  })
+  .passthrough();
+
+const changePreviewResultSchema = z
+  .object({
+    previewId: z.string(),
+    documentFingerprint: z.string(),
+    changeSetHash: z.string(),
+    baseGeneration: z.number(),
+    expiresAt: z.string(),
+    transactionName: z.string(),
+    operationCount: z.number(),
+    ready: z.boolean(),
+    requiresConfirmation: z.boolean(),
+    riskLevel: z.enum(["low", "medium", "high"]),
+    changes: z.array(changePreviewItemSchema),
+  })
+  .passthrough();
+
+const changeApplyResultSchema = z
+  .object({
+    previewId: z.string(),
+    documentFingerprint: z.string(),
+    changeSetHash: z.string(),
+    baseGeneration: z.number(),
+    transactionName: z.string(),
+    applied: z.boolean(),
+    changedCount: z.number(),
+    changes: z.array(changePreviewItemSchema),
+  })
+  .passthrough();
+
+const cancelResultSchema = z
+  .object({
+    cancelled: z.boolean(),
+    requestId: z.string().optional(),
+    message: z.string(),
+  })
+  .passthrough();
 
 const unitValueSchema = z
   .object({
@@ -932,6 +983,9 @@ const outputSchemas = {
   catalog: toolOutputSchema(catalogResultSchema),
   query: toolOutputSchema(queryResultSchema),
   parameters: toolOutputSchema(parameterDescribeResultSchema),
+  previewChange: toolOutputSchema(changePreviewResultSchema),
+  applyChange: toolOutputSchema(changeApplyResultSchema),
+  cancel: toolOutputSchema(cancelResultSchema),
 };
 
 export function registerCoreTools(server: McpServer, context: CoreToolContext): void {
@@ -1441,7 +1495,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
-      outputSchema: outputSchemas.unknown,
+      outputSchema: outputSchemas.previewChange,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1467,7 +1521,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       description:
         "Apply a previously previewed bounded change set in one named Revit transaction. Requires confirm=true and the matching previewId.",
       inputSchema: applyChangeSchema,
-      outputSchema: outputSchemas.unknown,
+      outputSchema: outputSchemas.applyChange,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -1494,7 +1548,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "Cancel Revit Request",
       description: "Ask the Revit add-in to cancel queued or cancellable work when supported.",
       inputSchema: cancelSchema,
-      outputSchema: outputSchemas.unknown,
+      outputSchema: outputSchemas.cancel,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

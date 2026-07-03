@@ -880,9 +880,9 @@ export interface ChangePreviewItem {
 export interface ChangePreviewResult {
   previewId: string;
   documentFingerprint: string;
-  changeSetHash?: string;
-  baseGeneration?: number;
-  expiresAt?: string;
+  changeSetHash: string;
+  baseGeneration: number;
+  expiresAt: string;
   transactionName: string;
   operationCount: number;
   ready: boolean;
@@ -899,8 +899,8 @@ export interface ChangeApplyRequest extends ChangeSetRequest {
 export interface ChangeApplyResult {
   previewId: string;
   documentFingerprint: string;
-  changeSetHash?: string;
-  baseGeneration?: number;
+  changeSetHash: string;
+  baseGeneration: number;
   transactionName: string;
   applied: boolean;
   changedCount: number;

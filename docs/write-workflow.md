@@ -9,6 +9,14 @@ Write operations use a preview/apply contract.
 4. Inspect every returned change. Do not apply blocked previews.
 5. Run `revit.apply_change_set` with the exact same change set, the returned `previewId`, `baseGeneration`, `changeSetHash`, `expiresAt`, and `confirm: true`.
 
+## Response Shape
+
+`revit.preview_change_set` returns `structuredContent.data.previewId`, `documentFingerprint`, `changeSetHash`, `baseGeneration`, `expiresAt`, `transactionName`, `operationCount`, `ready`, `requiresConfirmation`, `riskLevel`, and `changes`. Each change row includes `operationIndex`, `type`, `status`, and optional `operationId`, `target`, `before`, `after`, and `message`.
+
+`revit.apply_change_set` returns `previewId`, `documentFingerprint`, `changeSetHash`, `baseGeneration`, `transactionName`, `applied`, `changedCount`, and applied `changes`. `revit.cancel_request` returns `cancelled`, optional `requestId`, and `message`.
+
+These success payloads are advertised as typed MCP output schemas. Bridge failures use the same structured envelope with `data.error`, but MCP SDK input-validation errors can be text-only before broker code runs.
+
 ## Discover Before Writing
 
 Use `revit.catalog` instead of guessing type IDs:

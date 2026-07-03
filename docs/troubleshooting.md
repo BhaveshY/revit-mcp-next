@@ -64,6 +64,12 @@ npm run doctor:clients
 This prints Claude Code, Claude Desktop, and Codex MCP config snippets from the installed `config\client-discovery.json` without printing the local auth token.
 The client doctor validates those generated snippets, launcher paths and quoting, stale install roots, existing Claude Desktop/Codex config entries when present, token leakage risk, and MCP `initialize` plus `tools/list` startup without requiring Revit to be connected.
 
+MCP error shape:
+
+- Successful tool calls return typed `structuredContent.data` according to the tool's `tools/list` output schema.
+- Bridge failures produced by the broker return `isError: true` with `structuredContent.data.error`.
+- MCP SDK input-validation errors can occur before broker tool code runs and may be text-only. When a response has no `structuredContent`, use the text error, fix the input payload, and call the tool again.
+
 Bridge debug CLI:
 
 ```powershell

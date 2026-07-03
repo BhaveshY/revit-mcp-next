@@ -546,7 +546,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.data.riskLevel, "high");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
-  assert.match(preview.data.changeSetHash ?? "", /^sha256:/);
+  assert.match(preview.data.changeSetHash, /^sha256:/);
   assert.equal(preview.data.expiresAt, "2099-01-01T00:00:00.000Z");
   assert.equal(preview.data.changes[0]?.status, "ready");
   assert.deepEqual(preview.data.changes[2]?.target, {
@@ -693,4 +693,13 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.data.changes[16]?.type, "tag_room");
   assert.equal(applied.data.changes[17]?.type, "tag_element");
   assert.equal(applied.data.changes[18]?.type, "delete_element");
+
+  const cancel = await bridge.cancel(
+    makeRequest("session", "cancel_request", "debug", { requestId: "fake-request-id", reason: "test cleanup" }, 5000)
+  );
+  assert.equal(cancel.ok, true);
+  if (!cancel.ok) return;
+  assert.equal(cancel.data.cancelled, false);
+  assert.equal(cancel.data.requestId, "fake-request-id");
+  assert.match(cancel.data.message, /No queued fake request/);
 });
