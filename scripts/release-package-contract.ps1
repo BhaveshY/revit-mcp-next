@@ -396,6 +396,36 @@ function Assert-PackagedNpmAliases($PackageRoot) {
     }
 }
 
+function Assert-RevitCtlHelpText($Text, $Label) {
+    foreach ($expected in @("revitctl preview", "revitctl apply", "revitctl cancel", "revitctl call", "--operation-kind")) {
+        if (-not $Text.Contains($expected)) {
+            throw "$Label help output did not include '$expected'."
+        }
+    }
+}
+
+function Assert-NodeRevitCtlHelp($CliPath, $Label) {
+    $output = & node $CliPath --help 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = ($output | Out-String)
+    if ($exitCode -ne 0) {
+        Write-Host $text
+        throw "$Label revitctl help failed with exit code $exitCode."
+    }
+    Assert-RevitCtlHelpText $text "$Label revitctl"
+}
+
+function Assert-CmdRevitCtlHelp($LauncherPath, $Label) {
+    $output = & $LauncherPath --help 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = ($output | Out-String)
+    if ($exitCode -ne 0) {
+        Write-Host $text
+        throw "$Label revitctl launcher help failed with exit code $exitCode."
+    }
+    Assert-RevitCtlHelpText $text "$Label revitctl launcher"
+}
+
 function Assert-NoRawTokenInSupportBundle($SupportRoot, $Token) {
     if ([string]::IsNullOrWhiteSpace($Token)) {
         throw "Auth token was not found in the temp install."
@@ -495,7 +525,9 @@ try {
     Assert-FileExists "$packageRoot.zip" "package zip"
     Assert-FileExists (Join-Path $packageRoot "release-manifest.json") "release manifest"
     Assert-FileExists (Join-Path $packageRoot "CHECKSUMS.sha256") "package checksums"
-    Assert-FileExists (Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js") "packaged revitctl CLI"
+    $packagedRevitCtl = Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js"
+    Assert-FileExists $packagedRevitCtl "packaged revitctl CLI"
+    Assert-NodeRevitCtlHelp $packagedRevitCtl "packaged"
 
     $manifest = Read-JsonFile (Join-Path $packageRoot "release-manifest.json")
     if ($manifest.signing.requested -ne $false) {
@@ -543,7 +575,9 @@ try {
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\workflow_examples_node.py") "installed Dynamo workflow examples node"
     Assert-FileExists (Join-Path $installRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "installed Dynamo host-smoke graph"
     Assert-FileExists (Join-Path $installRoot "config\client-discovery.json") "installed client discovery config"
-    Assert-FileExists (Join-Path $installRoot "revitctl.cmd") "installed revitctl launcher"
+    $installedRevitCtl = Join-Path $installRoot "revitctl.cmd"
+    Assert-FileExists $installedRevitCtl "installed revitctl launcher"
+    Assert-CmdRevitCtlHelp $installedRevitCtl "installed"
     Assert-FileExists (Join-Path $packageRoot "scripts\print-mcp-config.ps1") "packaged MCP config printer"
     Assert-FileExists (Join-Path $packageRoot "scripts\doctor-clients.ps1") "packaged client doctor"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-revit-addin-trust.ps1") "packaged Revit trust helper"
@@ -578,7 +612,7 @@ try {
     if ([string]::IsNullOrWhiteSpace([string] $clientDiscovery.revitctlPath) -or -not (Test-Path -LiteralPath ([string] $clientDiscovery.revitctlPath) -PathType Leaf)) {
         throw "Client discovery did not record an installed revitctl launcher path."
     }
-    foreach ($expectedTool in @("revit.get_views", "revit.get_sheets", "revit.describe_parameters", "revit.get_model_readiness", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set")) {
+    foreach ($expectedTool in @("revit.get_views", "revit.get_sheets", "revit.describe_parameters", "revit.get_model_readiness", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request")) {
         if (@($clientDiscovery.tools) -notcontains $expectedTool) {
             throw "Client discovery did not advertise expected tool: $expectedTool"
         }

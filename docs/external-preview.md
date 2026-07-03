@@ -59,6 +59,8 @@ cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" sheets --payload '{"limit":5}'
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"preset":"writableEdit","limit":5}' --pretty
 ```
 
+Write-control `revitctl` commands are for disposable/test models only. Use `revitctl preview` before `revitctl apply`, pass the exact preview metadata into the apply payload, and use `apply --confirm`; cancellation is best-effort for queued or cancellable work.
+
 If the installer used a non-default `-InstallRoot`, use that installed `revitctl.cmd` path instead.
 
 ## Current Useful Surface

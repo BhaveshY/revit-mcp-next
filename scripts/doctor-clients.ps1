@@ -540,6 +540,14 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
         Add-Failure "client discovery advertises unsupported Revit years: $($supportedYears -join ', ')"
     }
 
+    foreach ($expectedTool in @("revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request")) {
+        if (@($discovery.tools) -contains $expectedTool) {
+            Write-Check "ok" "client discovery advertises $expectedTool"
+        } else {
+            Add-Failure "client discovery is missing expected tool: $expectedTool"
+        }
+    }
+
     $token = Read-AuthTokenConfig $authConfigPath
     if (Test-AuthTokenShape $token) {
         Write-Check "ok" "auth token config contains a strong token (redacted)"

@@ -94,6 +94,13 @@ Example apply payload:
 
 The add-in recomputes the preview hash before applying. If the model, transaction name, or operation list no longer match, apply fails.
 
+Support CLI equivalents for disposable/debug runs:
+
+```powershell
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" preview .\change-set.json --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" apply .\apply-payload.json --confirm --pretty
+```
+
 For destructive deletes, inspect `changes[].after.deletedElementIds` and `dependentDeletedCount` from preview before apply. A blocked delete is usually useful evidence: it means Revit would remove more than the requested element, so narrow the target or echo the reviewed `expectedDeletedElementIds`.
 
 Production readiness:

@@ -38,6 +38,7 @@ export interface RevitCtlOptions {
   pipeName?: string;
   timeoutMs: number;
   confirm: boolean;
+  operationKind?: OperationKind;
 }
 
 interface ClientDiscovery {
@@ -71,6 +72,7 @@ export function parseArgs(argv: string[]): RevitCtlOptions {
   let timeoutMs = DEFAULT_TIMEOUT_MS;
   let jsonOutput = true;
   let confirm = false;
+  let operationKind: OperationKind | undefined;
 
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
@@ -108,6 +110,9 @@ export function parseArgs(argv: string[]): RevitCtlOptions {
       case "--timeout-ms":
         timeoutMs = parsePositiveInt(requireValue(argv, ++index, arg), arg);
         break;
+      case "--operation-kind":
+        operationKind = parseOperationKind(requireValue(argv, ++index, arg), arg);
+        break;
       default:
         if (arg.startsWith("--")) {
           throw new RevitCtlUsageError(`Unknown option: ${arg}`);
@@ -136,6 +141,7 @@ export function parseArgs(argv: string[]): RevitCtlOptions {
       pipeName,
       timeoutMs,
       confirm,
+      operationKind,
     };
   }
 
@@ -153,6 +159,7 @@ export function parseArgs(argv: string[]): RevitCtlOptions {
     pipeName,
     timeoutMs,
     confirm,
+    operationKind,
   };
 }
 
@@ -255,9 +262,20 @@ function resolveCommandOperation(options: RevitCtlOptions): {
       }
       return { operation: "apply_change_set", operationKind: "write", payload: { ...payload, confirm: true } };
     }
+    case "cancel":
+    case "cancel-request":
+      return { operation: "cancel_request", operationKind: "debug", payload: payloadObject(options.payload) };
     case "call": {
       const operation = options.operation ?? "";
-      return { operation, operationKind: inferOperationKind(operation), payload: payloadObject(options.payload) };
+      const payload = payloadObject(options.payload);
+      if (operation === "apply_change_set" && !options.confirm && payload.confirm !== true) {
+        throw new RevitCtlUsageError("revitctl call apply_change_set requires --confirm or payload.confirm=true.");
+      }
+      return {
+        operation,
+        operationKind: options.operationKind ?? inferOperationKind(operation),
+        payload: operation === "apply_change_set" && options.confirm ? { ...payload, confirm: true } : payload,
+      };
     }
     default:
       throw new RevitCtlUsageError(`Unknown command: ${options.command}`);
@@ -332,7 +350,7 @@ async function callBridge(
     case "cancel_request":
       return bridge.cancel(request as Parameters<NamedPipeBridgeClient["cancel"]>[0]);
     default:
-      throw new RevitCtlUsageError(`Unsupported bridge operation: ${request.operation}`);
+      return bridge.raw(request);
   }
 }
 
@@ -360,6 +378,19 @@ function parsePositiveInt(value: string, option: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new RevitCtlUsageError(`${option} must be a positive integer.`);
   return parsed;
+}
+
+function parseOperationKind(value: string, option: string): OperationKind {
+  switch (value) {
+    case "read":
+    case "preview":
+    case "write":
+    case "destructive":
+    case "debug":
+      return value;
+    default:
+      throw new RevitCtlUsageError(`${option} must be one of: read, preview, write, destructive, debug.`);
+  }
 }
 
 function readPositionalJson(value: string | undefined, command: string): unknown {
@@ -415,7 +446,8 @@ Usage:
   revitctl parameters --payload <json-or-path>
   revitctl preview <change-set.json>
   revitctl apply <apply-payload.json> --confirm
-  revitctl call <operation> --payload <json-or-path>
+  revitctl cancel [--payload <json-or-path>]
+  revitctl call <operation> --payload <json-or-path> [--operation-kind <kind>]
 
 Options:
   --discovery <path>      client-discovery.json path
@@ -423,6 +455,7 @@ Options:
   --install-root <path>   installed Revit MCP Next root
   --pipe <name>           named pipe; default revit-mcp-next
   --timeout-ms <n>        bridge timeout in milliseconds
+  --operation-kind <kind> override revitctl call kind; read, preview, write, destructive, or debug
   --pretty               pretty-print JSON output
 `;
 }

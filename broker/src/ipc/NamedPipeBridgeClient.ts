@@ -180,6 +180,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     return this.send(request, options);
   }
 
+  raw<T = unknown>(
+    request: BridgeRequest<Record<string, unknown>>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<T>> {
+    return this.send(request, options);
+  }
+
   dispose(): void {
     // Connections are per request for now. Persistent multiplexing comes after the add-in queue is live.
   }

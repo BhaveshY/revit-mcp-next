@@ -113,7 +113,7 @@ Current non-coverage:
 - `npm run smoke:revit` does not launch Revit or create a project document. Use `npm run smoke:release-local` on disposable test machines when a local orchestrated run is desired.
 - It does not validate signed release artifacts.
 - `npm run smoke:revit` does not collect a packaged release evidence bundle by itself; `npm run smoke:release-local` does.
-- It does not cover cancellation or destructive operations beyond the current bounded preview/apply mutation set.
+- It does not prove cancellation beyond schema/CLI routing and clean no-op behavior, and it does not cover destructive operations beyond the current bounded preview/apply mutation set.
 
 ## Manual Self-Hosted Revit Smoke
 

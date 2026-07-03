@@ -27,6 +27,12 @@ test("revitctl parses compact command payloads and auth token config", () => {
   assert.equal(call.command, "call");
   assert.equal(call.operation, "get_rooms");
   assert.deepEqual(call.payload, { preset: "schedule" });
+
+  const rawCall = parseArgs(["call", "experimental_probe", "--operation-kind", "write", "--payload", '{"value":1}']);
+  assert.equal(rawCall.command, "call");
+  assert.equal(rawCall.operation, "experimental_probe");
+  assert.equal(rawCall.operationKind, "write");
+  assert.deepEqual(rawCall.payload, { value: 1 });
 });
 
 test("revitctl calls the named pipe bridge with auth from config", async () => {
@@ -51,6 +57,131 @@ test("revitctl calls the named pipe bridge with auth from config", async () => {
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("revitctl routes write-control commands through guarded bridge operations", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "revitctl-write-test-"));
+  const changeSet = {
+    documentFingerprint: "sample-doc-fingerprint",
+    transactionName: "CLI write probe",
+    operations: [
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterName: "Mark",
+        value: "CLI-1",
+      },
+    ],
+  };
+  const applyPayload = {
+    ...changeSet,
+    previewId: "preview-1",
+    baseGeneration: 7,
+    changeSetHash: "sha256:test",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  };
+  const changeSetPath = path.join(tempRoot, "change-set.json");
+  const applyPayloadPath = path.join(tempRoot, "apply-payload.json");
+  writeFileSync(changeSetPath, JSON.stringify(changeSet), "utf8");
+  writeFileSync(applyPayloadPath, JSON.stringify(applyPayload), "utf8");
+
+  try {
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, "preview_change_set");
+        assert.equal(request.operationKind, "preview");
+        assert.deepEqual(request.payload, changeSet);
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(parseArgs(["preview", "--pipe", pipeName, changeSetPath]));
+        assert.equal(result.exitCode, 0);
+      }
+    );
+
+    await assert.rejects(
+      () => runRevitCtl(parseArgs(["apply", "--pipe", "unused-revitctl-test-pipe", applyPayloadPath])),
+      /requires --confirm/
+    );
+
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, "apply_change_set");
+        assert.equal(request.operationKind, "write");
+        assert.deepEqual(request.payload, { ...applyPayload, confirm: true });
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(parseArgs(["apply", "--pipe", pipeName, applyPayloadPath, "--confirm"]));
+        assert.equal(result.exitCode, 0);
+      }
+    );
+
+    await assert.rejects(
+      () =>
+        runRevitCtl(
+          parseArgs(["call", "apply_change_set", "--pipe", "unused-revitctl-test-pipe", "--payload", JSON.stringify(applyPayload)])
+        ),
+      /requires --confirm/
+    );
+
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, "cancel_request");
+        assert.equal(request.operationKind, "debug");
+        assert.deepEqual(request.payload, { requestId: "request-1", reason: "test cancellation" });
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(
+          parseArgs([
+            "cancel",
+            "--pipe",
+            pipeName,
+            "--payload",
+            '{"requestId":"request-1","reason":"test cancellation"}',
+          ])
+        );
+        assert.equal(result.exitCode, 0);
+      }
+    );
+
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, "cancel_request");
+        assert.equal(request.operationKind, "debug");
+        assert.deepEqual(request.payload, { requestId: "request-2" });
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(parseArgs(["cancel-request", "--pipe", pipeName, "--payload", '{"requestId":"request-2"}']));
+        assert.equal(result.exitCode, 0);
+      }
+    );
+
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, "experimental_probe");
+        assert.equal(request.operationKind, "write");
+        assert.deepEqual(request.payload, { value: 1 });
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(
+          parseArgs(["call", "experimental_probe", "--pipe", pipeName, "--operation-kind", "write", "--payload", '{"value":1}'])
+        );
+        assert.equal(result.exitCode, 0);
+      }
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("revitctl help lists write-control and raw call support", async () => {
+  const result = await runRevitCtl(parseArgs(["--help"]));
+  assert.equal(result.exitCode, 0);
+  const help = String(result.body);
+  assert.match(help, /revitctl preview/);
+  assert.match(help, /revitctl apply/);
+  assert.match(help, /revitctl cancel/);
+  assert.match(help, /revitctl call/);
+  assert.match(help, /--operation-kind/);
 });
 
 async function withPipeServer(onRequest: (request: CapturedRequest) => void, runClient: (pipeName: string) => Promise<void>) {
@@ -96,4 +227,3 @@ async function withPipeServer(onRequest: (request: CapturedRequest) => void, run
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
-

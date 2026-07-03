@@ -142,9 +142,10 @@ cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"limit":5}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"preset":"writableEdit","limit":5}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" cancel --payload '{"requestId":"pending-request-id","reason":"operator cancelled smoke run"}' --pretty
 ```
 
-The CLI reads the same installed discovery and auth config as the MCP launcher. It does not print the raw auth token. See [revitctl.md](docs/revitctl.md).
+The CLI reads the same installed discovery and auth config as the MCP launcher. It does not print the raw auth token. Use write-control `revitctl` commands only for support/debug workflows on disposable models; `apply` requires exact preview metadata plus `--confirm`, and `cancel` is best-effort for queued or cancellable work. See [revitctl.md](docs/revitctl.md).
 
 MCP clients can also read `revit://discovery` for compact workflow guidance and `revit://tools/{name}` for per-tool guidance. The broker exposes `revit.start_workflow` and `revit.workflow` prompts for clients that support MCP prompts.
 

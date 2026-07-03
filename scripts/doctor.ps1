@@ -360,6 +360,19 @@ if ($node -and (Test-Path -LiteralPath $brokerRevitCtl -PathType Leaf)) {
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("revitctl import failed")
     }
+
+    $helpOutput = & $node.Source $brokerRevitCtl --help 2>&1
+    $helpExitCode = $LASTEXITCODE
+    $helpText = ($helpOutput | Out-String)
+    if ($helpExitCode -eq 0 -and
+        $helpText.Contains("revitctl preview") -and
+        $helpText.Contains("revitctl apply") -and
+        $helpText.Contains("revitctl cancel")) {
+        Write-Host "[ok] revitctl help lists write-control commands"
+    } else {
+        Write-Host "[missing] revitctl help does not list preview/apply/cancel commands"
+        $failures.Add("revitctl help missing write-control commands")
+    }
 }
 
 if (Test-Path -LiteralPath $logs -PathType Container) {
