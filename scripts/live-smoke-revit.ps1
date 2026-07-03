@@ -13,6 +13,10 @@ param(
     [switch]$RequireRoomTag,
     [switch]$RequireElementTag,
     [switch]$RequireTags,
+    [string]$RoomTagTypeId = "",
+    [string]$RoomTagTypeNameContains = "",
+    [string]$ElementTagTypeId = "",
+    [string]$ElementTagTypeNameContains = "",
     [switch]$StatusOnly
 )
 
@@ -95,6 +99,22 @@ if ($RequireTags) {
     if ($RequireElementTag) {
         $nodeArgs += @("--require-element-tag")
     }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeId)) {
+    $nodeArgs += @("--room-tag-type-id", $RoomTagTypeId)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeNameContains)) {
+    $nodeArgs += @("--room-tag-type-name-contains", $RoomTagTypeNameContains)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeId)) {
+    $nodeArgs += @("--element-tag-type-id", $ElementTagTypeId)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeNameContains)) {
+    $nodeArgs += @("--element-tag-type-name-contains", $ElementTagTypeNameContains)
 }
 
 if ($StatusOnly) {

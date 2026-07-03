@@ -692,6 +692,7 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
             addinAssembly = $liveSmokeSummary.data.addinAssembly
             packageIdentity = $liveSmokePackageIdentity
             requiredCoverage = $liveSmokeSummary.data.requiredCoverage
+            tagSelectors = $liveSmokeSummary.data.tagSelectors
             tagCoverage = $liveSmokeSummary.data.result.tagCoverage
             coveredTools = $liveSmokeSummary.data.coveredTools
             coveredOperations = $liveSmokeSummary.data.coveredOperations

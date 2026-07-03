@@ -109,6 +109,8 @@ Curated tag-family evidence form, for disposable models that contain a usable ro
 npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
+Use `-RoomTagTypeId` / `-ElementTagTypeId` or `-RoomTagTypeNameContains` / `-ElementTagTypeNameContains` when the curated runner should prove a specific loaded tag symbol was used. These selectors are copied into `smoke-summary.json.tagSelectors` and the release evidence manifest.
+
 Current coverage:
 
 - Exact command: `npm run smoke:revit`.
@@ -143,10 +145,10 @@ The workflow:
 - Creates a staged package under `artifacts\release-candidate` and installs from that package.
 - Refuses to install over a running Revit process unless `skip_install=true`.
 - Uses an existing Revit process or launches Revit with the configured disposable model path.
-- Runs `npm run doctor:windows` and `npm run smoke:revit`; by default the workflow requires `change_element_type`, `tag_room`, and `tag_element` coverage through a curated disposable model with at least two compatible wall types, loaded room/wall or multi-category tag families, a printable plan/section view, a placed room, and a visible wall. Relax `require_tags`, `require_room_tag`, or `require_element_tag` only for explicitly labeled preview runs where skipped tag evidence is acceptable.
+- Runs `npm run doctor:windows` and `npm run smoke:revit`; by default the workflow requires `change_element_type`, `tag_room`, `tag_element`, hosted pyRevit/Dynamo evidence, support evidence, release evidence collection, and `npm run evidence:check -- -Profile release-candidate`. Relax `readiness_profile`, `require_tags`, `require_room_tag`, or `require_element_tag` only for explicitly labeled preview runs where skipped evidence is acceptable.
 - Supports `signing_mode=none`, `signing_mode=local-dev`, and `signing_mode=release-cert`. Local-dev signing is only for disposable smoke runners; production release candidates should use release certificate secrets.
 - Collects a redacted support bundle and uploads `artifacts/live-revit-smoke`.
-- Runs `npm run evidence:release:windows` for the staged package and uploads `artifacts/release-evidence`.
+- Runs `npm run evidence:release:windows` for the staged package, runs the selected readiness profile against the generated evidence zip, and uploads `artifacts/release-evidence`.
 
 This workflow validates a live Revit host and staged package install path. Keep the workflow artifact with the package manifest, checksums, signing status, support bundle, live smoke output, and release-evidence bundle.
 
@@ -179,7 +181,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File artifacts\release\revit-mcp-
 
 ```powershell
 npm run doctor:windows
-npm run smoke:revit -- -ExpectedRevitYear 2024 -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
+npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
 6. Capture support diagnostics after the smoke, especially after any failure:

@@ -50,7 +50,7 @@ on:
         description: Collect hosted pyRevit/Dynamo evidence before live smoke. Requires interactive Dynamo graph run.
         required: true
         type: boolean
-        default: false
+        default: true
       pyrevit_path:
         description: Optional pyrevit.exe path for hosted pyRevit smoke.
         required: false
@@ -88,6 +88,26 @@ on:
         required: true
         type: boolean
         default: true
+      room_tag_type_id:
+        description: Optional loaded room tag FamilySymbol id for curated tag smoke.
+        required: false
+        default: ""
+      room_tag_type_name_contains:
+        description: Optional loaded room tag FamilySymbol name/family substring for curated tag smoke.
+        required: false
+        default: ""
+      element_tag_type_id:
+        description: Optional loaded wall or multi-category tag FamilySymbol id for curated tag smoke.
+        required: false
+        default: ""
+      element_tag_type_name_contains:
+        description: Optional loaded wall or multi-category tag FamilySymbol name/family substring for curated tag smoke.
+        required: false
+        default: ""
+      readiness_profile:
+        description: Evidence readiness profile to enforce after collection.
+        required: true
+        default: release-candidate
       signing_mode:
         description: Package signing mode. Use none, local-dev, or release-cert.
         required: true
@@ -136,6 +156,11 @@ jobs:
       REQUIRE_ROOM_TAG: ${{ inputs.require_room_tag }}
       REQUIRE_ELEMENT_TAG: ${{ inputs.require_element_tag }}
       REQUIRE_TAGS: ${{ inputs.require_tags }}
+      ROOM_TAG_TYPE_ID: ${{ inputs.room_tag_type_id }}
+      ROOM_TAG_TYPE_NAME_CONTAINS: ${{ inputs.room_tag_type_name_contains }}
+      ELEMENT_TAG_TYPE_ID: ${{ inputs.element_tag_type_id }}
+      ELEMENT_TAG_TYPE_NAME_CONTAINS: ${{ inputs.element_tag_type_name_contains }}
+      READINESS_PROFILE: ${{ inputs.readiness_profile }}
       SIGNING_MODE: ${{ inputs.signing_mode }}
       REQUIRE_TRUSTED_SIGNATURES: ${{ inputs.require_trusted_signatures }}
       SIGNING_NO_TIMESTAMP: ${{ inputs.signing_no_timestamp }}
@@ -195,11 +220,43 @@ jobs:
             requireRoomTag = $env:REQUIRE_ROOM_TAG
             requireElementTag = $env:REQUIRE_ELEMENT_TAG
             requireTags = $env:REQUIRE_TAGS
+            roomTagTypeId = $env:ROOM_TAG_TYPE_ID
+            roomTagTypeNameContains = $env:ROOM_TAG_TYPE_NAME_CONTAINS
+            elementTagTypeId = $env:ELEMENT_TAG_TYPE_ID
+            elementTagTypeNameContains = $env:ELEMENT_TAG_TYPE_NAME_CONTAINS
+            readinessProfile = $env:READINESS_PROFILE
             signingNoTimestamp = $env:SIGNING_NO_TIMESTAMP
             runnerName = $env:RUNNER_NAME
             runnerOs = $env:RUNNER_OS
           }
           $summary | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $env:EVIDENCE_DIR "run-inputs.json") -Encoding UTF8
+
+      - name: Validate release profile inputs
+        run: |
+          $ErrorActionPreference = "Stop"
+          $profile = $env:READINESS_PROFILE.Trim().ToLowerInvariant()
+          if ($profile -notin @("external-preview", "release-candidate", "production")) {
+            throw "readiness_profile must be one of: external-preview, release-candidate, production. Received: $env:READINESS_PROFILE"
+          }
+
+          if ($profile -in @("release-candidate", "production")) {
+            if ("${{ inputs.skip_install }}" -eq "true") {
+              throw "readiness_profile=$profile requires building, packaging, and installing the current checkout. Set skip_install=false or use readiness_profile=external-preview."
+            }
+            if ($env:COLLECT_HOST_INTEGRATIONS -ne "true") {
+              throw "readiness_profile=$profile requires collect_host_integrations=true so pyRevit and Dynamo host evidence is captured."
+            }
+            if ("${{ inputs.collect_support_bundle }}" -ne "true") {
+              throw "readiness_profile=$profile requires collect_support_bundle=true."
+            }
+            if ($env:REQUIRE_TAGS -ne "true" -and -not ($env:REQUIRE_ROOM_TAG -eq "true" -and $env:REQUIRE_ELEMENT_TAG -eq "true")) {
+              throw "readiness_profile=$profile requires both tag_room and tag_element live-smoke coverage. Set require_tags=true or both individual tag requirements."
+            }
+          }
+
+          if ($env:SIGNING_MODE.Trim().ToLowerInvariant() -eq "release-cert" -and $env:SIGNING_NO_TIMESTAMP -eq "true") {
+            throw "signing_no_timestamp=true is not allowed with signing_mode=release-cert."
+          }
 
       - name: Preflight Revit runner
         run: |
@@ -482,6 +539,18 @@ jobs:
               $smokeArgs += @("-RequireElementTag")
             }
           }
+          if (-not [string]::IsNullOrWhiteSpace($env:ROOM_TAG_TYPE_ID)) {
+            $smokeArgs += @("-RoomTagTypeId", $env:ROOM_TAG_TYPE_ID)
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:ROOM_TAG_TYPE_NAME_CONTAINS)) {
+            $smokeArgs += @("-RoomTagTypeNameContains", $env:ROOM_TAG_TYPE_NAME_CONTAINS)
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:ELEMENT_TAG_TYPE_ID)) {
+            $smokeArgs += @("-ElementTagTypeId", $env:ELEMENT_TAG_TYPE_ID)
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:ELEMENT_TAG_TYPE_NAME_CONTAINS)) {
+            $smokeArgs += @("-ElementTagTypeNameContains", $env:ELEMENT_TAG_TYPE_NAME_CONTAINS)
+          }
 
           & npm.cmd @smokeArgs 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
@@ -556,6 +625,28 @@ jobs:
             throw "Release evidence collection failed with exit code $LASTEXITCODE."
           }
 
+      - name: Check release readiness evidence
+        if: ${{ !inputs.skip_install }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $profile = $env:READINESS_PROFILE.Trim().ToLowerInvariant()
+          if ($profile -notin @("external-preview", "release-candidate", "production")) {
+            throw "readiness_profile must be one of: external-preview, release-candidate, production. Received: $env:READINESS_PROFILE"
+          }
+
+          $evidenceZip = Get-ChildItem -LiteralPath "artifacts\release-evidence" -Filter "*.zip" -Recurse -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if (-not $evidenceZip) {
+            throw "Release evidence zip was not found under artifacts\release-evidence."
+          }
+
+          $log = Join-Path $env:EVIDENCE_DIR "readiness-check.log"
+          & npm.cmd run evidence:check -- -EvidencePath $evidenceZip.FullName -Profile $profile 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release readiness check failed with exit code $LASTEXITCODE for profile $profile."
+          }
+
       - name: Upload smoke evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -566,4 +657,4 @@ jobs:
             artifacts/release-candidate/**
             artifacts/release-evidence/**
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 90

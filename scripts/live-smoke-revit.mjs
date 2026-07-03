@@ -67,6 +67,14 @@ async function main() {
   console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
   console.log(`Require room tag: ${options.requireRoomTag ? "yes" : "no"}`);
   console.log(`Require element tag: ${options.requireElementTag ? "yes" : "no"}`);
+  const roomTagSelector = makeTagTypeSelector(options.roomTagTypeId, options.roomTagTypeNameContains);
+  const elementTagSelector = makeTagTypeSelector(options.elementTagTypeId, options.elementTagTypeNameContains);
+  if (roomTagSelector) {
+    console.log(`Room tag selector: ${formatTagTypeSelector(roomTagSelector)}`);
+  }
+  if (elementTagSelector) {
+    console.log(`Element tag selector: ${formatTagTypeSelector(elementTagSelector)}`);
+  }
   if (options.expectedRevitYear) {
     console.log(`Expected Revit year: ${options.expectedRevitYear}`);
   }
@@ -110,6 +118,10 @@ async function main() {
       roomTag: options.requireRoomTag,
       elementTag: options.requireElementTag,
     },
+    tagSelectors: compactObject({
+      room: roomTagSelector,
+      element: elementTagSelector,
+    }),
     result: null,
     error: null,
   };
@@ -607,6 +619,7 @@ async function main() {
       preferredRoomUniqueId: createdRoomUniqueId,
       preferredLevelId: String(smokeLevelId),
       preferredLocation: roomOperation.location,
+      tagTypeSelector: roomTagSelector,
     });
     if (roomTagResult.apply) {
       annotationGeneration = numericOrUndefined(roomTagResult.apply.generation);
@@ -622,6 +635,7 @@ async function main() {
       runId,
       preferredElementId: wallId,
       levelElevationMm: smokeLevelElevationMm,
+      tagTypeSelector: elementTagSelector,
     });
     if (elementTagResult.apply) {
       annotationGeneration = numericOrUndefined(elementTagResult.apply.generation);
@@ -979,6 +993,10 @@ function parseArgs(args) {
     requireTypeChange: false,
     requireRoomTag: false,
     requireElementTag: false,
+    roomTagTypeId: undefined,
+    roomTagTypeNameContains: undefined,
+    elementTagTypeId: undefined,
+    elementTagTypeNameContains: undefined,
     statusOnly: false,
     help: false,
   };
@@ -1053,6 +1071,24 @@ function parseArgs(args) {
       case "--skip-tags":
         options.requireRoomTag = false;
         options.requireElementTag = false;
+        break;
+      case "--room-tag-type-id":
+        options.roomTagTypeId = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--room-tag-type-name-contains":
+      case "--room-tag-type-name":
+        options.roomTagTypeNameContains = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--element-tag-type-id":
+        options.elementTagTypeId = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--element-tag-type-name-contains":
+      case "--element-tag-type-name":
+        options.elementTagTypeNameContains = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
         break;
       case "--status-only":
         options.statusOnly = true;
@@ -1828,6 +1864,7 @@ async function tryTagRoom(
     preferredRoomUniqueId,
     preferredLevelId,
     preferredLocation,
+    tagTypeSelector,
   }
 ) {
   const roomTagTypes = await catalog(client, {
@@ -1846,10 +1883,16 @@ async function tryTagRoom(
     candidateRoomCount: 0,
     candidateRoomSamples: [],
     blockedPreviewMessages: [],
+    tagTypeSelector,
   };
-  const tagType = roomTagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  const tagType = selectTagType(roomTagTypes.items, tagTypeSelector);
   if (!tagType) {
-    return { reason: "No room tag type was available in the active model.", evidence };
+    return {
+      reason: tagTypeSelector
+        ? `No loaded room tag type matched ${formatTagTypeSelector(tagTypeSelector)}.`
+        : "No room tag type was available in the active model.",
+      evidence,
+    };
   }
 
   const views = await listAnnotationViews(client, documentFingerprint, ["FloorPlan", "CeilingPlan", "EngineeringPlan", "Section"]);
@@ -1931,7 +1974,7 @@ async function tryTagRoom(
 
 async function tryTagElement(
   client,
-  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredElementId, levelElevationMm }
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredElementId, levelElevationMm, tagTypeSelector }
 ) {
   let tagTypes = await catalog(client, {
     kind: "tagTypes",
@@ -1954,8 +1997,9 @@ async function tryTagElement(
     candidateElementCount: 0,
     candidateElementSamples: [],
     blockedPreviewMessages: [],
+    tagTypeSelector,
   };
-  let tagType = tagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+  let tagType = selectTagType(tagTypes.items, tagTypeSelector);
   if (!tagType) {
     tagTypes = await catalog(client, {
       kind: "tagTypes",
@@ -1970,10 +2014,15 @@ async function tryTagElement(
       tagTypeCount: Array.isArray(tagTypes.items) ? tagTypes.items.length : 0,
       tagTypeSamples: sampleEvidenceItems(tagTypes.items),
     });
-    tagType = tagTypes.items.find((item) => typeof item.id === "string" && item.id.length > 0);
+    tagType = selectTagType(tagTypes.items, tagTypeSelector);
   }
   if (!tagType) {
-    return { reason: "No wall or multi-category tag FamilySymbol was available in the active model.", evidence };
+    return {
+      reason: tagTypeSelector
+        ? `No loaded wall or multi-category tag FamilySymbol matched ${formatTagTypeSelector(tagTypeSelector)}.`
+        : "No wall or multi-category tag FamilySymbol was available in the active model.",
+      evidence,
+    };
   }
 
   const views = await listAnnotationViews(client, documentFingerprint, ["FloorPlan", "CeilingPlan", "EngineeringPlan", "Section", "DraftingView"]);
@@ -2298,6 +2347,41 @@ function stringOrUndefined(value) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function makeTagTypeSelector(id, nameContains) {
+  const selector = compactObject({
+    id: stringOrUndefined(String(id ?? "").trim()),
+    nameContains: stringOrUndefined(String(nameContains ?? "").trim()),
+  });
+  return Object.keys(selector).length > 0 ? selector : undefined;
+}
+
+function selectTagType(items, selector) {
+  const candidates = Array.isArray(items) ? items.filter((item) => typeof item?.id === "string" && item.id.length > 0) : [];
+  if (selector?.id) {
+    return candidates.find((item) => String(item?.id ?? "") === String(selector.id));
+  }
+  if (selector?.nameContains) {
+    const needle = selector.nameContains.toLowerCase();
+    return candidates.find((item) => tagTypeSearchText(item).includes(needle));
+  }
+  return candidates[0];
+}
+
+function tagTypeSearchText(item) {
+  return [item?.name, item?.familyName, item?.type]
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatTagTypeSelector(selector) {
+  if (!selector) return "auto";
+  const parts = [];
+  if (selector.id) parts.push(`id=${selector.id}`);
+  if (selector.nameContains) parts.push(`name contains "${selector.nameContains}"`);
+  return parts.join(", ") || "auto";
+}
+
 function sampleEvidenceItems(items, limit = 5) {
   if (!Array.isArray(items)) return [];
   return items.slice(0, limit).map((item) =>
@@ -2435,6 +2519,12 @@ Options:
   --skip-room-tag                 Allow tag_room coverage to be skipped. Default.
   --skip-element-tag              Allow tag_element coverage to be skipped. Default.
   --skip-tags                     Allow both tag operations to be skipped. Default.
+  --room-tag-type-id <id>         Require tag_room smoke to use this loaded room tag FamilySymbol id.
+  --room-tag-type-name-contains <text>
+                                  Require tag_room smoke to use a loaded room tag FamilySymbol whose name/family contains this text.
+  --element-tag-type-id <id>      Require tag_element smoke to use this loaded wall or multi-category tag FamilySymbol id.
+  --element-tag-type-name-contains <text>
+                                  Require tag_element smoke to use a loaded wall or multi-category tag FamilySymbol whose name/family contains this text.
   --status-only                   Only verify tool discovery, revit.status, and active document readiness.
   -h, --help                      Show this help.
 `);

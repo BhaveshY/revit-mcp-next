@@ -96,6 +96,12 @@ Release-candidate smoke runs should use a curated disposable model with at least
 npm run smoke:revit -- -RequireTypeChange -RequireTags
 ```
 
+For deterministic curated runners, pin the loaded tag symbols by id or by a stable name/family substring:
+
+```powershell
+npm run smoke:revit -- -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag"
+```
+
 ## Packaging And Support
 
 Create a staged Windows release package:

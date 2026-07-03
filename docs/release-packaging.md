@@ -206,7 +206,13 @@ For release-candidate live smoke, use a curated disposable model and run the smo
 npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
-The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. `smoke-summary.json.requiredCoverage` records that requirement and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
+For deterministic curated runners, select the intended loaded tag symbols by id or stable name/family substring:
+
+```powershell
+npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag" -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
+```
+
+The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. `smoke-summary.json.requiredCoverage` records that requirement, `tagSelectors` records requested tag type selectors when supplied, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
 
 Build hosted pyRevit/Dynamo summary evidence from raw host-smoke JSON before passing `-HostedIntegrationEvidencePath`.
 
@@ -279,7 +285,7 @@ npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-nex
 npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-next-<version>-windows-evidence-<timestamp>-<id> -Profile production
 ```
 
-`external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke with required room and element tag coverage, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package.
+`external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke with required room and element tag coverage, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package. The `Live Revit Smoke` workflow runs this readiness check automatically against the generated evidence zip using its `readiness_profile` input, which defaults to `release-candidate`; use `external-preview` only for intentionally weaker preview runs.
 
 Minimum evidence for a release candidate:
 
@@ -290,7 +296,7 @@ Minimum evidence for a release candidate:
 - SHA-256 hash of the package `.zip`.
 - Output from `node scripts\validate-repo.mjs`.
 - Output from `npm run package:windows` or `npm run package:windows -- -Sign -RequireSigned`, plus `npm run doctor:windows`.
-- Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`, loaded add-in identity matching the package manifest, `requiredCoverage.roomTag=true`, `requiredCoverage.elementTag=true`, and populated `result.tagCoverage`.
+- Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`, loaded add-in identity matching the package manifest, `requiredCoverage.roomTag=true`, `requiredCoverage.elementTag=true`, populated `result.tagCoverage`, and `tagSelectors` when the curated runner pins tag symbols.
 - `npm run support:bundle` output after install or after any failed smoke.
 - pyRevit and Dynamo hosted-smoke output from the installed package. Hosted integration evidence must include `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries. Release evidence verifies the `assemblySha256` loaded by both hosts against `payload/addin/RevitMcpNext.Addin.dll` in the package manifest.
 - Authenticode signing and verification output when signing is enabled.

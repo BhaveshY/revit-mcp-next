@@ -360,6 +360,14 @@ try {
             roomTag = $true
             elementTag = $true
         }
+        tagSelectors = [ordered] @{
+            room = [ordered] @{
+                nameContains = "Room"
+            }
+            element = [ordered] @{
+                nameContains = "Wall"
+            }
+        }
         result = [ordered] @{
             tagCoverage = [ordered] @{
                 room = [ordered] @{
@@ -625,6 +633,9 @@ try {
     }
     if ($evidenceManifest.liveSmoke.summary.requiredCoverage.roomTag -ne $true -or $evidenceManifest.liveSmoke.summary.requiredCoverage.elementTag -ne $true) {
         throw "Live smoke required tag coverage flags were not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.tagSelectors.room.nameContains -ne "Room" -or $evidenceManifest.liveSmoke.summary.tagSelectors.element.nameContains -ne "Wall") {
+        throw "Live smoke tag selectors were not recorded."
     }
     if ($evidenceManifest.liveSmoke.summary.tagCoverage.room.createdTagId -ne "1601" -or $evidenceManifest.liveSmoke.summary.tagCoverage.element.createdTagId -ne "1602") {
         throw "Live smoke tag coverage details were not recorded."

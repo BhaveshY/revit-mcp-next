@@ -9,6 +9,10 @@ param(
     [switch] $RequireRoomTag,
     [switch] $RequireElementTag,
     [switch] $RequireTags,
+    [string] $RoomTagTypeId = "",
+    [string] $RoomTagTypeNameContains = "",
+    [string] $ElementTagTypeId = "",
+    [string] $ElementTagTypeNameContains = "",
     [int] $RevitYear = 2024,
     [string] $RevitApiPath = "",
     [string] $RevitExePath = "",
@@ -80,6 +84,12 @@ Options:
   -RequireRoomTag            Require tag_room smoke coverage.
   -RequireElementTag         Require tag_element smoke coverage.
   -RequireTags               Require both tag_room and tag_element smoke coverage.
+  -RoomTagTypeId <id>        Use a specific loaded room tag FamilySymbol id.
+  -RoomTagTypeNameContains <text>
+                              Use a loaded room tag FamilySymbol whose name/family contains this text.
+  -ElementTagTypeId <id>     Use a specific loaded wall or multi-category tag FamilySymbol id.
+  -ElementTagTypeNameContains <text>
+                              Use a loaded wall or multi-category tag FamilySymbol whose name/family contains this text.
   -DryRun                    Print the planned paths and commands without running them.
 "@
 }
@@ -569,6 +579,10 @@ $runInputs = [ordered] @{
     requireRoomTag = [bool] $RequireRoomTag
     requireElementTag = [bool] $RequireElementTag
     requireTags = [bool] $RequireTags
+    roomTagTypeId = $RoomTagTypeId
+    roomTagTypeNameContains = $RoomTagTypeNameContains
+    elementTagTypeId = $ElementTagTypeId
+    elementTagTypeNameContains = $ElementTagTypeNameContains
     trustRevitAlwaysLoad = [bool] $TrustRevitAlwaysLoad
     localDevSigningEnabled = [bool] $localDevSigningEnabled
     signingCertificateThumbprint = $runSigningCertificateThumbprint
@@ -710,6 +724,18 @@ if ($RequireTags) {
     if ($RequireElementTag) {
         $smokeArgs += "-RequireElementTag"
     }
+}
+if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeId)) {
+    $smokeArgs += @("-RoomTagTypeId", $RoomTagTypeId)
+}
+if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeNameContains)) {
+    $smokeArgs += @("-RoomTagTypeNameContains", $RoomTagTypeNameContains)
+}
+if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeId)) {
+    $smokeArgs += @("-ElementTagTypeId", $ElementTagTypeId)
+}
+if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeNameContains)) {
+    $smokeArgs += @("-ElementTagTypeNameContains", $ElementTagTypeNameContains)
 }
 Invoke-Logged "Run live Revit smoke" (Join-Path $evidenceDir "smoke-revit.log") $npm $smokeArgs
 
