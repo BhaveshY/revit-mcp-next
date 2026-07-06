@@ -794,6 +794,49 @@ try {
         "-Profile", "production",
         "-AllowDirty"
     ) "*Production readiness requires captured signing evidence*" "Production readiness signing gate"
+
+    $tamperedSigningEvidenceRoot = Join-Path $runRoot "tampered-invalid-signing-target"
+    Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedSigningEvidenceRoot -Recurse -Force
+    $tamperedSigningLogRoot = Join-Path $tamperedSigningEvidenceRoot "signing"
+    New-Item -ItemType Directory -Force -Path $tamperedSigningLogRoot | Out-Null
+    $tamperedSigningLogPath = Join-Path $tamperedSigningLogRoot "signing.log"
+    Set-Content -LiteralPath $tamperedSigningLogPath -Value "synthetic signing log with an invalid target status" -Encoding UTF8
+    $tamperedSigningLog = Get-Item -LiteralPath $tamperedSigningLogPath
+    $tamperedSigningLogHash = (Get-FileHash -LiteralPath $tamperedSigningLogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $tamperedSigningManifestPath = Join-Path $tamperedSigningEvidenceRoot "release-evidence-manifest.json"
+    $tamperedSigningManifest = Get-Content -LiteralPath $tamperedSigningManifestPath -Raw | ConvertFrom-Json
+    $tamperedSigningManifest.signing.status = "captured"
+    $tamperedSigningManifest.signing.skipReason = ""
+    $tamperedSigningManifest.signing.requested = $true
+    $tamperedSigningManifest.signing.requireSigned = $true
+    $tamperedSigningManifest.signing.requireTrusted = $true
+    $tamperedSigningManifest.signing.log = [ordered] @{
+        present = $true
+        sourcePath = $tamperedSigningLogPath
+        storedAs = "signing/signing.log"
+        sha256 = $tamperedSigningLogHash
+        size = $tamperedSigningLog.Length
+    }
+    $tamperedSigningManifest.signing.targets = @(
+        [ordered] @{
+            path = "payload/addin/RevitMcpNext.Addin.dll"
+            status = "NotSigned"
+            statusMessage = "Synthetic invalid signature status."
+            signerSubject = $null
+        }
+    )
+    $tamperedSigningManifest.contents = @($tamperedSigningManifest.contents) + [ordered] @{
+        path = "signing/signing.log"
+        sha256 = $tamperedSigningLogHash
+        size = $tamperedSigningLog.Length
+    }
+    Set-Content -LiteralPath $tamperedSigningManifestPath -Value ($tamperedSigningManifest | ConvertTo-Json -Depth 12) -Encoding UTF8
+    Assert-ScriptFailsLike $readinessScript @(
+        "-EvidencePath", $tamperedSigningEvidenceRoot,
+        "-Profile", "production",
+        "-AllowDirty"
+    ) "*Production readiness requires every signed target to have Authenticode status Valid*" "Production readiness signing target status gate"
+
     Assert-ScriptFailsLike $readinessScript @(
         "-EvidencePath", $evidenceRoot.FullName,
         "-Profile", "production",

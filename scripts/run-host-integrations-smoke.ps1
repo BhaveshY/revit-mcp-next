@@ -267,15 +267,24 @@ $summaryPath = Join-Path $outputRootFull "host-integrations-summary.json"
 if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
     throw "Hosted integration summary was not created: $summaryPath"
 }
+$composedPyRevitEvidencePath = Join-Path $outputRootFull "pyrevit.json"
+$composedDynamoEvidencePath = Join-Path $outputRootFull "dynamo.json"
+$composedDynamoPreflightReportPath = Join-Path $outputRootFull "dynamo-preflight.json"
+foreach ($evidenceFile in @($composedPyRevitEvidencePath, $composedDynamoEvidencePath, $composedDynamoPreflightReportPath)) {
+    if (-not (Test-Path -LiteralPath $evidenceFile -PathType Leaf)) {
+        throw "Hosted integration composed evidence file was not created: $evidenceFile"
+    }
+}
 
 $result = [ordered] @{
     status = "passed"
     outputRoot = $outputRootFull
     summaryPath = $summaryPath
     installRoot = $installRootFull
-    pyRevitEvidencePath = Join-Path $outputRootFull "pyrevit.json"
-    dynamoEvidencePath = Join-Path $outputRootFull "dynamo.json"
-    dynamoPreflightReportPath = $dynamoPreflightReportFull
+    pyRevitEvidencePath = $composedPyRevitEvidencePath
+    dynamoEvidencePath = $composedDynamoEvidencePath
+    dynamoPreflightReportPath = $composedDynamoPreflightReportPath
+    rawDynamoPreflightReportPath = $dynamoPreflightReportFull
     logsRoot = $logsRoot
 }
 

@@ -247,6 +247,57 @@ function Test-RecordedFile($Inventory, $Name, $Entry, $Label) {
     Fail $Name "$Label is missing from evidence or does not match the inventory."
 }
 
+function Test-SigningTargets($Manifest, $Profile) {
+    $targets = @(@($Manifest.signing.targets) | Where-Object { $null -ne $_ })
+    if ($targets.Count -eq 0) {
+        if ($Profile -eq "production") {
+            Fail "signing.targets" "Production readiness requires recorded Authenticode target signature statuses."
+        } else {
+            Warn "signing.targets" "Signing was captured but no target signature statuses were recorded."
+        }
+        return
+    }
+
+    $missingFields = New-Object System.Collections.Generic.List[string]
+    $invalidTargets = New-Object System.Collections.Generic.List[string]
+    foreach ($target in $targets) {
+        $path = [string] $target.path
+        $status = [string] $target.status
+        if (Test-Blank $path -or Test-Blank $status) {
+            $missingPath = $path
+            if (Test-Blank $missingPath) {
+                $missingPath = "(unknown target)"
+            }
+            $missingFields.Add($missingPath) | Out-Null
+            continue
+        }
+
+        if ($status -ne "Valid") {
+            $invalidTargets.Add("$path=$status") | Out-Null
+        }
+    }
+
+    if ($missingFields.Count -gt 0) {
+        Fail "signing.targets.fields" "Signing target entries are missing path or status fields."
+    } else {
+        Pass "signing.targets.fields" "Signing target entries include path and status fields."
+    }
+
+    if ($Profile -eq "production") {
+        if ($invalidTargets.Count -gt 0) {
+            Fail "signing.targets.valid" "Production readiness requires every signed target to have Authenticode status Valid. Invalid targets: $($invalidTargets -join '; ')"
+        } else {
+            Pass "signing.targets.valid" "All signing targets have Authenticode status Valid."
+        }
+    } else {
+        if ($invalidTargets.Count -gt 0) {
+            Warn "signing.targets.valid" "Signing target statuses are recorded, but not all targets are Authenticode Valid."
+        } else {
+            Pass "signing.targets.valid" "All signing targets have Authenticode status Valid."
+        }
+    }
+}
+
 function Test-SectionFiles($Inventory, $Name, $StoredAs, $Files, $Label) {
     $seen = 0
     foreach ($file in @($Files)) {
@@ -563,6 +614,7 @@ try {
     if ($manifest.signing.status -eq "captured" -and [bool] $manifest.signing.requested -eq $true -and $manifest.signing.log.present -eq $true) {
         Pass "signing" "Signing evidence is captured."
         Test-RecordedFile $inventory "signing.log" $manifest.signing.log "Signing log"
+        Test-SigningTargets $manifest $Profile
     } elseif ($Profile -eq "production") {
         Fail "signing" "Production readiness requires captured signing evidence for the exact package."
     } elseif ($manifest.signing.status -eq "skipped" -and -not (Test-Blank $manifest.signing.skipReason)) {

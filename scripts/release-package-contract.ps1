@@ -560,6 +560,33 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         "-EvidencePath", $fallbackPyRevitEvidencePath
     ) "*expected configuredAddin*" "pyRevit host smoke direct-fallback gate"
 
+    $aggregateValidateOutputRoot = Join-Path $RunRoot "host-integrations-validate-only"
+    $aggregateValidateOutput = Invoke-RepoScriptCapture $hostIntegrationsSmokeScript @(
+        "-Json",
+        "-OutputRoot", $aggregateValidateOutputRoot,
+        "-InstallRoot", $InstallRoot,
+        "-PyRevitEvidencePath", $passedPyRevitEvidencePath,
+        "-PyRevitValidateOnly",
+        "-DynamoEvidencePath", $passedDynamoEvidencePath,
+        "-DynamoPreflightReportPath", $preflightOnlyReportPath,
+        "-DynamoValidateOnly"
+    )
+    $aggregateValidateState = $aggregateValidateOutput | ConvertFrom-Json
+    if ($aggregateValidateState.status -ne "passed") {
+        throw "Aggregate hosted integration smoke validate-only did not report passed status."
+    }
+    if ([string] $aggregateValidateState.dynamoPreflightReportPath -ne [System.IO.Path]::GetFullPath((Join-Path $aggregateValidateOutputRoot "dynamo-preflight.json"))) {
+        throw "Aggregate hosted integration smoke validate-only did not report the composed Dynamo preflight path."
+    }
+    if ([string] $aggregateValidateState.rawDynamoPreflightReportPath -ne [System.IO.Path]::GetFullPath($preflightOnlyReportPath)) {
+        throw "Aggregate hosted integration smoke validate-only did not preserve the raw Dynamo preflight path."
+    }
+    foreach ($expectedFile in @("pyrevit.json", "dynamo.json", "dynamo-preflight.json", "host-integrations-summary.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $aggregateValidateOutputRoot $expectedFile) -PathType Leaf)) {
+            throw "Aggregate hosted integration smoke validate-only did not compose $expectedFile."
+        }
+    }
+
     $missingCollectorOutputRoot = Join-Path $RunRoot "host-smoke\missing-evidence-output"
     Assert-ScriptFailsLike $hostIntegrationEvidenceScript @(
         "-PyRevitEvidencePath", $passedPyRevitEvidencePath,

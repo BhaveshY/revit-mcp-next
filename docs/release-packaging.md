@@ -244,7 +244,7 @@ npm run smoke:host-integrations -- `
   -LaunchRevitForDynamo
 ```
 
-This command writes `raw\pyrevit.json`, writes a read-only Dynamo preflight report to `raw\dynamo-preflight.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, copies all three raw evidence files into the composed evidence root, and leaves host-smoke logs under `logs`.
+This command writes `raw\pyrevit.json`, writes a read-only Dynamo preflight report to `raw\dynamo-preflight.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, copies all three raw evidence files into the composed evidence root, and leaves host-smoke logs under `logs`. In JSON output, `pyRevitEvidencePath`, `dynamoEvidencePath`, and `dynamoPreflightReportPath` point at the composed files used by release evidence; `rawDynamoPreflightReportPath` points at the original preflight file next to the raw Dynamo evidence.
 
 For pyRevit CLI runs, use the packaged runner. It stages a temporary
 `RevitMcpNext.addin` into pyRevit's unattended runner with `--import`, pins
@@ -329,7 +329,7 @@ npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-nex
 npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-next-<version>-windows-evidence-<timestamp>-<id> -Profile production
 ```
 
-`external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke with required room and element tag coverage, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package. The `Live Revit Smoke` workflow runs this readiness check automatically against the generated evidence zip using its `readiness_profile` input, which defaults to `release-candidate`; use `external-preview` only for intentionally weaker preview runs.
+`external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke with required room and element tag coverage, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package, and every recorded Authenticode target in the package manifest must have status `Valid`. The `Live Revit Smoke` workflow runs this readiness check automatically against the generated evidence zip using its `readiness_profile` input, which defaults to `release-candidate`; use `external-preview` only for intentionally weaker preview runs.
 Evidence marked `evidenceKind: "contract-fixture"` or `synthetic: true` is accepted only as an external-preview warning; it cannot satisfy release-candidate or production readiness.
 
 Minimum evidence for a release candidate:
