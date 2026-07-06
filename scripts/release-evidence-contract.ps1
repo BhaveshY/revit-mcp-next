@@ -107,6 +107,8 @@ function New-SyntheticHostIntegrationEvidence(
 
     Set-Content -LiteralPath $pyRevitEvidencePath -Value ([ordered] @{
         schemaVersion = 1
+        evidenceKind = "contract-fixture"
+        synthetic = $true
         status = "passed"
         host = "pyrevit"
         activeDocument = [ordered] @{
@@ -133,6 +135,8 @@ function New-SyntheticHostIntegrationEvidence(
 
     Set-Content -LiteralPath $dynamoEvidencePath -Value ([ordered] @{
         schemaVersion = 1
+        evidenceKind = "contract-fixture"
+        synthetic = $true
         status = $dynamoStatus
         host = "dynamo"
         activeDocument = [ordered] @{
@@ -159,6 +163,8 @@ function New-SyntheticHostIntegrationEvidence(
 
     Set-Content -LiteralPath $dynamoPreflightPath -Value ([ordered] @{
         schemaVersion = 1
+        evidenceKind = "contract-fixture"
+        synthetic = $true
         status = "preflight"
         createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         revitYear = 2024
@@ -191,10 +197,14 @@ function New-SyntheticHostIntegrationEvidence(
 
     Set-Content -LiteralPath (Join-Path $Root "host-integrations-summary.json") -Value ([ordered] @{
         schemaVersion = 1
+        evidenceKind = "contract-fixture"
+        synthetic = $true
         status = if ($Failed) { "failed" } else { "passed" }
         hosts = [ordered] @{
             pyrevit = [ordered] @{
                 status = "passed"
+                evidenceKind = "contract-fixture"
+                synthetic = $true
                 evidencePath = "pyrevit.json"
                 previewReady = $true
                 inProcessBridge = [ordered] @{
@@ -210,6 +220,8 @@ function New-SyntheticHostIntegrationEvidence(
             }
             dynamo = [ordered] @{
                 status = $dynamoStatus
+                evidenceKind = "contract-fixture"
+                synthetic = $true
                 evidencePath = "dynamo.json"
                 previewReady = $dynamoPreviewReady
                 inProcessBridge = [ordered] @{
@@ -226,6 +238,8 @@ function New-SyntheticHostIntegrationEvidence(
         }
         dynamoPreflight = [ordered] @{
             status = "preflight"
+            evidenceKind = "contract-fixture"
+            synthetic = $true
             evidencePath = "dynamo-preflight.json"
             revitYear = 2024
             dynamoVersion = "2.19.4"
@@ -383,6 +397,8 @@ try {
     Set-Content -LiteralPath (Join-Path $liveSmokeRoot "run-inputs.json") -Value (@{ revitYear = 2024; synthetic = $true } | ConvertTo-Json) -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $liveSmokeRoot "smoke-summary.json") -Value ([ordered] @{
         schemaVersion = 1
+        evidenceKind = "contract-fixture"
+        synthetic = $true
         status = "passed"
         mode = "full"
         expectedRevitYear = "2024"
@@ -768,16 +784,21 @@ try {
         "-Profile", "external-preview",
         "-AllowDirty"
     )
-    Invoke-RepoScript (Join-Path $logsRoot "readiness-release-candidate.log") $readinessScript @(
+    Assert-ScriptFailsLike $readinessScript @(
         "-EvidencePath", "$($evidenceRoot.FullName).zip",
         "-Profile", "release-candidate",
         "-AllowDirty"
-    )
+    ) "*contract fixture/synthetic evidence*" "Release-candidate synthetic evidence gate"
     Assert-ScriptFailsLike $readinessScript @(
         "-EvidencePath", $evidenceRoot.FullName,
         "-Profile", "production",
         "-AllowDirty"
     ) "*Production readiness requires captured signing evidence*" "Production readiness signing gate"
+    Assert-ScriptFailsLike $readinessScript @(
+        "-EvidencePath", $evidenceRoot.FullName,
+        "-Profile", "production",
+        "-AllowDirty"
+    ) "*contract fixture/synthetic evidence*" "Production synthetic evidence gate"
 
     $tamperedTagEvidenceRoot = Join-Path $runRoot "tampered-required-tag-skipped"
     Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedTagEvidenceRoot -Recurse -Force

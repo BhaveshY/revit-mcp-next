@@ -52,6 +52,7 @@ npm run test:evidence:release:windows
 ```
 
 That contract packages with synthetic add-in DLLs, installs into temporary profile paths, runs doctor/support collection, creates synthetic live-smoke and pyRevit/Dynamo hosted-smoke artifacts, verifies missing evidence requires explicit skip reasons, and verifies the release evidence manifest, summary, zip, hashes, and token redaction.
+Those contract artifacts are marked as `evidenceKind: "contract-fixture"` and `synthetic: true`; they are mechanics-only test data and are rejected by release-candidate and production readiness checks.
 
 Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`. The collector rejects a live-smoke directory whose summary is missing or failed.
 
@@ -329,6 +330,7 @@ npm run evidence:check -- -EvidencePath artifacts\release-evidence\revit-mcp-nex
 ```
 
 `external-preview` allows an explicit unsigned/signing skip and warns when live or hosted evidence is skipped. `release-candidate` requires live Revit smoke with required room and element tag coverage, hosted pyRevit/Dynamo evidence, support bundle evidence, validation logs, clean package metadata, package identity checks, inventory files that exist and match recorded SHA-256 hashes, and a raw-secret scan over copied text evidence, but can still be unsigned when the skip reason is explicit. `production` requires all release-candidate evidence plus captured signing evidence for the exact package. The `Live Revit Smoke` workflow runs this readiness check automatically against the generated evidence zip using its `readiness_profile` input, which defaults to `release-candidate`; use `external-preview` only for intentionally weaker preview runs.
+Evidence marked `evidenceKind: "contract-fixture"` or `synthetic: true` is accepted only as an external-preview warning; it cannot satisfy release-candidate or production readiness.
 
 Minimum evidence for a release candidate:
 

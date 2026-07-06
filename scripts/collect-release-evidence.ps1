@@ -782,6 +782,8 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
         summary = [ordered] @{
             sourcePath = $liveSmokeSummary.path
             status = [string] $liveSmokeSummary.data.status
+            evidenceKind = [string] $liveSmokeSummary.data.evidenceKind
+            synthetic = [bool] $liveSmokeSummary.data.synthetic
             mode = [string] $liveSmokeSummary.data.mode
             expectedRevitYear = $liveSmokeSummary.data.expectedRevitYear
             revit = $liveSmokeSummary.data.revit
@@ -840,6 +842,8 @@ if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
         summary = [ordered] @{
             sourcePath = $hostedIntegrationSummary.path
             status = [string] $hostedIntegrationSummary.data.status
+            evidenceKind = [string] $hostedIntegrationSummary.data.evidenceKind
+            synthetic = [bool] $hostedIntegrationSummary.data.synthetic
             hosts = [ordered] @{
                 pyrevit = $hostedIntegrationSummary.hosts.pyrevit
                 dynamo = $hostedIntegrationSummary.hosts.dynamo

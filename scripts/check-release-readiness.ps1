@@ -314,11 +314,30 @@ function Test-SkippableSection($Section, $Name, $CapturedMessage, $SkippedMessag
     return $false
 }
 
+function Test-NonSyntheticEvidence($Name, $Evidence) {
+    if ($null -eq $Evidence) {
+        return
+    }
+
+    $evidenceKind = [string] $Evidence.evidenceKind
+    $synthetic = [bool] $Evidence.synthetic
+    if ($evidenceKind -eq "contract-fixture" -or $synthetic) {
+        if ($Profile -eq "external-preview") {
+            Warn $Name "$Name is marked as contract fixture/synthetic evidence; this is acceptable only for local contract tests or external previews."
+        } else {
+            Fail $Name "Release-candidate and production readiness require real evidence, not contract fixture/synthetic evidence."
+        }
+    } else {
+        Pass $Name "$Name is not marked as contract fixture/synthetic evidence."
+    }
+}
+
 function Test-LiveSmoke($Manifest, $Inventory) {
     $captured = Test-SkippableSection $Manifest.liveSmoke "liveSmoke" "Live Revit smoke evidence is captured." "Live Revit smoke evidence is skipped; this is acceptable only for clearly labeled external previews."
     if (-not $captured) { return }
 
     Test-SectionFiles $Inventory "liveSmoke.files" $Manifest.liveSmoke.storedAs $Manifest.liveSmoke.files "Live smoke evidence"
+    Test-NonSyntheticEvidence "liveSmoke.evidenceKind" $Manifest.liveSmoke.summary
 
     if ($Manifest.liveSmoke.summary.status -eq "passed") {
         Pass "liveSmoke.summary.status" "Live Revit smoke summary passed."
@@ -414,6 +433,7 @@ function Test-HostedIntegrations($Manifest, $Inventory) {
         $storedPath = if (Test-Blank $Manifest.hostedIntegrations.storedAs) { $relativePath } else { "$($Manifest.hostedIntegrations.storedAs)/$relativePath" }
         Require-InventoryPath $Inventory $storedPath "hostedIntegrations.raw.$relativePath" "Hosted integration evidence is missing required raw file $storedPath."
     }
+    Test-NonSyntheticEvidence "hostedIntegrations.evidenceKind" $Manifest.hostedIntegrations.summary
 
     if ($Manifest.hostedIntegrations.summary.status -eq "passed") {
         Pass "hostedIntegrations.summary.status" "Hosted integration summary passed."
@@ -434,6 +454,7 @@ function Test-HostedIntegrations($Manifest, $Inventory) {
         } else {
             Fail "hostedIntegrations.$hostName.writeCoverage" "$hostName hosted evidence lacks preview/apply write coverage."
         }
+        Test-NonSyntheticEvidence "hostedIntegrations.$hostName.evidenceKind" $hostSummary
     }
 
     $preflight = $Manifest.hostedIntegrations.summary.dynamoPreflight

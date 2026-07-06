@@ -110,6 +110,8 @@ function Assert-HostEvidence($Evidence, $ExpectedHost, $Path) {
 
     return [ordered] @{
         status = [string] $Evidence.status
+        evidenceKind = [string] $Evidence.evidenceKind
+        synthetic = [bool] $Evidence.synthetic
         evidencePath = "$ExpectedHost.json"
         previewReady = [bool] $Evidence.previewReady
         applyWrites = [bool] $Evidence.applyWrites
@@ -152,6 +154,8 @@ function Assert-DynamoPreflightEvidence($Preflight, $Path) {
 
     return [ordered] @{
         status = [string] $Preflight.status
+        evidenceKind = [string] $Preflight.evidenceKind
+        synthetic = [bool] $Preflight.synthetic
         evidencePath = "dynamo-preflight.json"
         revitYear = $Preflight.revitYear
         dynamoVersion = [string] $Preflight.dynamoVersion
@@ -203,6 +207,14 @@ $dynamoPreflight = Read-JsonFile $dynamoPreflightSource
 $pyRevitSummary = Assert-HostEvidence $pyRevitEvidence "pyrevit" $pyRevitSource
 $dynamoSummary = Assert-HostEvidence $dynamoEvidence "dynamo" $dynamoSource
 $dynamoPreflightSummary = Assert-DynamoPreflightEvidence $dynamoPreflight $dynamoPreflightSource
+$hasSyntheticEvidence = [bool] (
+    $pyRevitSummary.synthetic -or
+    $dynamoSummary.synthetic -or
+    $dynamoPreflightSummary.synthetic -or
+    [string] $pyRevitSummary.evidenceKind -eq "contract-fixture" -or
+    [string] $dynamoSummary.evidenceKind -eq "contract-fixture" -or
+    [string] $dynamoPreflightSummary.evidenceKind -eq "contract-fixture"
+)
 
 $pyRevitDest = Join-Path $outputRootFull "pyrevit.json"
 $dynamoDest = Join-Path $outputRootFull "dynamo.json"
@@ -214,6 +226,8 @@ Copy-Item -LiteralPath $dynamoPreflightSource -Destination $dynamoPreflightDest 
 $summary = [ordered] @{
     schemaVersion = 1
     status = "passed"
+    evidenceKind = if ($hasSyntheticEvidence) { "contract-fixture" } else { "" }
+    synthetic = $hasSyntheticEvidence
     createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     hosts = [ordered] @{
         pyrevit = $pyRevitSummary
