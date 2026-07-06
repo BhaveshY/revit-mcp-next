@@ -186,7 +186,6 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 }
 
 $outputRootFull = Get-FullPath $OutputRoot
-New-Directory $outputRootFull
 
 $pyRevitSource = Resolve-RequiredFile $PyRevitEvidencePath "pyRevit host-smoke evidence"
 $dynamoSource = Resolve-RequiredFile $DynamoEvidencePath "Dynamo host-smoke evidence"
@@ -215,6 +214,8 @@ $hasSyntheticEvidence = [bool] (
     [string] $dynamoSummary.evidenceKind -eq "contract-fixture" -or
     [string] $dynamoPreflightSummary.evidenceKind -eq "contract-fixture"
 )
+
+New-Directory $outputRootFull
 
 $pyRevitDest = Join-Path $outputRootFull "pyrevit.json"
 $dynamoDest = Join-Path $outputRootFull "dynamo.json"

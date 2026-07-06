@@ -183,6 +183,9 @@ export async function runRevitCtl(options: RevitCtlOptions): Promise<{ exitCode:
     if (options.command === "doctor") {
       return runDoctor(bridge, sessionId, runtime.timeoutMs, runtime.discovery);
     }
+    if (options.command === "read-bundle" || options.command === "bundle") {
+      return runReadBundle(bridge, sessionId, runtime.timeoutMs, payloadObject(options.payload));
+    }
 
     const { operation, operationKind, payload } = resolveCommandOperation(options);
     const request = makeRequest(sessionId, operation, operationKind, payload, runtime.timeoutMs);
@@ -349,6 +352,242 @@ async function runDoctor(
   return { exitCode: body.ok ? 0 : 2, body };
 }
 
+async function runReadBundle(
+  bridge: NamedPipeBridgeClient,
+  sessionId: string,
+  timeoutMs: number,
+  args: Record<string, unknown>
+): Promise<{ exitCode: number; body: unknown }> {
+  const startedAt = Date.now();
+  const aggregateRequest = makeRequest(sessionId, "read_bundle", "read", args, timeoutMs);
+  const includeArgs = optionalRecord(args.include, "include");
+  const include = {
+    status: optionalBoolean(includeArgs.status, true, "include.status"),
+    levels: optionalBoolean(includeArgs.levels, true, "include.levels"),
+    readiness: optionalBoolean(includeArgs.readiness, true, "include.readiness"),
+    currentView: optionalBoolean(includeArgs.currentView, true, "include.currentView"),
+    currentViewElements: optionalBoolean(includeArgs.currentViewElements, true, "include.currentViewElements"),
+    selection: optionalBoolean(includeArgs.selection, true, "include.selection"),
+    modelContext: optionalBoolean(includeArgs.modelContext, false, "include.modelContext"),
+    warnings: optionalBoolean(includeArgs.warnings, false, "include.warnings"),
+  };
+  const continueOnError = optionalBoolean(args.continueOnError, true, "continueOnError");
+  const includeSectionMetrics = optionalBoolean(args.includeSectionMetrics, false, "includeSectionMetrics");
+  const sections: Record<string, unknown> = {};
+  const returnedSections: string[] = [];
+  const failedSections: Array<Record<string, unknown>> = [];
+  const warnings: Array<{ code: string; message: string }> = [];
+  const sectionMetrics: Record<string, unknown> = {};
+
+  const record = (section: string, response: BridgeResponse<unknown>, returnSection = true): BridgeResponse<unknown> | null => {
+    for (const warning of response.warnings ?? []) {
+      warnings.push({
+        code: `${section}.${warning.code}`,
+        message: warning.message,
+      });
+    }
+    if (includeSectionMetrics && response.metrics) sectionMetrics[section] = response.metrics;
+
+    if (response.ok) {
+      if (returnSection) {
+        sections[section] = response.data;
+        returnedSections.push(section);
+      }
+      return null;
+    }
+
+    const failure = {
+      section,
+      code: response.error?.code ?? "SECTION_FAILED",
+      message: response.error?.message ?? `${section} failed.`,
+      suggestedNextAction: response.error?.suggestedNextAction,
+    };
+    failedSections.push(failure);
+    if (continueOnError) return null;
+    return {
+      ok: false,
+      requestId: aggregateRequest.requestId,
+      error: {
+        code: "READ_BUNDLE_SECTION_FAILED",
+        message: `${section} failed: ${failure.message}`,
+        recoverable: true,
+        details: { section: failure },
+      },
+      warnings,
+      metrics: { elapsedMs: Date.now() - startedAt },
+    };
+  };
+
+  const statusRequest = makeRequest(sessionId, "status", "read", {}, Math.min(timeoutMs, 10000));
+  const statusResponse = await bridge.status(statusRequest);
+  const statusFailure = record("status", statusResponse as BridgeResponse<unknown>, include.status);
+  if (statusFailure) return { exitCode: 2, body: statusFailure };
+  if (!statusResponse.ok) return { exitCode: 2, body: statusResponse };
+
+  const documentFingerprint = optionalString(args.documentFingerprint, "documentFingerprint") ?? statusResponse.data.activeDocument?.fingerprint;
+  const expectedGeneration =
+    optionalNumber(args.expectedGeneration, "expectedGeneration") ?? statusResponse.data.activeDocument?.generation;
+  const guard = compactObject({
+    documentFingerprint,
+    expectedGeneration,
+  });
+
+  if (include.levels) {
+    const payload = compactObject({ documentFingerprint, expectedGeneration });
+    const request = makeRequest(sessionId, "get_levels", "read", payload, timeoutMs);
+    const failure = record("levels", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  if (include.readiness) {
+    const readiness = optionalRecord(args.readiness, "readiness");
+    const payload = compactObject({
+      ...guard,
+      scenarios: readiness.scenarios,
+      includeHints: optionalBoolean(readiness.includeHints, true, "readiness.includeHints"),
+    });
+    const request = makeRequest(sessionId, "get_model_readiness", "read", payload, timeoutMs);
+    const failure = record("readiness", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  if (include.currentView) {
+    const currentView = optionalRecord(args.currentView, "currentView");
+    const payload = compactObject({
+      ...guard,
+      includeCropBox: optionalBoolean(currentView.includeCropBox, false, "currentView.includeCropBox"),
+    });
+    const request = makeRequest(sessionId, "get_current_view", "read", payload, timeoutMs);
+    const failure = record("currentView", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  if (include.currentViewElements) {
+    const currentViewElements = optionalRecord(args.currentViewElements, "currentViewElements");
+    const payload = compactObject({
+      ...guard,
+      filter: optionalRecord(currentViewElements.filter, "currentViewElements.filter"),
+      fields: currentViewElements.fields,
+      preset: currentViewElements.preset ?? "summary",
+      includeHidden: optionalBoolean(currentViewElements.includeHidden, false, "currentViewElements.includeHidden"),
+      limit: currentViewElements.limit ?? 10,
+      includeTotalCount: optionalBoolean(currentViewElements.includeTotalCount, false, "currentViewElements.includeTotalCount"),
+    });
+    const request = makeRequest(sessionId, "get_current_view_elements", "read", payload, timeoutMs);
+    const failure = record("currentViewElements", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  if (include.selection) {
+    const selection = optionalRecord(args.selection, "selection");
+    const selectionFilter = optionalRecord(selection.filter, "selection.filter");
+    const payload = compactObject({
+      ...guard,
+      filter: { ...selectionFilter, selectionOnly: true },
+      fields: selection.fields,
+      preset: selection.preset ?? "summary",
+      limit: selection.limit ?? 10,
+      includeTotalCount: optionalBoolean(selection.includeTotalCount, false, "selection.includeTotalCount"),
+    });
+    const request = makeRequest(sessionId, "get_selection", "read", payload, timeoutMs);
+    const failure = record("selection", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  if (include.modelContext) {
+    const modelContext = optionalRecord(args.modelContext, "modelContext");
+    const payload = compactObject({
+      ...guard,
+      includeProjectInfo: optionalBoolean(modelContext.includeProjectInfo, true, "modelContext.includeProjectInfo"),
+      includePhases: optionalBoolean(modelContext.includePhases, true, "modelContext.includePhases"),
+      includeWorksets: optionalBoolean(modelContext.includeWorksets, true, "modelContext.includeWorksets"),
+      includeDesignOptions: optionalBoolean(modelContext.includeDesignOptions, true, "modelContext.includeDesignOptions"),
+      includeRevitLinks: optionalBoolean(modelContext.includeRevitLinks, true, "modelContext.includeRevitLinks"),
+      phaseLimit: modelContext.phaseLimit ?? 10,
+      worksetLimit: modelContext.worksetLimit ?? 10,
+      designOptionLimit: modelContext.designOptionLimit ?? 10,
+      revitLinkLimit: modelContext.revitLinkLimit ?? 10,
+      includeTotalCount: optionalBoolean(modelContext.includeTotalCount, false, "modelContext.includeTotalCount"),
+    });
+    const request = makeRequest(sessionId, "get_model_context", "read", payload, timeoutMs);
+    const failure = record("modelContext", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  if (include.warnings) {
+    const warningArgs = optionalRecord(args.warnings, "warnings");
+    const payload = compactObject({
+      ...guard,
+      filter: optionalRecord(warningArgs.filter, "warnings.filter"),
+      fields: warningArgs.fields,
+      preset: warningArgs.preset ?? "summary",
+      limit: warningArgs.limit ?? 10,
+      includeTotalCount: optionalBoolean(warningArgs.includeTotalCount, false, "warnings.includeTotalCount"),
+    });
+    const request = makeRequest(sessionId, "get_warnings", "read", payload, timeoutMs);
+    const failure = record("warnings", await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  for (const [index, catalog] of recordArray(args.catalogs, "catalogs", 8).entries()) {
+    const key = sectionKey("catalog", index, optionalString(catalog.key, `catalogs[${index}].key`));
+    const payload = compactObject({
+      ...guard,
+      kind: requiredString(catalog.kind, `catalogs[${index}].kind`),
+      filter: optionalRecord(catalog.filter, `catalogs[${index}].filter`),
+      preset: catalog.preset ?? "compact",
+      fields: catalog.fields,
+      limit: catalog.limit ?? 20,
+      includeTotalCount: optionalBoolean(catalog.includeTotalCount, false, `catalogs[${index}].includeTotalCount`),
+    });
+    const request = makeRequest(sessionId, "catalog", "read", payload, timeoutMs);
+    const failure = record(`catalogs.${key}`, await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  for (const [index, parameterRequest] of recordArray(args.parameters, "parameters", 4).entries()) {
+    const key = sectionKey("parameters", index, optionalString(parameterRequest.key, `parameters[${index}].key`));
+    const payload = compactObject({
+      ...guard,
+      filter: requiredRecord(parameterRequest.filter, `parameters[${index}].filter`),
+      preset: parameterRequest.preset ?? "writableEdit",
+      includeTypeParameters: parameterRequest.includeTypeParameters,
+      includeReadOnly: parameterRequest.includeReadOnly,
+      includeValues: parameterRequest.includeValues,
+      nameContains: parameterRequest.nameContains,
+      limit: parameterRequest.limit,
+      parameterLimit: parameterRequest.parameterLimit,
+      includeTotalCount: optionalBoolean(parameterRequest.includeTotalCount, false, `parameters[${index}].includeTotalCount`),
+    });
+    const request = makeRequest(sessionId, "describe_parameters", "read", payload, timeoutMs);
+    const failure = record(`parameters.${key}`, await callBridge(bridge, request));
+    if (failure) return { exitCode: 2, body: failure };
+  }
+
+  const data = compactObject({
+    documentFingerprint,
+    generation: expectedGeneration,
+    returnedSections,
+    failedSections,
+    sections,
+    sectionMetrics: includeSectionMetrics ? sectionMetrics : undefined,
+    source: "revitctl-composed",
+  });
+  const response: BridgeResponse<typeof data> = {
+    ok: true,
+    requestId: aggregateRequest.requestId,
+    data,
+    warnings,
+    metrics: {
+      elapsedMs: Date.now() - startedAt,
+      returnedCount: returnedSections.length,
+      totalCount: returnedSections.length + failedSections.length,
+    },
+    generation: typeof expectedGeneration === "number" ? expectedGeneration : undefined,
+  };
+  return { exitCode: 0, body: response };
+}
+
 async function callBridge(
   bridge: NamedPipeBridgeClient,
   request: BridgeRequest<Record<string, unknown>>
@@ -414,6 +653,66 @@ function payloadObject(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   throw new RevitCtlUsageError("Payload must be a JSON object.");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalRecord(value: unknown, name: string): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  if (isRecord(value)) return value;
+  throw new RevitCtlUsageError(`${name} must be a JSON object.`);
+}
+
+function requiredRecord(value: unknown, name: string): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  throw new RevitCtlUsageError(`${name} must be a JSON object.`);
+}
+
+function recordArray(value: unknown, name: string, max: number): Record<string, unknown>[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new RevitCtlUsageError(`${name} must be a JSON array.`);
+  if (value.length > max) throw new RevitCtlUsageError(`${name} can include at most ${max} item(s).`);
+  return value.map((item, index) => requiredRecord(item, `${name}[${index}]`));
+}
+
+function optionalBoolean(value: unknown, defaultValue: boolean, name: string): boolean {
+  if (value === undefined || value === null) return defaultValue;
+  if (typeof value === "boolean") return value;
+  throw new RevitCtlUsageError(`${name} must be a boolean.`);
+}
+
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value;
+  throw new RevitCtlUsageError(`${name} must be a string.`);
+}
+
+function requiredString(value: unknown, name: string): string {
+  const text = optionalString(value, name);
+  if (!text) throw new RevitCtlUsageError(`${name} is required.`);
+  return text;
+}
+
+function optionalNumber(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new RevitCtlUsageError(`${name} must be a number.`);
+}
+
+function compactObject<T extends Record<string, unknown>>(value: T): T {
+  const compact: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) compact[key] = entry;
+  }
+  return compact as T;
+}
+
+function sectionKey(prefix: string, index: number, key?: string): string {
+  const trimmed = key?.trim();
+  if (!trimmed) return `${prefix}${index + 1}`;
+  return trimmed.replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 80) || `${prefix}${index + 1}`;
 }
 
 function requireValue(argv: string[], index: number, option: string): string {
@@ -482,6 +781,7 @@ function helpText(): string {
 Usage:
   revitctl status [--json]
   revitctl doctor [--json]
+  revitctl read-bundle [--payload <json-or-path>]
   revitctl readiness [--payload <json-or-path>]
   revitctl model-context [--payload <json-or-path>]
   revitctl warnings [--payload <json-or-path>]

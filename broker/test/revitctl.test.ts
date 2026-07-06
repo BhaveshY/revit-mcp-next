@@ -14,6 +14,20 @@ interface CapturedRequest {
   requestId: string;
 }
 
+interface PipeResponseOverride {
+  ok?: boolean;
+  data?: unknown;
+  error?: {
+    code: string;
+    message: string;
+    recoverable?: boolean;
+    suggestedNextAction?: string;
+    details?: unknown;
+  };
+  warnings?: Array<{ code: string; message: string }>;
+  metrics?: Record<string, unknown>;
+}
+
 test("revitctl parses compact command payloads and auth token config", () => {
   assert.equal(parseAuthTokenConfig("REVIT_MCP_NEXT_AUTH_TOKEN=abc123\n"), "abc123");
   assert.equal(parseAuthTokenConfig('REVIT_MCP_NEXT_AUTH_TOKEN="quoted-token"\n'), "quoted-token");
@@ -27,6 +41,10 @@ test("revitctl parses compact command payloads and auth token config", () => {
   const context = parseArgs(["model-context", "--payload", '{"phaseLimit":5}']);
   assert.equal(context.command, "model-context");
   assert.deepEqual(context.payload, { phaseLimit: 5 });
+
+  const readBundle = parseArgs(["read-bundle", "--payload", '{"include":{"warnings":true}}']);
+  assert.equal(readBundle.command, "read-bundle");
+  assert.deepEqual(readBundle.payload, { include: { warnings: true } });
 
   const warnings = parseArgs(["warnings", "--payload", '{"preset":"elements","limit":5}']);
   assert.equal(warnings.command, "warnings");
@@ -169,6 +187,119 @@ test("revitctl routes model-context command as a read operation", async () => {
       assert.equal((result.body as { ok?: boolean }).ok, true);
     }
   );
+});
+
+test("revitctl read-bundle composes compact guarded bridge reads", async () => {
+  const requests: CapturedRequest[] = [];
+  await withPipeServer(
+    (request) => {
+      requests.push(request);
+      switch (request.operation) {
+        case "status":
+          return {
+            data: {
+              connected: true,
+              brokerVersion: "test",
+              protocolVersion: "2026-06-23",
+              activeDocument: { title: "fixture.rvt", fingerprint: "doc-fingerprint", generation: 42 },
+              capabilities: ["status"],
+              warnings: [],
+            },
+          };
+        case "get_warnings":
+          return {
+            ok: false,
+            error: {
+              code: "WARNINGS_UNAVAILABLE",
+              message: "Warnings are unavailable in this fixture.",
+              recoverable: true,
+              suggestedNextAction: "Retry from a live graphical document.",
+            },
+          };
+        default:
+          return {
+            data: {
+              operation: request.operation,
+              payload: request.payload,
+            },
+          };
+      }
+    },
+    async (pipeName) => {
+      const result = await runRevitCtl(
+        parseArgs([
+          "read-bundle",
+          "--payload",
+          JSON.stringify({
+            include: { warnings: true },
+            currentViewElements: { limit: 2 },
+            catalogs: [{ key: "wallTypes", kind: "elementTypes", preset: "typeChange", limit: 3 }],
+            parameters: [{ key: "selectionParams", filter: { selectionOnly: true }, limit: 1 }],
+            includeSectionMetrics: true,
+          }),
+          "--pipe",
+          pipeName,
+        ])
+      );
+      assert.equal(result.exitCode, 0);
+      const body = result.body as { ok?: boolean; data?: Record<string, unknown> };
+      assert.equal(body.ok, true);
+      assert.equal(body.data?.source, "revitctl-composed");
+      assert.equal(body.data?.documentFingerprint, "doc-fingerprint");
+      assert.equal(body.data?.generation, 42);
+      assert.deepEqual(body.data?.returnedSections, [
+        "status",
+        "levels",
+        "readiness",
+        "currentView",
+        "currentViewElements",
+        "selection",
+        "catalogs.wallTypes",
+        "parameters.selectionParams",
+      ]);
+      assert.deepEqual(body.data?.failedSections, [
+        {
+          section: "warnings",
+          code: "WARNINGS_UNAVAILABLE",
+          message: "Warnings are unavailable in this fixture.",
+          suggestedNextAction: "Retry from a live graphical document.",
+        },
+      ]);
+    }
+  );
+
+  assert.deepEqual(
+    requests.map((request) => request.operation),
+    [
+      "status",
+      "get_levels",
+      "get_model_readiness",
+      "get_current_view",
+      "get_current_view_elements",
+      "get_selection",
+      "get_warnings",
+      "catalog",
+      "describe_parameters",
+    ]
+  );
+  assert.deepEqual(requests[1].payload, { documentFingerprint: "doc-fingerprint", expectedGeneration: 42 });
+  assert.deepEqual(requests[4].payload, {
+    documentFingerprint: "doc-fingerprint",
+    expectedGeneration: 42,
+    filter: {},
+    preset: "summary",
+    includeHidden: false,
+    limit: 2,
+    includeTotalCount: false,
+  });
+  assert.deepEqual(requests[5].payload, {
+    documentFingerprint: "doc-fingerprint",
+    expectedGeneration: 42,
+    filter: { selectionOnly: true },
+    preset: "summary",
+    limit: 10,
+    includeTotalCount: false,
+  });
 });
 
 test("revitctl routes write-control commands through guarded bridge operations", async () => {
@@ -339,6 +470,7 @@ test("revitctl help lists write-control and raw call support", async () => {
   assert.match(help, /revitctl preview/);
   assert.match(help, /revitctl apply/);
   assert.match(help, /revitctl cancel/);
+  assert.match(help, /revitctl read-bundle/);
   assert.match(help, /revitctl current-view-elements/);
   assert.match(help, /revitctl analyze/);
   assert.match(help, /revitctl materials/);
@@ -347,7 +479,10 @@ test("revitctl help lists write-control and raw call support", async () => {
   assert.match(help, /--operation-kind/);
 });
 
-async function withPipeServer(onRequest: (request: CapturedRequest) => void, runClient: (pipeName: string) => Promise<void>) {
+async function withPipeServer(
+  onRequest: (request: CapturedRequest) => PipeResponseOverride | void,
+  runClient: (pipeName: string) => Promise<void>
+) {
   const pipeName = `revitctl-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const pipePath = `\\\\.\\pipe\\${pipeName}`;
   const server = net.createServer((socket) => {
@@ -359,21 +494,24 @@ async function withPipeServer(onRequest: (request: CapturedRequest) => void, run
       if (buffer.byteLength < length + 4) return;
 
       const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as CapturedRequest;
-      onRequest(request);
+      const override = onRequest(request) ?? {};
 
       const responseBody = Buffer.from(
         JSON.stringify({
-          ok: true,
+          ok: override.ok ?? true,
           requestId: request.requestId,
-          data: {
-            connected: true,
-            brokerVersion: "test",
-            protocolVersion: "2026-06-23",
-            capabilities: ["status"],
-            warnings: [],
-          },
-          warnings: [],
-          metrics: { elapsedMs: 1 },
+          data:
+            override.data ??
+            {
+              connected: true,
+              brokerVersion: "test",
+              protocolVersion: "2026-06-23",
+              capabilities: ["status"],
+              warnings: [],
+            },
+          error: override.error,
+          warnings: override.warnings ?? [],
+          metrics: override.metrics ?? { elapsedMs: 1 },
         }),
         "utf8"
       );

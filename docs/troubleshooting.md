@@ -75,10 +75,11 @@ Bridge debug CLI:
 ```powershell
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" read-bundle --payload '{"include":{"modelContext":true,"warnings":true},"currentViewElements":{"limit":5},"selection":{"limit":5}}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" cancel --payload '{"requestId":"pending-request-id","reason":"operator cancelled smoke run"}' --pretty
 ```
 
-Use this to separate MCP client configuration problems from Revit/add-in/named-pipe problems. `BRIDGE_UNAVAILABLE` from `revitctl status` means Revit is closed, the add-in did not load, the auth config does not match the running add-in environment, or the named pipe is not listening.
+Use this to separate MCP client configuration problems from Revit/add-in/named-pipe problems. `BRIDGE_UNAVAILABLE` from `revitctl status` or the status section of `revitctl read-bundle` means Revit is closed, the add-in did not load, the auth config does not match the running add-in environment, or the named pipe is not listening.
 `revitctl cancel` is best-effort support tooling. It can return a clean no-op when no queued request matches or the work is already inside non-cancellable Revit API execution.
 
 Common states:

@@ -54,6 +54,7 @@ The installed `revitctl.cmd` is the quick support check:
 ```powershell
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" read-bundle --payload '{"include":{"modelContext":true,"warnings":true},"currentViewElements":{"limit":5}}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"limit":5}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" sheets --payload '{"limit":5}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"preset":"writableEdit","limit":5}' --pretty

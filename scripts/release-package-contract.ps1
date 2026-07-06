@@ -230,6 +230,7 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     $pyRevitSmokeScript = Join-Path $PackageRoot "scripts\run-pyrevit-host-smoke.ps1"
     $dynamoSmokeScript = Join-Path $PackageRoot "scripts\run-dynamo-host-smoke.ps1"
     $hostIntegrationsSmokeScript = Join-Path $PackageRoot "scripts\run-host-integrations-smoke.ps1"
+    $hostIntegrationEvidenceScript = Join-Path $PackageRoot "scripts\collect-host-integration-evidence.ps1"
     $pyRevitEvidencePath = Join-Path $RunRoot "host-smoke\pyrevit.json"
     $dynamoEvidencePath = Join-Path $RunRoot "host-smoke\dynamo.json"
     $modelPath = Join-Path $RunRoot "host-smoke\disposable.rvt"
@@ -558,6 +559,17 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         "-InstallRoot", $InstallRoot,
         "-EvidencePath", $fallbackPyRevitEvidencePath
     ) "*expected configuredAddin*" "pyRevit host smoke direct-fallback gate"
+
+    $missingCollectorOutputRoot = Join-Path $RunRoot "host-smoke\missing-evidence-output"
+    Assert-ScriptFailsLike $hostIntegrationEvidenceScript @(
+        "-PyRevitEvidencePath", $passedPyRevitEvidencePath,
+        "-DynamoEvidencePath", (Join-Path $RunRoot "host-smoke\missing-dynamo.json"),
+        "-DynamoPreflightReportPath", $preflightOnlyReportPath,
+        "-OutputRoot", $missingCollectorOutputRoot
+    ) "*Dynamo host-smoke evidence file was not found*" "Hosted integration collector missing Dynamo evidence gate"
+    if (Test-Path -LiteralPath $missingCollectorOutputRoot) {
+        throw "Hosted integration collector created an output root before required evidence validation passed."
+    }
 }
 
 function Assert-RevitProjectFixtureCreatorDryRun($PackageRoot, $InstallRoot, $RunRoot) {
@@ -758,7 +770,7 @@ function Assert-PackagedNpmAliases($PackageRoot) {
 }
 
 function Assert-RevitCtlHelpText($Text, $Label) {
-    foreach ($expected in @("revitctl preview", "revitctl apply", "revitctl cancel", "revitctl create-project", "revitctl call", "--operation-kind")) {
+    foreach ($expected in @("revitctl read-bundle", "revitctl preview", "revitctl apply", "revitctl cancel", "revitctl create-project", "revitctl call", "--operation-kind")) {
         if (-not $Text.Contains($expected)) {
             throw "$Label help output did not include '$expected'."
         }

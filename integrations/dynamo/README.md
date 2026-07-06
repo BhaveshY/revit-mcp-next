@@ -33,7 +33,7 @@ them by default. Set `REVIT_MCP_NEXT_EXAMPLE_APPLY_WRITES=1` to apply the grid
 sample and `REVIT_MCP_NEXT_EXAMPLE_APPLY_PLACEMENT=1` to apply family placement
 when the model and add-in return a ready preview.
 
-For release candidates, run `revit_mcp_next_host_smoke.dyn` against the installed package and set `REVIT_MCP_NEXT_DYNAMO_EVIDENCE` before launching Revit when you need a specific JSON output path. If Dynamo starts without an active document, set `REVIT_MCP_NEXT_DYNAMO_MODEL` to a disposable RVT. Archive the Dynamo evidence JSON and include it in `host-integrations-summary.json` together with the pyRevit host smoke result.
+For release candidates, run `revit_mcp_next_host_smoke.dyn` against the installed package and set `REVIT_MCP_NEXT_DYNAMO_EVIDENCE` before launching Revit when you need a specific JSON output path. If Dynamo starts without an active document, set `REVIT_MCP_NEXT_DYNAMO_MODEL` to a disposable RVT. Archive the Dynamo evidence JSON, the adjacent `dynamo-preflight.json`, and `host-integrations-summary.json` together with the pyRevit host smoke result.
 
 The packaged runner also writes a bounded preflight report next to the Dynamo evidence as `dynamo-preflight.json` during a normal host-smoke collection. The report records the Revit year, Dynamo version and `DynamoSettings.xml` path when discoverable, graph path, install root, evidence path, model path, and whether an existing settings file appears warmed. "Warmed" is only a read-only signal that an existing `DynamoSettings.xml` is present and parseable; it does not mean privacy consent was approved.
 

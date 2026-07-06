@@ -11,6 +11,7 @@ After `npm run install:windows`:
 ```powershell
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" status --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" doctor --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" read-bundle --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" readiness --pretty
 ```
 
@@ -25,6 +26,7 @@ It forwards the local pipe auth token to the add-in but does not print the token
 
 ```powershell
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"filter":{"isTemplate":false},"limit":10}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" read-bundle --payload '{"include":{"modelContext":true,"warnings":true},"currentViewElements":{"limit":5},"selection":{"limit":5}}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" sheets --payload '{"includePlacedViews":true,"limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" current-view-elements --payload '{"preset":"geometrySummary","limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" analyze --payload '{"bucketLimit":20,"maxElementsScanned":20000}' --pretty
@@ -74,6 +76,8 @@ npm run revitctl -- query --payload .\query.json --pretty
 ```
 
 Use `--install-root`, `--discovery`, `--auth-config`, `--pipe`, and `--timeout-ms` to target non-default installs.
+
+`read-bundle` is a CLI-composed support probe. It calls existing bridge operations for status, levels, readiness, current view, current-view elements, selection, optional model context, optional warnings, optional catalogs, and optional parameter metadata. It returns `source: "revitctl-composed"`, `returnedSections`, `failedSections`, and optional `sectionMetrics`; it does not send a raw `read_bundle` operation to the Revit add-in.
 
 Compact read aliases map directly to the MCP bridge operation names: `current-view-elements`/`view-elements` to `get_current_view_elements`, `analyze`/`analyze-model` to `analyze_model`, `materials`/`material-quantities` to `get_material_quantities`, and `rooms` to `get_rooms`. Use `call <operation>` only when a named alias does not exist.
 
