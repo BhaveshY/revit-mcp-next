@@ -1003,6 +1003,22 @@ try {
         throw "MCP config printer did not include the installed launcher path."
     }
 
+    $clientDoctorOutput = Invoke-RepoScriptCapture (Join-Path $packageRoot "scripts\doctor-clients.ps1") @(
+        "-InstallRoot", $installRoot,
+        "-Json"
+    )
+    $clientDoctorState = $clientDoctorOutput | ConvertFrom-Json
+    if ([string] $clientDoctorState.status -ne "ok") {
+        throw "Client doctor failed for installed package: $clientDoctorOutput"
+    }
+    $clientDoctorMessages = @($clientDoctorState.checks | ForEach-Object { [string] $_.message })
+    if ($clientDoctorMessages -notcontains "generated MCP client config payload does not contain the raw MCP auth token") {
+        throw "Client doctor did not run token-safe generated config check."
+    }
+    if (-not ($clientDoctorMessages | Where-Object { $_ -like "MCP startup and tools/list succeeded*" })) {
+        throw "Client doctor did not run MCP startup/tools-list smoke."
+    }
+
     $doctorScript = Join-Path $packageRoot "scripts\doctor.ps1"
     Invoke-RepoScript $doctorScript @(
         "-InstallRoot", $installRoot,
