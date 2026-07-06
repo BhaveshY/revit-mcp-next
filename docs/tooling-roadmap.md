@@ -13,7 +13,7 @@ This roadmap tracks high-value Revit workflow tools that are not yet part of the
 
 | Area | Tool or operation | Contract owner | Preview/apply behavior | Smoke requirement | State |
 | --- | --- | --- | --- | --- | --- |
-| Read batching | `revit.read_bundle` for status, readiness, scoped elements, catalogs, and parameter metadata | Broker/add-in/contracts | Read-only, guarded by document fingerprint/generation, per-section limits and scan metrics | Fake bridge test plus live smoke bundle call | rc-backlog |
+| Read batching | `revit.read_bundle` for status, readiness, scoped elements, catalogs, and parameter metadata | Broker/contracts | Read-only broker-composed calls, guarded by document fingerprint/generation, per-section limits and optional section metrics | Fake bridge test plus live smoke bundle call | available |
 | Diagnostics | Expanded `revit.status` lifecycle section | Add-in/broker | Read-only; queue depth, ExternalEvent raise state, preview token counts, and recovery hints | Fake bridge and MCP schema tests; live package smoke evidence still needed | available |
 | Cancellation | Queued request cancellation by `requestId` | Add-in queue | Debug operation; cancels queued work when not yet dispatched, reports no-op for in-flight work | Live no-op smoke exists; queued-cancel fixture still needed | available |
 | Large reads | Native/lazy paging for views, sheets, rooms, warnings, catalogs, and broad query | Add-in/contracts | Read-only; `maxElementsScanned`, `elementsScanned`, `nativeFilterUsed`, `postFilterUsed`, `scanTruncated` metrics | Contract tests plus large synthetic/disposable model smoke | rc-backlog |

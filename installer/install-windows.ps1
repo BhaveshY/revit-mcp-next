@@ -602,6 +602,7 @@ $clientDiscoveryContent = [ordered] @{
     contractSchemasPath = (Get-FullPath (Join-Path $installedContracts "schemas"))
     tools = @(
         "revit.status",
+        "revit.read_bundle",
         "revit.list_documents",
         "revit.create_project_from_template",
         "revit.get_levels",

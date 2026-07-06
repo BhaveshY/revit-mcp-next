@@ -70,6 +70,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     for (const expected of [
       "revit.get_current_view",
       "revit.list_documents",
+      "revit.read_bundle",
       "revit.create_project_from_template",
       "revit.get_levels",
       "revit.get_views",
@@ -93,6 +94,68 @@ test("broker exposes annotated tools with output schemas and callable structured
       assert.ok(tool, `${expected} tool should be listed`);
       assertStructuredEnvelopeSchema(tool.outputSchema, expected);
     }
+
+    const readBundleTool = tools.tools.find((tool) => tool.name === "revit.read_bundle");
+    assert.ok(readBundleTool?.inputSchema, "revit.read_bundle should declare inputSchema");
+    assert.match(JSON.stringify(readBundleTool.inputSchema), /catalogs/);
+    assert.match(JSON.stringify(readBundleTool.inputSchema), /parameters/);
+    assert.match(JSON.stringify(readBundleTool.outputSchema), /returnedSections/);
+    assert.match(JSON.stringify(readBundleTool.outputSchema), /failedSections/);
+    const readBundle = (await client.callTool({
+      name: "revit.read_bundle",
+      arguments: {
+        include: {
+          modelContext: true,
+          warnings: true,
+        },
+        currentViewElements: {
+          preset: "geometrySummary",
+          limit: 1,
+          includeTotalCount: true,
+        },
+        catalogs: [
+          {
+            key: "wallTypes",
+            kind: "elementTypes",
+            filter: { categories: ["OST_Walls"] },
+            preset: "typeChange",
+            limit: 2,
+          },
+        ],
+        parameters: [
+          {
+            key: "selectionParams",
+            filter: { selectionOnly: true },
+            preset: "writableEdit",
+            limit: 1,
+            parameterLimit: 3,
+          },
+        ],
+        includeSectionMetrics: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          returnedSections?: string[];
+          failedSections?: unknown[];
+          sections?: Record<string, any>;
+          sectionMetrics?: Record<string, unknown>;
+        };
+      };
+    };
+    assert.equal(readBundle.isError, undefined);
+    assert.ok(readBundle.structuredContent?.data?.returnedSections?.includes("status"));
+    assert.ok(readBundle.structuredContent?.data?.returnedSections?.includes("levels"));
+    assert.ok(readBundle.structuredContent?.data?.returnedSections?.includes("currentViewElements"));
+    assert.deepEqual(readBundle.structuredContent?.data?.failedSections, []);
+    assert.equal(readBundle.structuredContent?.data?.sections?.status?.connected, true);
+    assert.equal(readBundle.structuredContent?.data?.sections?.levels?.[0]?.id, "311");
+    assert.equal(readBundle.structuredContent?.data?.sections?.currentViewElements?.items?.[0]?.id, "501");
+    assert.match(readBundle.structuredContent?.data?.sections?.currentViewElements?.cursor ?? "", /^rvc1_/);
+    assert.equal(readBundle.structuredContent?.data?.sections?.["catalogs.wallTypes"]?.kind, "elementTypes");
+    assert.equal(readBundle.structuredContent?.data?.sections?.["parameters.selectionParams"]?.items?.[0]?.id, "501");
+    assert.ok(readBundle.structuredContent?.data?.sectionMetrics?.status);
 
     const currentViewTool = tools.tools.find((tool) => tool.name === "revit.get_current_view");
     assert.ok(currentViewTool?.inputSchema, "revit.get_current_view should declare inputSchema");

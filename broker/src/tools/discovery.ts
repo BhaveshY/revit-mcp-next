@@ -35,6 +35,19 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     related: ["revit.list_documents", "revit.get_current_view"],
   },
   {
+    name: "revit.read_bundle",
+    title: "Revit Read Bundle",
+    category: "read",
+    description: "Compose compact guarded reads for common agent preflight workflows in one MCP call.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use after or instead of separate first-step reads when planning a workflow and you need status plus a few small context sections.",
+    compactUse:
+      "Keep defaults for status/levels/readiness/current view/selection. Add small catalogs or parameter requests only for the next planned edit.",
+    related: ["revit.status", "revit.get_model_readiness", "revit.catalog", "revit.describe_parameters"],
+  },
+  {
     name: "revit.list_documents",
     title: "List Revit Documents",
     category: "session",
@@ -330,6 +343,7 @@ function discoveryDocument(context: DiscoveryContext): Record<string, unknown> {
     workflow: [
       "Start with revit.status and keep documentFingerprint/generation for guarded calls.",
       "Inspect revit.status diagnostics when a request stalls: queue depth, ExternalEvent raise state, preview-token counts, and recovery hints are compact.",
+      "Use revit.read_bundle for compact workflow preflight when you need status, readiness, current context, small catalogs, and parameter metadata in one MCP call.",
       "Use revit.query, revit.catalog, and revit.describe_parameters with tight filters instead of broad dumps.",
       "Use revit.preview_change_set before every mutation and apply only a ready preview with matching token metadata.",
       "Treat blocked previews as useful model evidence; do not guess Revit IDs or force unsupported operations.",

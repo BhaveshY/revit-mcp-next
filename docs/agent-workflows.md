@@ -1,12 +1,12 @@
 # Agent Workflows
 
-These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP client was configured with `npm run mcp:config`. Start each workflow with `revit.status`; carry the returned `activeDocument.fingerprint` and `activeDocument.generation` into reads and change sets so stale model state is caught early. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
+These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP client was configured with `npm run mcp:config`. Start most workflows with `revit.read_bundle` when the agent needs a compact preflight packet, or `revit.status` when it only needs connection and document guards. Carry the returned `activeDocument.fingerprint`/`documentFingerprint` and generation into reads and change sets so stale model state is caught early. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
 
 ## Model Audit
 
 Use this sequence when the user asks what is in the model, what is selected, or what needs cleanup:
 
-1. `revit.status` for connection, Revit version, active document, generation, queue diagnostics, and preview-token health.
+1. `revit.read_bundle` for connection, Revit version, active document, generation, levels, readiness, current view, current-view elements, selection, queue diagnostics, and preview-token health.
 2. `revit.get_views` and `revit.get_sheets` when the task mentions documentation, sheets, view placement, templates, or drawing organization.
 3. `revit.get_current_view` for view type, scale, and crop state.
 4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; use `preset: "geometrySummary"` instead when the workflow needs compact element `location` and model-space `bounds` in millimeters. When more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
@@ -23,7 +23,7 @@ Keep audit prompts scoped. Prefer current view or selected elements first, then 
 
 Use this sequence when the user asks what sheets/views exist, which views are placed, or what documentation setup is available:
 
-1. `revit.status` for active document fingerprint and generation.
+1. `revit.read_bundle` with a small `catalogs` request for `titleBlocks` or `viewFamilyTypes`, or `revit.status` when only active document fingerprint and generation are needed.
 2. `revit.get_views` with `filter.isTemplate: false` and a low `limit`; use `structuredContent.data.cursor` with the same arguments for additional pages.
 3. `revit.get_sheets` with `includePlacedViews: true` when the task involves sheet composition.
 4. `revit.catalog` with `kind: "titleBlocks"` and `preset: "sheet"` when sheet creation or title block availability matters.

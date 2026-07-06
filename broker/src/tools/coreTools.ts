@@ -376,6 +376,114 @@ const catalogSchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const readBundleIncludeSchema = z
+  .object({
+    status: z.boolean().default(true),
+    levels: z.boolean().default(true),
+    readiness: z.boolean().default(true),
+    currentView: z.boolean().default(true),
+    currentViewElements: z.boolean().default(true),
+    selection: z.boolean().default(true),
+    modelContext: z.boolean().default(false),
+    warnings: z.boolean().default(false),
+  })
+  .strict();
+
+const readBundleCatalogSchema = z
+  .object({
+    key: boundedString.optional().describe("Optional response key. Defaults to the catalog kind plus position."),
+    kind: z.enum(["elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes", "textNoteTypes", "dimensionTypes", "tagTypes"]),
+    filter: catalogFilterSchema.optional(),
+    preset: z.enum(["idOnly", "compact", "typeChange", "placement", "sheet", "annotation"]).default("compact"),
+    fields: z.array(boundedString).max(32).optional(),
+    limit: z.number().int().min(1).max(100).default(20),
+    includeTotalCount: z.boolean().default(false),
+  })
+  .strict();
+
+const readBundleParameterSchema = z
+  .object({
+    key: boundedString.optional().describe("Optional response key. Defaults to parameters plus position."),
+    filter: queryFilterSchema.describe("Tight parameter target filter. Prefer selectionOnly or explicit elementIds."),
+    preset: parameterDescribePresetSchema,
+    includeTypeParameters: z.boolean().optional(),
+    includeReadOnly: z.boolean().optional(),
+    includeValues: z.boolean().optional(),
+    nameContains: z.string().min(1).max(128).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    parameterLimit: z.number().int().min(1).max(120).optional(),
+    includeTotalCount: z.boolean().default(false),
+  })
+  .strict();
+
+const readBundleSchema = {
+  ...documentGuardSchema,
+  include: readBundleIncludeSchema.optional().describe("Read sections to include. Status is always collected for guards."),
+  readiness: z
+    .object({
+      scenarios: z.array(readinessScenarioSchema).max(16).optional(),
+      includeHints: z.boolean().default(true),
+    })
+    .strict()
+    .optional(),
+  currentView: z
+    .object({
+      includeCropBox: z.boolean().default(false),
+    })
+    .strict()
+    .optional(),
+  currentViewElements: z
+    .object({
+      filter: scopedQueryFilterSchema.optional(),
+      fields: z.array(boundedString).max(32).optional(),
+      preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).default("summary"),
+      includeHidden: z.boolean().default(false),
+      limit: z.number().int().min(1).max(100).default(10),
+      includeTotalCount: z.boolean().default(false),
+    })
+    .strict()
+    .optional(),
+  selection: z
+    .object({
+      filter: scopedQueryFilterSchema.optional(),
+      fields: z.array(boundedString).max(32).optional(),
+      preset: z.enum(["idOnly", "summary", "schedule", "geometrySummary"]).default("summary"),
+      limit: z.number().int().min(1).max(100).default(10),
+      includeTotalCount: z.boolean().default(false),
+    })
+    .strict()
+    .optional(),
+  modelContext: z
+    .object({
+      includeProjectInfo: z.boolean().default(true),
+      includePhases: z.boolean().default(true),
+      includeWorksets: z.boolean().default(true),
+      includeDesignOptions: z.boolean().default(true),
+      includeRevitLinks: z.boolean().default(true),
+      phaseLimit: z.number().int().min(1).max(50).default(10),
+      worksetLimit: z.number().int().min(1).max(50).default(10),
+      designOptionLimit: z.number().int().min(1).max(50).default(10),
+      revitLinkLimit: z.number().int().min(1).max(50).default(10),
+      includeTotalCount: z.boolean().default(false),
+    })
+    .strict()
+    .optional(),
+  warnings: z
+    .object({
+      filter: warningFilterSchema.optional(),
+      fields: z.array(boundedString).max(32).optional(),
+      preset: z.enum(["idOnly", "summary", "elements", "full"]).default("summary"),
+      limit: z.number().int().min(1).max(50).default(10),
+      includeTotalCount: z.boolean().default(false),
+    })
+    .strict()
+    .optional(),
+  catalogs: z.array(readBundleCatalogSchema).max(8).optional().describe("Small catalog reads to include for planning writes."),
+  parameters: z.array(readBundleParameterSchema).max(4).optional().describe("Small parameter metadata reads to include."),
+  continueOnError: z.boolean().default(true).describe("Return successful sections plus failedSections instead of failing the whole bundle."),
+  includeSectionMetrics: z.boolean().default(false).describe("Include per-section bridge metrics for diagnostics."),
+};
+
 const changeScalarSchema = z.union([z.string().max(512), z.number(), z.boolean()]);
 const changeUnitValueSchema = z.object({
   value: z.number(),
@@ -1201,6 +1309,27 @@ const parameterDescribeResultSchema = pageBaseSchema
   })
   .passthrough();
 
+const readBundleResultSchema = z
+  .object({
+    documentFingerprint: z.string().optional(),
+    generation: z.number().optional(),
+    returnedSections: z.array(z.string()),
+    failedSections: z.array(
+      z
+        .object({
+          section: z.string(),
+          code: z.string(),
+          message: z.string(),
+          suggestedNextAction: z.string().optional(),
+        })
+        .passthrough()
+    ),
+    sections: z.record(jsonValueSchema),
+    sectionMetrics: z.record(metricsSchema).optional(),
+    source: z.literal("broker-composed"),
+  })
+  .passthrough();
+
 const outputSchemas = {
   unknown: z
     .object({
@@ -1227,10 +1356,59 @@ const outputSchemas = {
   catalog: toolOutputSchema(catalogResultSchema),
   query: toolOutputSchema(queryResultSchema),
   parameters: toolOutputSchema(parameterDescribeResultSchema),
+  readBundle: toolOutputSchema(readBundleResultSchema),
   previewChange: toolOutputSchema(changePreviewResultSchema),
   applyChange: toolOutputSchema(changeApplyResultSchema),
   cancel: toolOutputSchema(cancelResultSchema),
 };
+
+function sectionKey(prefix: string, index: number, key?: string): string {
+  return key ?? `${prefix}${index + 1}`;
+}
+
+function sectionFailure(section: string, response: BridgeResponse<unknown>): Record<string, unknown> {
+  if (response.ok) {
+    return { section, code: "UNKNOWN_SECTION_FAILURE", message: `${section} failed without bridge error details.` };
+  }
+
+  return {
+    section,
+    code: response.error.code,
+    message: response.error.message,
+    suggestedNextAction: response.error.suggestedNextAction,
+  };
+}
+
+function sectionWarning(section: string, warning: { code: string; message: string }): { code: string; message: string } {
+  return {
+    code: `${section}.${warning.code}`,
+    message: `${section}: ${warning.message}`,
+  };
+}
+
+function compactObject<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, child]) => child !== undefined)) as T;
+}
+
+function readBundleFailure(
+  requestId: string,
+  failed: Record<string, unknown>,
+  warnings: Array<{ code: string; message: string }>,
+  startedAt: number
+): BridgeResponse<unknown> {
+  return {
+    ok: false,
+    requestId,
+    error: {
+      code: "READ_BUNDLE_SECTION_FAILED",
+      message: `${String(failed.section)} failed: ${String(failed.message)}`,
+      recoverable: true,
+      details: { section: failed },
+    },
+    warnings,
+    metrics: { elapsedMs: Date.now() - startedAt },
+  };
+}
 
 export function registerCoreTools(server: McpServer, context: CoreToolContext): void {
   server.registerTool(
@@ -1255,6 +1433,278 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         data.connected
           ? `Revit bridge connected. Active document: ${data.activeDocument?.title ?? "(none)"}.`
           : "Revit bridge is not connected."
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.read_bundle",
+    {
+      title: "Revit Read Bundle",
+      description:
+        "Compose compact guarded reads for common agent preflight workflows in one MCP call. Always probes status, then optionally returns levels, readiness, current view, current-view elements, selection, context, warnings, catalogs, and parameter metadata.",
+      inputSchema: readBundleSchema,
+      outputSchema: outputSchemas.readBundle,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const startedAt = Date.now();
+      const bundleRequest = makeRequest(context.sessionId, "read_bundle", "read", args, 90000);
+      const include = {
+        status: args.include?.status ?? true,
+        levels: args.include?.levels ?? true,
+        readiness: args.include?.readiness ?? true,
+        currentView: args.include?.currentView ?? true,
+        currentViewElements: args.include?.currentViewElements ?? true,
+        selection: args.include?.selection ?? true,
+        modelContext: args.include?.modelContext ?? false,
+        warnings: args.include?.warnings ?? false,
+      };
+      const continueOnError = args.continueOnError ?? true;
+      const includeSectionMetrics = args.includeSectionMetrics ?? false;
+      const sections: Record<string, unknown> = {};
+      const returnedSections: string[] = [];
+      const failedSections: Array<Record<string, unknown>> = [];
+      const warnings: Array<{ code: string; message: string }> = [];
+      const sectionMetrics: Record<string, unknown> = {};
+
+      const record = (
+        name: string,
+        response: BridgeResponse<unknown>,
+        options: { cursorOperation?: string; cursorPayload?: Record<string, unknown>; forceReturn?: boolean } = {}
+      ): BridgeResponse<unknown> | null => {
+        const wrapped =
+          response.ok && options.cursorOperation && options.cursorPayload
+            ? withOpaqueCursor(response, context, options.cursorOperation, options.cursorPayload)
+            : response;
+        for (const warning of wrapped.warnings ?? []) warnings.push(sectionWarning(name, warning));
+        if (includeSectionMetrics && wrapped.metrics) sectionMetrics[name] = wrapped.metrics;
+
+        if (wrapped.ok) {
+          if (options.forceReturn !== false) {
+            sections[name] = wrapped.data as unknown;
+            returnedSections.push(name);
+          }
+          return null;
+        }
+
+        const failed = sectionFailure(name, wrapped);
+        failedSections.push(failed);
+        return continueOnError ? null : readBundleFailure(bundleRequest.requestId, failed, warnings, startedAt);
+      };
+
+      const statusRequest = makeRequest(context.sessionId, "status", "read", {}, 5000);
+      const statusResponse = await context.bridge.status(statusRequest, { signal: extra.signal });
+      const statusFailure = record("status", statusResponse, { forceReturn: include.status });
+      if (statusFailure) return asToolResult(statusFailure, () => "");
+      if (!statusResponse.ok) return asToolResult(statusResponse, () => "");
+
+      const status = statusResponse.data;
+      const documentFingerprint = args.documentFingerprint ?? status.activeDocument?.fingerprint;
+      const expectedGeneration = args.expectedGeneration ?? status.activeDocument?.generation;
+      const guard = compactObject({
+        documentFingerprint,
+        expectedGeneration,
+      });
+
+      if (include.levels) {
+        const payload = compactObject({ documentFingerprint, expectedGeneration });
+        const request = makeRequest(context.sessionId, "get_levels", "read", payload, 10000);
+        const failure = record("levels", await context.bridge.getLevels(request, { signal: extra.signal }));
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      if (include.readiness) {
+        const payload = compactObject({
+          ...guard,
+          scenarios: args.readiness?.scenarios,
+          includeHints: args.readiness?.includeHints ?? true,
+        });
+        const request = makeRequest(context.sessionId, "get_model_readiness", "read", payload, 30000);
+        const failure = record("readiness", await context.bridge.getModelReadiness(request, { signal: extra.signal }));
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      if (include.currentView) {
+        const payload = compactObject({
+          ...guard,
+          includeCropBox: args.currentView?.includeCropBox ?? false,
+        });
+        const request = makeRequest(context.sessionId, "get_current_view", "read", payload, 10000);
+        const failure = record("currentView", await context.bridge.getCurrentView(request, { signal: extra.signal }));
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      if (include.currentViewElements) {
+        const payload = compactObject({
+          ...guard,
+          filter: args.currentViewElements?.filter ?? {},
+          fields: args.currentViewElements?.fields,
+          preset: args.currentViewElements?.preset ?? "summary",
+          includeHidden: args.currentViewElements?.includeHidden ?? false,
+          limit: args.currentViewElements?.limit ?? 10,
+          includeTotalCount: args.currentViewElements?.includeTotalCount ?? false,
+        });
+        const request = makeRequest(context.sessionId, "get_current_view_elements", "read", payload, 30000);
+        const response = await context.bridge.getCurrentViewElements(request, { signal: extra.signal });
+        const failure = record("currentViewElements", response, {
+          cursorOperation: "get_current_view_elements",
+          cursorPayload: payload,
+        });
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      if (include.selection) {
+        const payload = compactObject({
+          ...guard,
+          filter: { ...(args.selection?.filter ?? {}), selectionOnly: true },
+          fields: args.selection?.fields,
+          preset: args.selection?.preset ?? "summary",
+          limit: args.selection?.limit ?? 10,
+          includeTotalCount: args.selection?.includeTotalCount ?? false,
+        });
+        const request = makeRequest(context.sessionId, "get_selection", "read", payload, 30000);
+        const response = await context.bridge.getSelection(request, { signal: extra.signal });
+        const failure = record("selection", response, {
+          cursorOperation: "get_selection",
+          cursorPayload: payload,
+        });
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      if (include.modelContext) {
+        const modelContextArgs = (args.modelContext ?? {}) as {
+          includeProjectInfo?: boolean;
+          includePhases?: boolean;
+          includeWorksets?: boolean;
+          includeDesignOptions?: boolean;
+          includeRevitLinks?: boolean;
+          phaseLimit?: number;
+          worksetLimit?: number;
+          designOptionLimit?: number;
+          revitLinkLimit?: number;
+          includeTotalCount?: boolean;
+        };
+        const payload = compactObject({
+          ...guard,
+          includeProjectInfo: modelContextArgs.includeProjectInfo ?? true,
+          includePhases: modelContextArgs.includePhases ?? true,
+          includeWorksets: modelContextArgs.includeWorksets ?? true,
+          includeDesignOptions: modelContextArgs.includeDesignOptions ?? true,
+          includeRevitLinks: modelContextArgs.includeRevitLinks ?? true,
+          phaseLimit: modelContextArgs.phaseLimit ?? 10,
+          worksetLimit: modelContextArgs.worksetLimit ?? 10,
+          designOptionLimit: modelContextArgs.designOptionLimit ?? 10,
+          revitLinkLimit: modelContextArgs.revitLinkLimit ?? 10,
+          includeTotalCount: modelContextArgs.includeTotalCount ?? false,
+        });
+        const request = makeRequest(context.sessionId, "get_model_context", "read", payload, 30000);
+        const failure = record("modelContext", await context.bridge.getModelContext(request, { signal: extra.signal }));
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      if (include.warnings) {
+        const warningArgs = (args.warnings ?? {}) as {
+          filter?: Record<string, unknown>;
+          fields?: string[];
+          preset?: "idOnly" | "summary" | "elements" | "full";
+          limit?: number;
+          includeTotalCount?: boolean;
+        };
+        const payload = compactObject({
+          ...guard,
+          filter: warningArgs.filter ?? {},
+          fields: warningArgs.fields,
+          preset: warningArgs.preset ?? "summary",
+          limit: warningArgs.limit ?? 10,
+          includeTotalCount: warningArgs.includeTotalCount ?? false,
+        });
+        const request = makeRequest(context.sessionId, "get_warnings", "read", payload, 30000);
+        const response = await context.bridge.getWarnings(request, { signal: extra.signal });
+        const failure = record("warnings", response, {
+          cursorOperation: "get_warnings",
+          cursorPayload: payload,
+        });
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      for (const [index, catalog] of (args.catalogs ?? []).entries()) {
+        const name = `catalogs.${sectionKey("catalog", index, catalog.key)}`;
+        const payload = compactObject({
+          ...guard,
+          kind: catalog.kind,
+          filter: catalog.filter ?? {},
+          preset: catalog.preset ?? "compact",
+          fields: catalog.fields,
+          limit: catalog.limit ?? 20,
+          includeTotalCount: catalog.includeTotalCount ?? false,
+        });
+        const request = makeRequest(context.sessionId, "catalog", "read", payload, 30000);
+        const response = await context.bridge.catalog(request, { signal: extra.signal });
+        const failure = record(name, response, {
+          cursorOperation: "catalog",
+          cursorPayload: payload,
+        });
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      for (const [index, parameterRequest] of (args.parameters ?? []).entries()) {
+        const name = `parameters.${sectionKey("parameters", index, parameterRequest.key)}`;
+        const options = resolveParameterDescribeOptions(parameterRequest);
+        const payload = compactObject({
+          ...guard,
+          filter: parameterRequest.filter,
+          preset: options.preset,
+          includeTypeParameters: options.includeTypeParameters,
+          includeReadOnly: options.includeReadOnly,
+          includeValues: options.includeValues,
+          nameContains: parameterRequest.nameContains,
+          limit: options.limit,
+          parameterLimit: options.parameterLimit,
+          includeTotalCount: parameterRequest.includeTotalCount ?? false,
+        });
+        const request = makeRequest(context.sessionId, "describe_parameters", "read", payload, 30000);
+        const response = await context.bridge.describeParameters(request, { signal: extra.signal });
+        const failure = record(name, response, {
+          cursorOperation: "describe_parameters",
+          cursorPayload: payload,
+        });
+        if (failure) return asToolResult(failure, () => "");
+      }
+
+      const data = compactObject({
+        documentFingerprint,
+        generation: expectedGeneration,
+        returnedSections,
+        failedSections,
+        sections,
+        sectionMetrics: includeSectionMetrics ? sectionMetrics : undefined,
+        source: "broker-composed",
+      });
+
+      const response: BridgeResponse<typeof data> = {
+        ok: true,
+        requestId: bundleRequest.requestId,
+        data,
+        warnings,
+        metrics: {
+          elapsedMs: Date.now() - startedAt,
+          returnedCount: returnedSections.length,
+          totalCount: returnedSections.length + failedSections.length,
+        },
+        generation: typeof expectedGeneration === "number" ? expectedGeneration : undefined,
+      };
+
+      return asToolResult(
+        response,
+        (result) =>
+          `Read bundle returned ${result.returnedSections.length} section(s)` +
+          (result.failedSections.length ? ` with ${result.failedSections.length} failed section(s).` : ".")
       );
     }
   );

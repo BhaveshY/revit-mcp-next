@@ -188,6 +188,23 @@ export interface RevitStatus {
   warnings: BridgeWarning[];
 }
 
+export interface ReadBundleFailure {
+  section: string;
+  code: string;
+  message: string;
+  suggestedNextAction?: string;
+}
+
+export interface ReadBundleResult {
+  documentFingerprint?: string;
+  generation?: number;
+  returnedSections: string[];
+  failedSections: ReadBundleFailure[];
+  sections: Record<string, unknown>;
+  sectionMetrics?: Record<string, BridgeMetrics>;
+  source: "broker-composed";
+}
+
 export interface CreateProjectFromTemplateRequest {
   templatePath: string;
   outputPath: string;

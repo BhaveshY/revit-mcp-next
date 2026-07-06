@@ -14,6 +14,7 @@ const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
 const RETRYABLE_BUSY_ERROR_CODES = new Set(["REVIT_EXTERNAL_EVENT_TIMEOUT", "BRIDGE_TIMEOUT"]);
 const RETRYABLE_TOOLS = new Set([
   "revit.status",
+  "revit.read_bundle",
   "revit.get_levels",
   "revit.get_views",
   "revit.get_sheets",
@@ -34,6 +35,7 @@ const RETRYABLE_TOOLS = new Set([
 const retryEvidence = [];
 const REQUIRED_TOOLS = [
   "revit.status",
+  "revit.read_bundle",
   "revit.get_levels",
   "revit.get_views",
   "revit.get_sheets",
@@ -207,6 +209,54 @@ async function main() {
       `Status OK: ${activeDocument.title ?? "(untitled)"} at generation ${startingGeneration ?? "(unknown)"}`
     );
 
+    const readBundle = await callRequiredTool(
+      client,
+      "revit.read_bundle",
+      compactObject({
+        documentFingerprint,
+        expectedGeneration: startingGeneration,
+        currentViewElements: {
+          preset: "summary",
+          limit: 2,
+          includeTotalCount: false,
+        },
+        selection: {
+          preset: "summary",
+          limit: 2,
+          includeTotalCount: false,
+        },
+        catalogs: [
+          {
+            key: "wallTypes",
+            kind: "elementTypes",
+            filter: { categories: ["OST_Walls"] },
+            preset: "typeChange",
+            limit: 3,
+            includeTotalCount: false,
+          },
+        ],
+      })
+    );
+    summary.coveredTools.push("revit.read_bundle");
+    assert(readBundle.source === "broker-composed", "revit.read_bundle did not report broker-composed source.");
+    assert(Array.isArray(readBundle.returnedSections), "revit.read_bundle did not return returnedSections.");
+    for (const section of ["status", "levels", "readiness", "currentView", "currentViewElements", "selection", "catalogs.wallTypes"]) {
+      assert(
+        readBundle.returnedSections.includes(section),
+        `revit.read_bundle did not return expected section ${section}.`
+      );
+    }
+    assert(
+      Array.isArray(readBundle.failedSections) && readBundle.failedSections.length === 0,
+      `revit.read_bundle returned failed sections: ${JSON.stringify(readBundle.failedSections ?? [])}`
+    );
+    assert(readBundle.sections?.status?.connected === true, "revit.read_bundle status section was not connected.");
+    assert(
+      readBundle.documentFingerprint === documentFingerprint,
+      "revit.read_bundle documentFingerprint did not match the active document guard."
+    );
+    console.log(`Read bundle OK: ${readBundle.returnedSections.length} compact section(s).`);
+
     const cancelProbeRequestId = `live-smoke-noop-${Date.now()}`;
     const cancelProbe = await callRequiredTool(client, "revit.cancel_request", {
       requestId: cancelProbeRequestId,
@@ -228,7 +278,7 @@ async function main() {
 
     if (options.statusOnly) {
       summary.status = "passed";
-      summary.coveredTools = ["revit.status", "revit.cancel_request", "revitctl.operation_kind_mismatch"];
+      summary.coveredTools = ["revit.status", "revit.read_bundle", "revit.cancel_request", "revitctl.operation_kind_mismatch"];
       console.log("Status-only smoke passed.");
       return;
     }
