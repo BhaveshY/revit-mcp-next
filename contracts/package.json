@@ -2,6 +2,16 @@
   "name": "@revit-mcp-next/contracts",
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/BhaveshY/revit-mcp-next#readme",
+  "bugs": {
+    "url": "https://github.com/BhaveshY/revit-mcp-next/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BhaveshY/revit-mcp-next.git",
+    "directory": "contracts"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -12,8 +22,10 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "devDependencies": {
     "typescript": "^5.9.3"
   }
 }
-

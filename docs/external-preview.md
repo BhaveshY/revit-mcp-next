@@ -15,6 +15,13 @@ For each preview build, attach:
 
 The preview is Revit 2024-only. Revit 2025/2026 support is intentionally blocked until year-specific add-in artifacts are built, packaged, and smoked.
 
+## Recipient Prerequisites
+
+- Windows with Revit 2024 installed.
+- Node.js 24.x available on `PATH`; the installed launchers and doctor scripts intentionally reject other major versions.
+- PowerShell available for the installer and diagnostics commands.
+- A disposable or test Revit project for first use.
+
 ## Recipient Install
 
 1. Extract the package zip.

@@ -847,6 +847,60 @@ function Assert-NoRawTokenInSupportBundle($SupportRoot, $Token) {
     }
 }
 
+function Assert-NoLocalPathsInSupportBundle($SupportRoot) {
+    $textFiles = Get-ChildItem -LiteralPath $SupportRoot -Recurse -File |
+        Where-Object { $_.Extension -ne ".zip" -and $_.Length -le 5MB }
+    $patterns = @(
+        '(?i)(?<![A-Za-z0-9])[A-Z]:\\\\[^"\r\n]*',
+        '(?i)(?<![A-Za-z0-9])[A-Z]:\\[^\r\n"''<>|]*',
+        '\\\\\\\\[^"\r\n]+',
+        '\\\\[^\\\r\n"''<>|]+\\[^\r\n"''<>|]*'
+    )
+
+    foreach ($file in $textFiles) {
+        try {
+            $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+        } catch {
+            continue
+        }
+
+        foreach ($pattern in $patterns) {
+            if ([regex]::IsMatch([string] $text, $pattern)) {
+                throw "Support bundle leaked a local absolute path in $($file.FullName)."
+            }
+        }
+    }
+}
+
+function Assert-SupportBundleRedactsHostIdentity($SupportRoot) {
+    $environmentSummary = Get-ChildItem -LiteralPath $SupportRoot -Recurse -Filter "environment-summary.json" -File |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if (-not $environmentSummary) {
+        throw "Support bundle did not include environment-summary.json."
+    }
+
+    $environment = Read-JsonFile $environmentSummary.FullName
+    if ($environment.hostIdentityRedacted -ne $true) {
+        throw "Support bundle did not mark host identity as redacted."
+    }
+    if ([string] $environment.machineName -ne "<redacted-host>" -or [string] $environment.userDomain -ne "<redacted-domain>") {
+        throw "Support bundle leaked machineName or userDomain in environment-summary.json."
+    }
+
+    $bundleManifest = Get-ChildItem -LiteralPath $SupportRoot -Recurse -Filter "support-bundle-manifest.json" -File |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if (-not $bundleManifest) {
+        throw "Support bundle did not include support-bundle-manifest.json."
+    }
+
+    $manifest = Read-JsonFile $bundleManifest.FullName
+    if ($manifest.hostIdentityRedacted -ne $true) {
+        throw "Support bundle manifest did not record host identity redaction."
+    }
+}
+
 function Assert-TamperedPackageFails($PackageRoot, $RunRoot, $InstallerScript) {
     $tamperRoot = Join-Path $RunRoot "tmp"
     $tamperedPackage = Join-Path $tamperRoot "p"
@@ -926,6 +980,8 @@ try {
     Assert-FileExists "$packageRoot.zip" "package zip"
     Assert-FileExists (Join-Path $packageRoot "release-manifest.json") "release manifest"
     Assert-FileExists (Join-Path $packageRoot "CHECKSUMS.sha256") "package checksums"
+    Assert-FileExists (Join-Path $packageRoot "LICENSE") "packaged license"
+    Assert-FileExists (Join-Path $packageRoot "SECURITY.md") "packaged security policy"
     $packagedRevitCtl = Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js"
     Assert-FileExists $packagedRevitCtl "packaged revitctl CLI"
     Assert-NodeRevitCtlHelp $packagedRevitCtl "packaged"
@@ -1082,6 +1138,8 @@ try {
         throw "MCP config printer leaked the raw auth token."
     }
     Assert-NoRawTokenInSupportBundle $supportRoot $authToken
+    Assert-NoLocalPathsInSupportBundle $supportRoot
+    Assert-SupportBundleRedactsHostIdentity $supportRoot
 
     Assert-TamperedPackageFails $packageRoot $runRoot $installerScript
     Write-Step "Release package contract passed."

@@ -75,7 +75,16 @@ function Read-AuthTokenConfig($Path) {
 function Redact-Text($Text) {
     $result = [string] $Text
 
+    $installRootFull = ""
+    try {
+        $installRootFull = Get-FullPath $InstallRoot
+    } catch {
+        $installRootFull = $InstallRoot
+    }
+
     $pathRedactions = @(
+        @{ Value = $installRootFull; Replacement = "%REVIT_MCP_NEXT_INSTALL_ROOT%" },
+        @{ Value = $InstallRoot; Replacement = "%REVIT_MCP_NEXT_INSTALL_ROOT%" },
         @{ Value = $env:USERPROFILE; Replacement = "%USERPROFILE%" },
         @{ Value = $env:LOCALAPPDATA; Replacement = "%LOCALAPPDATA%" },
         @{ Value = $env:APPDATA; Replacement = "%APPDATA%" }
@@ -97,6 +106,10 @@ function Redact-Text($Text) {
     $result = [regex]::Replace($result, "(?i)([""']?$secretKeyPattern[""']?\s*[:=]\s*)[^""'\r\n,;]+", '$1<redacted>')
     $result = [regex]::Replace($result, "[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}", "<redacted-jwt>")
     $result = [regex]::Replace($result, "-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----", "<redacted-private-key>")
+    $result = [regex]::Replace($result, '(?i)(?<![A-Za-z0-9])[A-Z]:\\\\[^"\r\n]*', "<redacted-local-path>")
+    $result = [regex]::Replace($result, '(?i)(?<![A-Za-z0-9])[A-Z]:\\[^\r\n"''<>|]*', "<redacted-local-path>")
+    $result = [regex]::Replace($result, '\\\\\\\\[^"\r\n]+', "<redacted-local-path>")
+    $result = [regex]::Replace($result, '\\\\[^\\\r\n"''<>|]+\\[^\r\n"''<>|]*', "<redacted-local-path>")
 
     return $result
 }
@@ -173,7 +186,8 @@ function Get-CommandSummary($CommandName) {
     }
 
     return [ordered] @{
-        path = $command.Source
+        path = "<redacted-local-path>"
+        pathRedacted = $true
         version = $version
     }
 }
@@ -231,8 +245,9 @@ $environmentSummary = [ordered] @{
     installRoot = $InstallRoot
     revitYears = $RevitYears
     osVersion = [System.Environment]::OSVersion.VersionString
-    machineName = $env:COMPUTERNAME
-    userDomain = $env:USERDOMAIN
+    hostIdentityRedacted = $true
+    machineName = "<redacted-host>"
+    userDomain = "<redacted-domain>"
     processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
     powershellVersion = $PSVersionTable.PSVersion.ToString()
     node = Get-CommandSummary "node.exe"
@@ -318,6 +333,7 @@ Write-JsonFile (Join-Path $stageRoot "file-inventory.json") $inventory
 $bundleManifest = [ordered] @{
     createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     redaction = "Text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, and local profile paths. Environment variables are not collected."
+    hostIdentityRedacted = $true
     maxLogBytes = $MaxLogBytes
     installRoot = $InstallRoot
     revitYears = $RevitYears

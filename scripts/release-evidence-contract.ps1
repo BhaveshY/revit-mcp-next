@@ -693,6 +693,12 @@ try {
     if ($evidenceManifest.package.evidence.packageZipName -notlike "*.zip") {
         throw "Package zip metadata did not point at a .zip file."
     }
+    if ($evidenceManifest.package.evidence.sourcePathRedacted -ne $true -or [string] $evidenceManifest.package.evidence.packageRoot -ne "<redacted-local-path>") {
+        throw "Package evidence did not redact local package paths."
+    }
+    if ([string] $evidenceManifest.package.evidence.packageZipPath -ne [string] $evidenceManifest.package.evidence.packageZipName) {
+        throw "Package zip path should be redacted to the package zip file name."
+    }
     if ($evidenceManifest.package.evidence.packagedAddin.sha256 -ne $packagedAddinSha256) {
         throw "Packaged add-in SHA-256 was not recorded in release evidence."
     }
@@ -702,8 +708,14 @@ try {
     if ($evidenceManifest.liveSmoke.status -ne "captured") {
         throw "Live smoke evidence was not marked captured."
     }
+    if ($evidenceManifest.liveSmoke.sourcePathRedacted -ne $true -or [string] $evidenceManifest.liveSmoke.sourcePath -ne "<redacted-local-path>") {
+        throw "Live smoke evidence source path was not redacted."
+    }
     if ($evidenceManifest.liveSmoke.summary.status -ne "passed") {
         throw "Live smoke summary pass status was not recorded."
+    }
+    if ($evidenceManifest.liveSmoke.summary.sourcePathRedacted -ne $true -or [string] $evidenceManifest.liveSmoke.summary.sourcePath -ne "<redacted-local-path>") {
+        throw "Live smoke summary source path was not redacted."
     }
     if ($evidenceManifest.liveSmoke.summary.expectedRevitYear -ne "2024") {
         throw "Live smoke expected Revit year was not recorded."
@@ -732,11 +744,26 @@ try {
     if ($evidenceManifest.supportBundle.status -ne "captured") {
         throw "Support bundle evidence was not marked captured."
     }
+    if ($evidenceManifest.supportBundle.sourcePathRedacted -ne $true -or [string] $evidenceManifest.supportBundle.sourcePath -ne "<redacted-local-path>") {
+        throw "Support bundle evidence source path was not redacted."
+    }
     if ($evidenceManifest.hostedIntegrations.status -ne "captured") {
         throw "Hosted pyRevit/Dynamo evidence was not marked captured."
     }
+    if ($evidenceManifest.hostedIntegrations.sourcePathRedacted -ne $true -or [string] $evidenceManifest.hostedIntegrations.sourcePath -ne "<redacted-local-path>") {
+        throw "Hosted integration evidence source path was not redacted."
+    }
     if ($evidenceManifest.hostedIntegrations.summary.status -ne "passed") {
         throw "Hosted pyRevit/Dynamo summary pass status was not recorded."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.sourcePathRedacted -ne $true -or [string] $evidenceManifest.hostedIntegrations.summary.sourcePath -ne "<redacted-local-path>") {
+        throw "Hosted integration summary source path was not redacted."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.rawEvidence.sourcePathRedacted -ne $true -or
+        [string] $evidenceManifest.hostedIntegrations.summary.rawEvidence.pyrevitSourcePath -ne "<redacted-local-path>" -or
+        [string] $evidenceManifest.hostedIntegrations.summary.rawEvidence.dynamoSourcePath -ne "<redacted-local-path>" -or
+        [string] $evidenceManifest.hostedIntegrations.summary.rawEvidence.dynamoPreflightSourcePath -ne "<redacted-local-path>") {
+        throw "Hosted integration raw evidence source paths were not redacted."
     }
     if ($evidenceManifest.hostedIntegrations.summary.hosts.pyrevit.status -ne "passed") {
         throw "pyRevit hosted integration pass status was not recorded."
@@ -767,6 +794,13 @@ try {
     }
     if ($evidenceManifest.validation.doctorLog.present -ne $true) {
         throw "doctor log was not recorded."
+    }
+    if ($evidenceManifest.validation.validateRepoLog.sourcePathRedacted -ne $true -or [string] $evidenceManifest.validation.validateRepoLog.sourcePath -ne "<redacted-local-path>") {
+        throw "Validation log source path was not redacted."
+    }
+    $commandLogEvidence = @($evidenceManifest.commandLogs)
+    if ($commandLogEvidence.Count -lt 1 -or $commandLogEvidence[0].sourcePathRedacted -ne $true -or [string] $commandLogEvidence[0].sourcePath -ne "<redacted-local-path>") {
+        throw "Command log source paths were not redacted."
     }
 
     Assert-InventoryContains $evidenceManifest.contents "package/release-manifest.json"

@@ -19,6 +19,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$RedactedLocalPath = "<redacted-local-path>"
 
 function Write-Step($Message) {
     Write-Host "[revit-mcp-next evidence] $Message"
@@ -66,6 +67,79 @@ function Test-PotentialSecretText($Text) {
     }
 
     return $false
+}
+
+function Redact-ShareableText($Text) {
+    $result = [string] $Text
+    $knownPaths = @(
+        $packageRootFull,
+        $packageZipFull,
+        $env:USERPROFILE,
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
+        $env:TEMP,
+        $env:TMP
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string] $_) } | Sort-Object Length -Descending -Unique
+
+    foreach ($path in $knownPaths) {
+        $textPath = [string] $path
+        $result = [regex]::Replace($result, [regex]::Escape($textPath), $RedactedLocalPath, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $jsonEscapedPath = $textPath.Replace("\", "\\")
+        if ($jsonEscapedPath -ne $textPath) {
+            $result = [regex]::Replace($result, [regex]::Escape($jsonEscapedPath), $RedactedLocalPath, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+    }
+
+    $result = [regex]::Replace($result, '(?i)(?<![A-Za-z0-9])[A-Z]:\\\\[^"\r\n]*', $RedactedLocalPath)
+    $result = [regex]::Replace($result, '(?i)(?<![A-Za-z0-9])[A-Z]:\\[^\r\n"''<>|]*', $RedactedLocalPath)
+    $result = [regex]::Replace($result, '\\\\\\\\[^"\r\n]+', $RedactedLocalPath)
+    $result = [regex]::Replace($result, '\\\\[^\\\r\n"''<>|]+\\[^\r\n"''<>|]*', $RedactedLocalPath)
+    return $result
+}
+
+function ConvertTo-ShareableObject($Value) {
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $json = $Value | ConvertTo-Json -Depth 32
+    return (Redact-ShareableText $json) | ConvertFrom-Json
+}
+
+function Test-ShareableTextFile($Path) {
+    $textExtensions = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($extension in @(".cmd", ".env", ".json", ".log", ".md", ".ps1", ".sha256", ".toml", ".txt", ".xml", ".yaml", ".yml")) {
+        $textExtensions.Add($extension) | Out-Null
+    }
+
+    $file = Get-Item -LiteralPath $Path
+    return $textExtensions.Contains($file.Extension) -and $file.Length -le 5MB
+}
+
+function Redact-ShareableEvidenceFiles($Root) {
+    if (-not (Test-Path -LiteralPath $Root)) {
+        return
+    }
+
+    $files = if (Test-Path -LiteralPath $Root -PathType Leaf) {
+        @(Get-Item -LiteralPath $Root)
+    } else {
+        @(Get-ChildItem -LiteralPath $Root -Recurse -File)
+    }
+
+    foreach ($file in $files) {
+        if (-not (Test-ShareableTextFile $file.FullName)) {
+            continue
+        }
+
+        try {
+            $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+        } catch {
+            continue
+        }
+
+        Set-Content -LiteralPath $file.FullName -Value (Redact-ShareableText $text) -Encoding UTF8
+    }
 }
 
 function Assert-NoSensitiveEvidence($Root) {
@@ -203,12 +277,14 @@ function Copy-EvidencePath($Source, $DestinationRoot, $Label) {
     if (Test-Path -LiteralPath $resolvedSource -PathType Leaf) {
         $destination = Join-Path $DestinationRoot (Split-Path -Leaf $resolvedSource)
         Copy-Item -LiteralPath $resolvedSource -Destination $destination -Force
+        Redact-ShareableEvidenceFiles $destination
         return $destination
     }
 
     Get-ChildItem -LiteralPath $resolvedSource -Force | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $DestinationRoot -Recurse -Force
     }
+    Redact-ShareableEvidenceFiles $DestinationRoot
     return $DestinationRoot
 }
 
@@ -217,6 +293,7 @@ function Copy-NamedEvidenceFile($Path, $DestinationRoot, $StoredName, $Label) {
         return [ordered] @{
             present = $false
             sourcePath = $null
+            sourcePathRedacted = $false
             storedAs = $null
             sha256 = $null
             size = $null
@@ -227,11 +304,13 @@ function Copy-NamedEvidenceFile($Path, $DestinationRoot, $StoredName, $Label) {
     New-Directory $DestinationRoot
     $destination = Join-Path $DestinationRoot $StoredName
     Copy-Item -LiteralPath $resolvedPath -Destination $destination -Force
+    Redact-ShareableEvidenceFiles $destination
     $file = Get-Item -LiteralPath $destination
 
     return [ordered] @{
         present = $true
-        sourcePath = $resolvedPath
+        sourcePath = $RedactedLocalPath
+        sourcePathRedacted = $true
         storedAs = ((Get-RelativePath $stageRoot $destination) -replace "\\", "/")
         sha256 = Get-Sha256Hash $destination
         size = $file.Length
@@ -323,9 +402,11 @@ function Copy-PathList($Paths, $DestinationRoot, $Label) {
             }
             $inventoryRoot = $destination
         }
+        Redact-ShareableEvidenceFiles $inventoryRoot
 
         $copied.Add([ordered] @{
-            sourcePath = $resolvedPath
+            sourcePath = $RedactedLocalPath
+            sourcePathRedacted = $true
             storedAs = ((Get-RelativePath $stageRoot $destination) -replace "\\", "/")
             files = Get-InventoryEntries $inventoryRoot
         }) | Out-Null
@@ -622,7 +703,8 @@ function Assert-HostLoadedPackageAddin($HostSummary, $HostName, $ExpectedAddinId
     }
 
     return [ordered] @{
-        assemblyPath = [string] $bridge.assemblyPath
+        assemblyPath = $RedactedLocalPath
+        assemblyPathRedacted = $true
         assemblySha256 = $actualSha256
         fileVersion = [string] $bridge.fileVersion
         productVersion = [string] $bridge.productVersion
@@ -648,7 +730,8 @@ function Assert-LiveSmokePackageIdentity($LiveSmokeSummary, $ExpectedAddinIdenti
     return [ordered] @{
         expectedPackagePath = [string] $ExpectedAddinIdentity.packagePath
         expectedSha256 = [string] $ExpectedAddinIdentity.sha256
-        assemblyPath = [string] $addinAssembly.assemblyPath
+        assemblyPath = $RedactedLocalPath
+        assemblyPathRedacted = $true
         assemblySha256 = $actualSha256
         fileVersion = [string] $addinAssembly.fileVersion
         productVersion = [string] $addinAssembly.productVersion
@@ -765,6 +848,7 @@ if (-not $signingRequested) {
 $liveSmokeSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
+    sourcePathRedacted = $false
     skipReason = $LiveSmokeSkipReason
     summary = $null
     files = @()
@@ -776,20 +860,22 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
     $copiedLiveSmoke = Copy-EvidencePath $LiveSmokeEvidencePath $liveSmokeRoot "Live Revit smoke evidence"
     $liveSmokeSection = [ordered] @{
         status = "captured"
-        sourcePath = (Resolve-RequiredEvidencePath $LiveSmokeEvidencePath "Live Revit smoke evidence")
+        sourcePath = $RedactedLocalPath
+        sourcePathRedacted = $true
         storedAs = ((Get-RelativePath $stageRoot $liveSmokeRoot) -replace "\\", "/")
         skipReason = $null
         summary = [ordered] @{
-            sourcePath = $liveSmokeSummary.path
+            sourcePath = $RedactedLocalPath
+            sourcePathRedacted = $true
             status = [string] $liveSmokeSummary.data.status
             evidenceKind = [string] $liveSmokeSummary.data.evidenceKind
             synthetic = [bool] $liveSmokeSummary.data.synthetic
             mode = [string] $liveSmokeSummary.data.mode
             expectedRevitYear = $liveSmokeSummary.data.expectedRevitYear
-            revit = $liveSmokeSummary.data.revit
-            activeDocument = $liveSmokeSummary.data.activeDocument
+            revit = ConvertTo-ShareableObject $liveSmokeSummary.data.revit
+            activeDocument = ConvertTo-ShareableObject $liveSmokeSummary.data.activeDocument
             documentFingerprint = $liveSmokeSummary.data.documentFingerprint
-            addinAssembly = $liveSmokeSummary.data.addinAssembly
+            addinAssembly = ConvertTo-ShareableObject $liveSmokeSummary.data.addinAssembly
             packageIdentity = $liveSmokePackageIdentity
             operationKindGuard = $liveSmokeSummary.data.operationKindGuard
             requiredCoverage = $liveSmokeSummary.data.requiredCoverage
@@ -806,6 +892,7 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
 $supportSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
+    sourcePathRedacted = $false
     skipReason = $SupportBundleSkipReason
     files = @()
 }
@@ -814,7 +901,8 @@ if (-not [string]::IsNullOrWhiteSpace($SupportBundlePath)) {
     $copiedSupport = Copy-EvidencePath $SupportBundlePath $supportRoot "Support bundle evidence"
     $supportSection = [ordered] @{
         status = "captured"
-        sourcePath = (Resolve-RequiredEvidencePath $SupportBundlePath "Support bundle evidence")
+        sourcePath = $RedactedLocalPath
+        sourcePathRedacted = $true
         storedAs = ((Get-RelativePath $stageRoot $supportRoot) -replace "\\", "/")
         skipReason = $null
         files = Get-InventoryEntries $copiedSupport
@@ -824,6 +912,7 @@ if (-not [string]::IsNullOrWhiteSpace($SupportBundlePath)) {
 $hostedIntegrationSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
+    sourcePathRedacted = $false
     skipReason = $HostedIntegrationSkipReason
     summary = $null
     files = @()
@@ -836,23 +925,26 @@ if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
     $copiedHostedIntegration = Copy-EvidencePath $hostedIntegrationBundleRoot $hostedIntegrationRoot "Hosted pyRevit/Dynamo integration smoke evidence"
     $hostedIntegrationSection = [ordered] @{
         status = "captured"
-        sourcePath = (Resolve-RequiredEvidencePath $HostedIntegrationEvidencePath "Hosted pyRevit/Dynamo integration smoke evidence")
+        sourcePath = $RedactedLocalPath
+        sourcePathRedacted = $true
         storedAs = ((Get-RelativePath $stageRoot $hostedIntegrationRoot) -replace "\\", "/")
         skipReason = $null
         summary = [ordered] @{
-            sourcePath = $hostedIntegrationSummary.path
+            sourcePath = $RedactedLocalPath
+            sourcePathRedacted = $true
             status = [string] $hostedIntegrationSummary.data.status
             evidenceKind = [string] $hostedIntegrationSummary.data.evidenceKind
             synthetic = [bool] $hostedIntegrationSummary.data.synthetic
             hosts = [ordered] @{
-                pyrevit = $hostedIntegrationSummary.hosts.pyrevit
-                dynamo = $hostedIntegrationSummary.hosts.dynamo
+                pyrevit = ConvertTo-ShareableObject $hostedIntegrationSummary.hosts.pyrevit
+                dynamo = ConvertTo-ShareableObject $hostedIntegrationSummary.hosts.dynamo
             }
-            dynamoPreflight = $hostedIntegrationSummary.data.dynamoPreflight
+            dynamoPreflight = ConvertTo-ShareableObject $hostedIntegrationSummary.data.dynamoPreflight
             rawEvidence = [ordered] @{
-                pyrevitSourcePath = [string] $hostedIntegrationSummary.rawEvidence.pyrevit
-                dynamoSourcePath = [string] $hostedIntegrationSummary.rawEvidence.dynamo
-                dynamoPreflightSourcePath = [string] $hostedIntegrationSummary.rawEvidence.dynamoPreflight
+                sourcePathRedacted = $true
+                pyrevitSourcePath = $RedactedLocalPath
+                dynamoSourcePath = $RedactedLocalPath
+                dynamoPreflightSourcePath = $RedactedLocalPath
             }
             packageIdentity = $hostedIntegrationPackageIdentity
         }
@@ -871,8 +963,9 @@ $validationSection = [ordered] @{
 $signingLog = Copy-NamedEvidenceFile $SigningLogPath (Join-Path $stageRoot "signing") "signing.log" "signing"
 
 $packageSummary = [ordered] @{
-    packageRoot = $packageRootFull
-    packageZipPath = $packageZip.FullName
+    sourcePathRedacted = $true
+    packageRoot = $RedactedLocalPath
+    packageZipPath = $packageZip.Name
     packageZipName = $packageZip.Name
     packageZipSha256 = $packageZipHash
     packageZipSize = $packageZip.Length

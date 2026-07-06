@@ -3,6 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "description": "Clean-room, token-efficient Revit MCP bridge for Claude Code and Codex.",
+  "homepage": "https://github.com/BhaveshY/revit-mcp-next#readme",
+  "bugs": {
+    "url": "https://github.com/BhaveshY/revit-mcp-next/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BhaveshY/revit-mcp-next.git"
+  },
   "workspaces": [
     "contracts",
     "broker"

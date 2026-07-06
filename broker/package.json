@@ -2,6 +2,16 @@
   "name": "@revit-mcp-next/broker",
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/BhaveshY/revit-mcp-next#readme",
+  "bugs": {
+    "url": "https://github.com/BhaveshY/revit-mcp-next/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BhaveshY/revit-mcp-next.git",
+    "directory": "broker"
+  },
   "bin": {
     "revit-mcp-next": "./dist/src/index.js",
     "revitctl": "./dist/src/cli/revitctl.js"
@@ -15,6 +25,9 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test \"dist/test/**/*.test.js\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=24 <25"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

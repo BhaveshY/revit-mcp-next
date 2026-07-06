@@ -27,7 +27,7 @@ The package is written under `artifacts\release\revit-mcp-next-<version>-windows
 
 - `payload\broker`, `payload\contracts`, and `payload\addin` runtime files.
 - Packaged broker production `node_modules` unless `-SkipDependencyInstall` is used.
-- `installer\install-windows.ps1`, `scripts\doctor.ps1`, `scripts\doctor-clients.ps1`, and `scripts\collect-support-bundle.ps1`.
+- `installer`, `scripts`, `docs`, `integrations`, `README.md`, `LICENSE`, and `SECURITY.md` for offline install, diagnostics, client setup, and evidence collection.
 - Installed launchers for MCP and `revitctl`.
 - `integrations\python`, `integrations\pyrevit`, and `integrations\dynamo` examples for external Revit automation clients.
 - `release-manifest.json` with file inventory, build metadata, and signing status.
@@ -39,7 +39,7 @@ Hosted CI also runs a release package contract test:
 npm run test:release:windows
 ```
 
-That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
+That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token and host identity, verifies shareable metadata files are present, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
 
 The contract also verifies that unsupported Revit years fail instead of writing misleading manifests. Until the per-year .NET 8 add-in build/package path exists, release packaging and install support `-RevitYears 2024` only.
 
@@ -51,7 +51,7 @@ Hosted CI also runs the release evidence contract:
 npm run test:evidence:release:windows
 ```
 
-That contract packages with synthetic add-in DLLs, installs into temporary profile paths, runs doctor/support collection, creates synthetic live-smoke and pyRevit/Dynamo hosted-smoke artifacts, verifies missing evidence requires explicit skip reasons, and verifies the release evidence manifest, summary, zip, hashes, and token redaction.
+That contract packages with synthetic add-in DLLs, installs into temporary profile paths, runs doctor/support collection, creates synthetic live-smoke and pyRevit/Dynamo hosted-smoke artifacts, verifies missing evidence requires explicit skip reasons, and verifies the release evidence manifest, summary, zip, hashes, token redaction, and redacted local source paths.
 Those contract artifacts are marked as `evidenceKind: "contract-fixture"` and `synthetic: true`; they are mechanics-only test data and are rejected by release-candidate and production readiness checks.
 
 Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`. The collector rejects a live-smoke directory whose summary is missing or failed.
@@ -167,7 +167,7 @@ Support bundle:
 npm run support:bundle
 ```
 
-The support bundle is written under `artifacts\support`. It collects doctor output, add-in logs, launcher/config metadata, the redacted auth config, install receipts, file hashes, and environment basics. It does not collect environment variables, and text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, and local profile paths.
+The support bundle is written under `artifacts\support`. It collects doctor output, add-in logs, launcher/config metadata, the redacted auth config, install receipts, file hashes, and environment basics. It does not collect environment variables. Text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, the install root, and local profile paths; machine name and user domain are recorded as redacted placeholders.
 
 ## Release Evidence Capture
 
@@ -315,7 +315,7 @@ npm run evidence:host-integrations -- `
 
 The command writes `artifacts\release-evidence\revit-mcp-next-<version>-windows-evidence-<timestamp>-<id>` plus a sibling `.zip`. The bundle includes:
 
-- `release-evidence-manifest.json` with package metadata, package zip SHA-256, signing status, validation logs, support-bundle evidence, live-smoke evidence, hosted pyRevit/Dynamo evidence, and an inventory of copied evidence files.
+- `release-evidence-manifest.json` with package metadata, package zip SHA-256, signing status, validation logs, support-bundle evidence, live-smoke evidence, hosted pyRevit/Dynamo evidence, and an inventory of copied evidence files. Local source paths are redacted from the manifest; auditability comes from relative `storedAs` paths, SHA-256 hashes, and the inventory.
 - `release-evidence-summary.md` with the release evidence headline facts.
 - Copies of `release-manifest.json`, `CHECKSUMS.sha256`, and `package-zip.sha256`.
 - Named validation logs when paths are provided.

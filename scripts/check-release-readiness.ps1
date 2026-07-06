@@ -132,6 +132,24 @@ function Test-PotentialSecretText($Text) {
     return $false
 }
 
+function Test-PotentialLocalPathText($Text) {
+    $value = [string] $Text
+    $patterns = @(
+        '(?i)(?<![A-Za-z0-9])[A-Z]:\\\\[^"\r\n]*',
+        '(?i)(?<![A-Za-z0-9])[A-Z]:\\[^\r\n"''<>|]*',
+        '\\\\\\\\[^"\r\n]+',
+        '\\\\[^\\\r\n"''<>|]+\\[^\r\n"''<>|]*'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ([regex]::IsMatch($value, $pattern)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 $checks = New-Object System.Collections.Generic.List[object]
 $failures = New-Object System.Collections.Generic.List[string]
 $warnings = New-Object System.Collections.Generic.List[string]
@@ -213,6 +231,7 @@ function Test-NoSensitiveEvidence($Root) {
     }
 
     $offendingPath = $null
+    $offendingLocalPath = $null
     $textFiles = Get-ChildItem -LiteralPath $Root -Recurse -File |
         Where-Object { $textExtensions.Contains($_.Extension) -and $_.Length -le 5MB }
     foreach ($file in $textFiles) {
@@ -226,12 +245,23 @@ function Test-NoSensitiveEvidence($Root) {
             $offendingPath = [System.IO.Path]::GetFileName($file.FullName)
             break
         }
+
+        if (Test-PotentialLocalPathText $text) {
+            $offendingLocalPath = [System.IO.Path]::GetFileName($file.FullName)
+            break
+        }
     }
 
     if ($offendingPath) {
         Fail "secrets.scan" "Evidence contains a potential raw secret in $offendingPath."
     } else {
         Pass "secrets.scan" "Evidence text files do not contain known raw secret patterns."
+    }
+
+    if ($offendingLocalPath) {
+        Fail "privacy.localPaths" "Evidence contains a potential local absolute path in $offendingLocalPath."
+    } else {
+        Pass "privacy.localPaths" "Evidence text files do not contain known local absolute path patterns."
     }
 }
 

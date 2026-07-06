@@ -387,6 +387,8 @@ Copy-DirectoryContents (Join-Path $repoRoot "scripts") (Join-Path $stageRoot "sc
 Copy-DirectoryContents (Join-Path $repoRoot "docs") (Join-Path $stageRoot "docs")
 Copy-DirectoryContents (Join-Path $repoRoot "integrations") (Join-Path $stageRoot "integrations")
 Copy-File (Join-Path $repoRoot "README.md") (Join-Path $stageRoot "README.md")
+Copy-File (Join-Path $repoRoot "LICENSE") (Join-Path $stageRoot "LICENSE")
+Copy-File (Join-Path $repoRoot "SECURITY.md") (Join-Path $stageRoot "SECURITY.md")
 Copy-File (Join-Path $repoRoot "package.json") (Join-Path $stageRoot "package.json")
 Copy-File (Join-Path $repoRoot "package-lock.json") (Join-Path $stageRoot "package-lock.json")
 
