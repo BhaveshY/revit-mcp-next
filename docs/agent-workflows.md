@@ -40,7 +40,7 @@ Use this sequence when the user asks about tags, text notes, or dimensions:
 3. `revit.catalog` with `kind: "dimensionTypes"` and `preset: "annotation"` for dimension styles.
 4. `revit.catalog` with `kind: "tagTypes"` and `preset: "annotation"` for available tag symbols.
 
-The current release supports `create_text_note`, `tag_room`, and `tag_element` through `preview_change_set`. For room tags, use a placed room from `revit.get_rooms`, keep targeting by `roomId`, pass `expectedUniqueId` when the room `uniqueId` is known, choose a plan or section view from `revit.get_views`, and choose a room tag type from `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`. For element tags, query elements visible in the target view, then use a matching wall or multi-category tag `FamilySymbol` from `tagTypes`. Dimension creation remains deferred until robust reference discovery is added.
+The current release supports `create_text_note`, `load_family`, `tag_room`, and `tag_element` through `preview_change_set`. For room tags, use a placed room from `revit.get_rooms`, keep targeting by `roomId`, pass `expectedUniqueId` when the room `uniqueId` is known, choose a plan or section view from `revit.get_views`, and choose a room tag type from `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`. For element tags, query elements visible in the target view, then use a matching wall or multi-category tag `FamilySymbol` from `tagTypes`. If compatible tag symbols are missing and a vetted local `.rfa` path is available, preview/apply `load_family` with `expectedSha256` when known, then re-run `revit.catalog`. Dimension creation remains deferred until robust reference discovery is added.
 
 ## Walls, Floor, And Room
 

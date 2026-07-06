@@ -9,8 +9,12 @@ param(
     [switch] $RequireRoomTag,
     [switch] $RequireElementTag,
     [switch] $RequireTags,
+    [string] $RoomTagFamilyPath = "",
+    [string] $RoomTagFamilySha256 = "",
     [string] $RoomTagTypeId = "",
     [string] $RoomTagTypeNameContains = "",
+    [string] $ElementTagFamilyPath = "",
+    [string] $ElementTagFamilySha256 = "",
     [string] $ElementTagTypeId = "",
     [string] $ElementTagTypeNameContains = "",
     [int] $RevitYear = 2024,
@@ -84,9 +88,15 @@ Options:
   -RequireRoomTag            Require tag_room smoke coverage.
   -RequireElementTag         Require tag_element smoke coverage.
   -RequireTags               Require both tag_room and tag_element smoke coverage.
+  -RoomTagFamilyPath <path>  Vetted local room-tag .rfa to load before required tag preflight.
+  -RoomTagFamilySha256 <hex> Optional SHA-256 guard for -RoomTagFamilyPath.
   -RoomTagTypeId <id>        Use a specific loaded room tag FamilySymbol id.
   -RoomTagTypeNameContains <text>
                               Use a loaded room tag FamilySymbol whose name/family contains this text.
+  -ElementTagFamilyPath <path>
+                              Vetted local wall/multi-category tag .rfa to load before required tag preflight.
+  -ElementTagFamilySha256 <hex>
+                              Optional SHA-256 guard for -ElementTagFamilyPath.
   -ElementTagTypeId <id>     Use a specific loaded wall or multi-category tag FamilySymbol id.
   -ElementTagTypeNameContains <text>
                               Use a loaded wall or multi-category tag FamilySymbol whose name/family contains this text.
@@ -506,6 +516,9 @@ $revitExe = Resolve-RevitExePath $RevitYear $RevitExePath
 $apiDll = Resolve-RequiredFile (Join-Path $revitApi "RevitAPI.dll") "RevitAPI.dll was not found."
 $apiUiDll = Resolve-RequiredFile (Join-Path $revitApi "RevitAPIUI.dll") "RevitAPIUI.dll was not found."
 $sourceModel = Resolve-SourceModel $RevitYear $ModelPath
+if (($RequireTags -or $RequireRoomTag -or $RequireElementTag) -and [string]::IsNullOrWhiteSpace($ModelPath)) {
+    Write-Step "Required tag coverage requested without -ModelPath. The default sample RVT is not a curated tag fixture; pass a disposable model with printable plan-backed levels and loaded or loadable tag families for release-candidate evidence."
+}
 $version = (Read-JsonFile (Join-Path $repoRoot "package.json")).version
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
@@ -579,8 +592,12 @@ $runInputs = [ordered] @{
     requireRoomTag = [bool] $RequireRoomTag
     requireElementTag = [bool] $RequireElementTag
     requireTags = [bool] $RequireTags
+    roomTagFamilyPath = $RoomTagFamilyPath
+    roomTagFamilySha256 = $RoomTagFamilySha256
     roomTagTypeId = $RoomTagTypeId
     roomTagTypeNameContains = $RoomTagTypeNameContains
+    elementTagFamilyPath = $ElementTagFamilyPath
+    elementTagFamilySha256 = $ElementTagFamilySha256
     elementTagTypeId = $ElementTagTypeId
     elementTagTypeNameContains = $ElementTagTypeNameContains
     trustRevitAlwaysLoad = [bool] $TrustRevitAlwaysLoad
@@ -725,6 +742,12 @@ if ($RequireTags) {
         $smokeArgs += "-RequireElementTag"
     }
 }
+if (-not [string]::IsNullOrWhiteSpace($RoomTagFamilyPath)) {
+    $smokeArgs += @("-RoomTagFamilyPath", $RoomTagFamilyPath)
+}
+if (-not [string]::IsNullOrWhiteSpace($RoomTagFamilySha256)) {
+    $smokeArgs += @("-RoomTagFamilySha256", $RoomTagFamilySha256)
+}
 if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeId)) {
     $smokeArgs += @("-RoomTagTypeId", $RoomTagTypeId)
 }
@@ -733,6 +756,12 @@ if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeNameContains)) {
 }
 if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeId)) {
     $smokeArgs += @("-ElementTagTypeId", $ElementTagTypeId)
+}
+if (-not [string]::IsNullOrWhiteSpace($ElementTagFamilyPath)) {
+    $smokeArgs += @("-ElementTagFamilyPath", $ElementTagFamilyPath)
+}
+if (-not [string]::IsNullOrWhiteSpace($ElementTagFamilySha256)) {
+    $smokeArgs += @("-ElementTagFamilySha256", $ElementTagFamilySha256)
 }
 if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeNameContains)) {
     $smokeArgs += @("-ElementTagTypeNameContains", $ElementTagTypeNameContains)

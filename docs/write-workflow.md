@@ -25,6 +25,7 @@ Use `revit.catalog` instead of guessing type IDs:
 - `create_floor.floorTypeId`: `revit.catalog` with `kind: "elementTypes"` and filters such as `classes: ["FloorType"]`, `categories: ["OST_Floors"]`.
 - `change_element_type.typeId`: `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"` so the returned IDs come from Revit's compatible type list.
 - Family placement discovery: `revit.catalog` supports `kind: "familySymbols"` with `preset: "placement"`. Only apply placement change sets when preview reports ready; missing symbols, missing hosts, or unsupported placement classes should be treated as blocked previews.
+- Tag and family bootstrap: check `revit.catalog kind=tagTypes` first for compatible room, wall, or multi-category tag symbols. Use `load_family` only when compatible symbols are missing and a vetted local `.rfa` path is available; include `expectedSha256` when known, then re-run catalog before `tag_room`, `tag_element`, or placement work.
 
 When a previous read, preview, or apply response already returned element identifiers, use `revit.query` with `filter.elementIds` or `filter.uniqueIds` to retrieve just those elements instead of scanning a broader model scope.
 
@@ -41,6 +42,7 @@ End-to-end supported operations:
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place one room by `levelId` and 2D `location`, optionally setting `name`, `number`, and `department`; duplicate room numbers are blocked unless `allowDuplicateNumber` is set.
 - `place_family_instance`: place supported `familySymbols` discovered through `revit.catalog`; first supported cases are wall-hosted doors/windows with `hostElementId` plus optional `expectedHostUniqueId`, and level-based furniture/equipment/fixtures with `levelId`.
+- `load_family`: load one vetted local `.rfa` family file into the active document after a ready preview, optionally guarded by `expectedSha256`; use it for deterministic annotation/tag/family workflows such as loading room tag and multi-category/wall tag families before tag smoke or agent workflows.
 - `create_sheet`: create one sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId`; discover title block type IDs with `revit.catalog kind=titleBlocks preset=sheet`.
 - `place_view_on_sheet`: place one eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`; use `revit.get_sheets includePlacedViews=true` to avoid already placed views.
 - `create_text_note`: create one text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
@@ -116,6 +118,6 @@ Production readiness:
 Diagnostics:
 
 - Run `npm run doctor:windows` after install.
-- Run `npm run smoke:revit` only against a disposable active Revit project; it checks `revit.cancel_request` no-op behavior, creates a grid, floor, walls, a room-bounding loop, and a room, reads the room back through `revit.get_rooms`, verifies a blocked mismatched `expectedUniqueId` preview, attempts guarded family placement when suitable symbols and hosts exist, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
+- Run `npm run smoke:revit` only against a disposable active Revit project; it checks `revit.cancel_request` no-op behavior, creates a grid, floor, walls, a room-bounding loop, and a room, reads the room back through `revit.get_rooms`, verifies a blocked mismatched `expectedUniqueId` preview, attempts guarded family placement when suitable symbols and hosts exist, can load vetted local tag families for tag coverage without committing Autodesk family binaries, optionally changes a wall type, then moves, rotates, copies, pins, and unpins elements through preview/apply.
 - Run `npm run support:bundle` when sharing diagnostics; the bundle redacts common secret shapes and local profile paths.
 - Add-in logs are written to `%LOCALAPPDATA%\RevitMcpNext\logs` after Revit loads the add-in.

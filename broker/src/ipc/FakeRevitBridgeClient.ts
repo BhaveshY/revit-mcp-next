@@ -1575,6 +1575,12 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         viewId: operation.viewId,
         textNoteTypeId: operation.textNoteTypeId,
       };
+    case "load_family":
+      return {
+        document: activeDocument.title,
+        familyPath: operation.familyPath,
+        expectedSha256: operation.expectedSha256,
+      };
     case "tag_room":
       return {
         document: activeDocument.title,
@@ -1701,6 +1707,23 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         width: operation.width,
         rotation: operation.rotation,
       };
+    case "load_family":
+      return {
+        familyPath: operation.familyPath,
+        fileSha256: operation.expectedSha256 ?? "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        familyId: "9800",
+        familyName: operation.familyPath.split(/[\\/]/).pop()?.replace(/\.rfa$/i, "") ?? "Loaded Family",
+        symbolCount: 1,
+        symbols: [
+          {
+            id: "9801",
+            class: "FamilySymbol",
+            name: "Default",
+            familyName: operation.familyPath.split(/[\\/]/).pop()?.replace(/\.rfa$/i, "") ?? "Loaded Family",
+          },
+        ],
+        allowedCategories: operation.allowedCategories,
+      };
     case "tag_room":
       return {
         id: "1304",
@@ -1799,6 +1822,7 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
     operation.type === "create_sheet" ||
     operation.type === "place_view_on_sheet" ||
     operation.type === "create_text_note" ||
+    operation.type === "load_family" ||
     operation.type === "tag_room" ||
     operation.type === "tag_element" ||
     operation.type === "create_grid" ||

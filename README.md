@@ -71,7 +71,7 @@ npm run test:evidence:release:windows
 
 `npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
 
-`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It checks `revit.cancel_request` no-op behavior, creates test geometry, a room, optional family placement when the model has suitable symbols, optional or required room/element tags when the model has loaded tag families and suitable views, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
+`npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It checks `revit.cancel_request` no-op behavior, creates test geometry, a room, optional family placement when the model has suitable symbols, optional or required room/element tags when the model has loaded or locally loaded tag families and suitable views, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
 `npm run smoke:release-local` is the one-command disposable-machine path: it builds, installs to a stable per-year root under `%APPDATA%\Autodesk\Revit\Addins`, copies a sample RVT, launches Revit when needed, waits for `revit.status` readiness, runs doctor/live smoke, closes and relaunches its own Revit process for a second status-only no-prompt probe, collects support output, and attempts release evidence collection. Evidence and package work directories default to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
 
 Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`. The application manifest now uses `<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>`, but the durable no-prompt path is trusted Authenticode signing. `npm run smoke:release-local` creates/trusts a disposable CurrentUser dev certificate, signs the package, and verifies trusted signatures before launch. For an unsigned external preview, label the package as unsigned and include checksums plus smoke/evidence artifacts; only claim a signed release when signature verification evidence exists for that exact build. See [external-preview.md](docs/external-preview.md) for the concise sharing checklist.
@@ -96,7 +96,7 @@ Release-candidate smoke runs should use a curated disposable model with at least
 npm run smoke:revit -- -RequireTypeChange -RequireTags
 ```
 
-For deterministic curated runners, pin the loaded tag symbols by id or by a stable name/family substring:
+For disposable smoke/release models that lack loaded tag symbols, a workflow can preview/apply `load_family` from vetted local `.rfa` files before `tag_room` or `tag_element`; keep Autodesk family binaries outside this repo. For deterministic curated runners, pin the loaded tag symbols by id or by a stable name/family substring:
 
 ```powershell
 npm run smoke:revit -- -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag"
@@ -249,6 +249,7 @@ For existing-element writes, keep using Revit `elementId` or operation-specific 
 - `create_floor`: create a single-loop floor from `levelId`, ordered `outline` points, optional `floorTypeId`, and optional `structural`.
 - `create_room`: place a room by `levelId` and 2D `location`, with optional `name`, `number`, `department`, and `allowDuplicateNumber`.
 - `place_family_instance`: place first-case wall-hosted door/window symbols by `familySymbolId`, `hostElementId`, optional `expectedHostUniqueId`, and `location`, or level-based furniture/equipment/fixture symbols by `familySymbolId`, `levelId`, and `location`.
+- `load_family`: load a vetted local `.rfa` family file into the active document after a ready preview, optionally guarded by `expectedSha256`; use it to make annotation/tag/family workflows deterministic before `tag_room`, `tag_element`, or placement work.
 - `create_sheet`: create a sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId` from `revit.catalog kind=titleBlocks`.
 - `place_view_on_sheet`: place an eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`.
 - `create_text_note`: create a text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
@@ -263,7 +264,7 @@ For existing-element writes, keep using Revit `elementId` or operation-specific 
 
 `revit.preview_change_set` validates supported operations without mutation and returns `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt`; `revit.apply_change_set` requires those exact preview fields plus `confirm: true` and applies the full change set in one named Revit transaction.
 
-Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`, including room tag types and independent tag symbols. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used.
+Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`, including room tag types and independent tag symbols. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used. For tag workflows, check `revit.catalog` first; use `load_family` only when compatible symbols are missing and a vetted local `.rfa` path is available, then re-run catalog and use the loaded symbol IDs.
 
 See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences covering model audit, room/wall/floor creation, family placement preview, selected element updates, and blocked preview recovery.
 

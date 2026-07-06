@@ -75,8 +75,14 @@ async function main() {
   if (roomTagSelector) {
     console.log(`Room tag selector: ${formatTagTypeSelector(roomTagSelector)}`);
   }
+  if (options.roomTagFamilyPath) {
+    console.log(`Room tag family path: ${path.resolve(options.roomTagFamilyPath)}`);
+  }
   if (elementTagSelector) {
     console.log(`Element tag selector: ${formatTagTypeSelector(elementTagSelector)}`);
+  }
+  if (options.elementTagFamilyPath) {
+    console.log(`Element tag family path: ${path.resolve(options.elementTagFamilyPath)}`);
   }
   if (options.expectedRevitYear) {
     console.log(`Expected Revit year: ${options.expectedRevitYear}`);
@@ -127,6 +133,7 @@ async function main() {
       room: roomTagSelector,
       element: elementTagSelector,
     }),
+    loadedFamilies: [],
     result: null,
     error: null,
   };
@@ -204,6 +211,23 @@ async function main() {
       documentFingerprint,
       expectedGeneration: startingGeneration,
     });
+
+    let setupGeneration = startingGeneration;
+    const loadedFamilies = await loadConfiguredTagFamilies(client, {
+      documentFingerprint,
+      expectedGeneration: setupGeneration,
+      transactionPrefix: options.transactionPrefix,
+      roomTagFamilyPath: options.roomTagFamilyPath,
+      roomTagFamilySha256: options.roomTagFamilySha256,
+      elementTagFamilyPath: options.elementTagFamilyPath,
+      elementTagFamilySha256: options.elementTagFamilySha256,
+    });
+    summary.loadedFamilies = loadedFamilies.map((entry) => entry.evidence);
+    if (loadedFamilies.length > 0) {
+      const lastApply = loadedFamilies[loadedFamilies.length - 1].apply;
+      setupGeneration = numericOrUndefined(lastApply?.generation) ?? setupGeneration;
+    }
+    documentGuard.expectedGeneration = setupGeneration;
 
     const tagPreflight = await preflightRequiredTagCoverage(client, {
       documentFingerprint,
@@ -341,6 +365,19 @@ async function main() {
     const level = chooseLevel(levels);
     const levelElevationMm = numericOrDefault(level?.elevation?.value, 0);
     console.log(`Levels OK: using ${level.name ?? "(unnamed level)"} (${level.id}) at ${levelElevationMm} mm`);
+    const planBackedViews = await listAnnotationViews(client, documentFingerprint, [
+      "FloorPlan",
+      "CeilingPlan",
+      "EngineeringPlan",
+    ]);
+    const placement = choosePlacementLevel(levels, planBackedViews) ?? { level, view: undefined };
+    const placementLevel = placement.level ?? level;
+    const placementLevelId = String(placementLevel.id);
+    const placementLevelElevationMm = numericOrDefault(placementLevel?.elevation?.value, levelElevationMm);
+    console.log(
+      `Placement level OK: using ${placementLevel.name ?? "(unnamed level)"} (${placementLevelId})` +
+        `${placement.view?.id ? ` with plan view ${placement.view.id}` : " without a discovered plan view"}`
+    );
 
     const wallTypes = await catalog(client, {
       kind: "elementTypes",
@@ -376,7 +413,7 @@ async function main() {
     const levelTransaction = makeTransactionName(options.transactionPrefix, "create level", runId);
     const levelChangeSet = compactObject({
       documentFingerprint,
-      expectedGeneration: startingGeneration,
+      expectedGeneration: setupGeneration,
       transactionName: levelTransaction,
       operations: [levelOperation],
     });
@@ -429,12 +466,12 @@ async function main() {
     const floorOperation = {
       id: "create-smoke-floor",
       type: "create_floor",
-      levelId: String(smokeLevelId),
+      levelId: placementLevelId,
       outline: [
-        pointMm(0, -options.wallLengthMm - 1000, smokeLevelElevationMm),
-        pointMm(options.wallLengthMm, -options.wallLengthMm - 1000, smokeLevelElevationMm),
-        pointMm(options.wallLengthMm, -1000, smokeLevelElevationMm),
-        pointMm(0, -1000, smokeLevelElevationMm),
+        pointMm(0, -options.wallLengthMm - 1000, placementLevelElevationMm),
+        pointMm(options.wallLengthMm, -options.wallLengthMm - 1000, placementLevelElevationMm),
+        pointMm(options.wallLengthMm, -1000, placementLevelElevationMm),
+        pointMm(0, -1000, placementLevelElevationMm),
       ],
       structural: false,
     };
@@ -458,9 +495,9 @@ async function main() {
     const wallOperation = {
       id: "create-smoke-wall",
       type: "create_wall",
-      levelId: String(smokeLevelId),
-      start: pointMm(0, 0, smokeLevelElevationMm),
-      end: pointMm(options.wallLengthMm, 0, smokeLevelElevationMm),
+      levelId: placementLevelId,
+      start: pointMm(0, 0, placementLevelElevationMm),
+      end: pointMm(options.wallLengthMm, 0, placementLevelElevationMm),
       height: unitMm(options.wallHeightMm),
       structural: false,
       flip: false,
@@ -531,8 +568,8 @@ async function main() {
       runId,
       wallId,
       wallUniqueId,
-      levelId: String(smokeLevelId),
-      levelElevationMm: smokeLevelElevationMm,
+      levelId: placementLevelId,
+      levelElevationMm: placementLevelElevationMm,
       wallLengthMm: options.wallLengthMm,
     });
     const familyPlacementApply = familyPlacementResult.apply;
@@ -557,9 +594,9 @@ async function main() {
       {
         id: "create-room-boundary-south",
         type: "create_wall",
-        levelId: String(smokeLevelId),
-        start: pointMm(roomMinX, roomMinY, smokeLevelElevationMm),
-        end: pointMm(roomMaxX, roomMinY, smokeLevelElevationMm),
+        levelId: placementLevelId,
+        start: pointMm(roomMinX, roomMinY, placementLevelElevationMm),
+        end: pointMm(roomMaxX, roomMinY, placementLevelElevationMm),
         height: unitMm(options.wallHeightMm),
         structural: false,
         flip: false,
@@ -567,9 +604,9 @@ async function main() {
       {
         id: "create-room-boundary-east",
         type: "create_wall",
-        levelId: String(smokeLevelId),
-        start: pointMm(roomMaxX, roomMinY, smokeLevelElevationMm),
-        end: pointMm(roomMaxX, roomMaxY, smokeLevelElevationMm),
+        levelId: placementLevelId,
+        start: pointMm(roomMaxX, roomMinY, placementLevelElevationMm),
+        end: pointMm(roomMaxX, roomMaxY, placementLevelElevationMm),
         height: unitMm(options.wallHeightMm),
         structural: false,
         flip: false,
@@ -577,9 +614,9 @@ async function main() {
       {
         id: "create-room-boundary-north",
         type: "create_wall",
-        levelId: String(smokeLevelId),
-        start: pointMm(roomMaxX, roomMaxY, smokeLevelElevationMm),
-        end: pointMm(roomMinX, roomMaxY, smokeLevelElevationMm),
+        levelId: placementLevelId,
+        start: pointMm(roomMaxX, roomMaxY, placementLevelElevationMm),
+        end: pointMm(roomMinX, roomMaxY, placementLevelElevationMm),
         height: unitMm(options.wallHeightMm),
         structural: false,
         flip: false,
@@ -587,9 +624,9 @@ async function main() {
       {
         id: "create-room-boundary-west",
         type: "create_wall",
-        levelId: String(smokeLevelId),
-        start: pointMm(roomMinX, roomMaxY, smokeLevelElevationMm),
-        end: pointMm(roomMinX, roomMinY, smokeLevelElevationMm),
+        levelId: placementLevelId,
+        start: pointMm(roomMinX, roomMaxY, placementLevelElevationMm),
+        end: pointMm(roomMinX, roomMinY, placementLevelElevationMm),
         height: unitMm(options.wallHeightMm),
         structural: false,
         flip: false,
@@ -619,7 +656,7 @@ async function main() {
     const roomOperation = {
       id: "create-smoke-room",
       type: "create_room",
-      levelId: String(smokeLevelId),
+      levelId: placementLevelId,
       location: point2Mm((roomMinX + roomMaxX) / 2, (roomMinY + roomMaxY) / 2),
       number: roomNumber,
       name: roomName,
@@ -643,7 +680,7 @@ async function main() {
 
     const createdRoom = await getRoomByNumber(client, {
       documentFingerprint,
-      levelId: String(smokeLevelId),
+      levelId: placementLevelId,
       number: roomNumber,
     });
     assert(String(createdRoom.id) === String(roomId), "revit.get_rooms did not return the room created by create_room.");
@@ -681,7 +718,7 @@ async function main() {
       runId,
       preferredRoomId: roomId,
       preferredRoomUniqueId: createdRoomUniqueId,
-      preferredLevelId: String(smokeLevelId),
+      preferredLevelId: placementLevelId,
       preferredLocation: roomOperation.location,
       tagTypeSelector: roomTagSelector,
     });
@@ -698,7 +735,7 @@ async function main() {
       transactionPrefix: options.transactionPrefix,
       runId,
       preferredElementId: wallId,
-      levelElevationMm: smokeLevelElevationMm,
+      levelElevationMm: placementLevelElevationMm,
       tagTypeSelector: elementTagSelector,
     });
     if (elementTagResult.apply) {
@@ -807,7 +844,7 @@ async function main() {
     console.log(`Post-move query OK: wall ${movedWall.id} is still queryable`);
 
     const rotationGeneration = numericOrUndefined(moveApply.generation);
-    const axisStart = pointFromLocationSnapshot(moveChange?.after?.location, pointMm(0, options.moveYMm, smokeLevelElevationMm));
+    const axisStart = pointFromLocationSnapshot(moveChange?.after?.location, pointMm(0, options.moveYMm, placementLevelElevationMm));
     const axisEnd = offsetPointMm(axisStart, 0, 0, 1000);
     const rotateOperation = {
       id: "rotate-smoke-wall",
@@ -964,6 +1001,7 @@ async function main() {
       ...(sheetApply ? ["create_sheet"] : []),
       ...(placedViewApply ? ["place_view_on_sheet"] : []),
       ...(textNoteApply ? ["create_text_note"] : []),
+      ...(loadedFamilies.length > 0 ? ["load_family"] : []),
       ...(roomTagApply ? ["tag_room"] : []),
       ...(elementTagApply ? ["tag_element"] : []),
       "set_parameter",
@@ -993,6 +1031,8 @@ async function main() {
       runId,
       createdElementIds: {
         level: smokeLevelId,
+        placementLevel: placementLevelId,
+        placementView: placement.view?.id,
         grid: gridId,
         floor: floorId,
         wall: wallId,
@@ -1059,8 +1099,12 @@ function parseArgs(args) {
     requireTypeChange: false,
     requireRoomTag: false,
     requireElementTag: false,
+    roomTagFamilyPath: undefined,
+    roomTagFamilySha256: undefined,
     roomTagTypeId: undefined,
     roomTagTypeNameContains: undefined,
+    elementTagFamilyPath: undefined,
+    elementTagFamilySha256: undefined,
     elementTagTypeId: undefined,
     elementTagTypeNameContains: undefined,
     statusOnly: false,
@@ -1138,6 +1182,14 @@ function parseArgs(args) {
         options.requireRoomTag = false;
         options.requireElementTag = false;
         break;
+      case "--room-tag-family-path":
+        options.roomTagFamilyPath = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--room-tag-family-sha256":
+        options.roomTagFamilySha256 = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
       case "--room-tag-type-id":
         options.roomTagTypeId = readValue(args, ++index, inlineValue, name);
         if (inlineValue !== undefined) index--;
@@ -1149,6 +1201,14 @@ function parseArgs(args) {
         break;
       case "--element-tag-type-id":
         options.elementTagTypeId = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--element-tag-family-path":
+        options.elementTagFamilyPath = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
+      case "--element-tag-family-sha256":
+        options.elementTagFamilySha256 = readValue(args, ++index, inlineValue, name);
         if (inlineValue !== undefined) index--;
         break;
       case "--element-tag-type-name-contains":
@@ -2028,6 +2088,88 @@ async function tryCreateTextNote(
   return { apply, textNoteId };
 }
 
+async function loadConfiguredTagFamilies(
+  client,
+  {
+    documentFingerprint,
+    expectedGeneration,
+    transactionPrefix,
+    roomTagFamilyPath,
+    roomTagFamilySha256,
+    elementTagFamilyPath,
+    elementTagFamilySha256,
+  }
+) {
+  const loads = [];
+  let generation = expectedGeneration;
+  if (roomTagFamilyPath) {
+    const result = await loadFamilyForSmoke(client, {
+      documentFingerprint,
+      expectedGeneration: generation,
+      transactionPrefix,
+      label: "room tag family",
+      operationId: "load-smoke-room-tag-family",
+      familyPath: roomTagFamilyPath,
+      expectedSha256: roomTagFamilySha256,
+      allowedCategories: ["OST_RoomTags"],
+    });
+    loads.push(result);
+    generation = numericOrUndefined(result.apply?.generation) ?? generation;
+  }
+
+  if (elementTagFamilyPath) {
+    const result = await loadFamilyForSmoke(client, {
+      documentFingerprint,
+      expectedGeneration: generation,
+      transactionPrefix,
+      label: "element tag family",
+      operationId: "load-smoke-element-tag-family",
+      familyPath: elementTagFamilyPath,
+      expectedSha256: elementTagFamilySha256,
+      allowedCategories: ["OST_WallTags", "OST_MultiCategoryTags"],
+    });
+    loads.push(result);
+  }
+
+  return loads;
+}
+
+async function loadFamilyForSmoke(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, label, operationId, familyPath, expectedSha256, allowedCategories }
+) {
+  const runId = makeRunId();
+  const operation = compactObject({
+    id: operationId,
+    type: "load_family",
+    familyPath,
+    expectedSha256,
+    allowedCategories,
+    overwriteParameterValues: false,
+  });
+  const changeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration,
+    transactionName: makeTransactionName(transactionPrefix, `load ${label}`, runId),
+    operations: [operation],
+  });
+  const preview = await previewChangeSet(client, changeSet, "load_family");
+  const apply = await applyChangeSet(client, changeSet, preview, "load_family");
+  const change = findChange(apply, "load_family");
+  const evidence = compactObject({
+    label,
+    familyPath,
+    expectedSha256,
+    fileSha256: change?.after?.fileSha256,
+    familyId: change?.after?.familyId ?? change?.target?.elementId,
+    familyName: change?.after?.familyName,
+    symbolCount: change?.after?.symbolCount,
+    allowedCategories,
+  });
+  console.log(`Load family OK: ${label} ${evidence.familyName ?? familyPath}`);
+  return { apply, evidence };
+}
+
 async function tryTagRoom(
   client,
   {
@@ -2276,6 +2418,17 @@ async function listAnnotationViews(client, documentFingerprint, acceptedTypes) {
   const result = await callRequiredTool(client, "revit.get_views", {
     documentFingerprint,
     filter: { isTemplate: false, isGraphical: true, canBePrinted: true },
+    fields: [
+      "id",
+      "uniqueId",
+      "name",
+      "type",
+      "isGraphical",
+      "isTemplate",
+      "canBePrinted",
+      "associatedLevelId",
+      "associatedLevelName",
+    ],
     preset: "summary",
     limit: 500,
     includeTotalCount: true,
@@ -2283,6 +2436,17 @@ async function listAnnotationViews(client, documentFingerprint, acceptedTypes) {
   assert(Array.isArray(result.items), "revit.get_views did not return an items array for annotation views.");
   const accepted = new Set(acceptedTypes);
   return result.items.filter((view) => typeof view?.id === "string" && accepted.has(viewTypeOf(view)));
+}
+
+function choosePlacementLevel(levels, planBackedViews) {
+  const levelsById = new Map((Array.isArray(levels) ? levels : []).map((level) => [String(level?.id ?? ""), level]));
+  for (const view of Array.isArray(planBackedViews) ? planBackedViews : []) {
+    const associatedLevelId = String(view?.associatedLevelId ?? "");
+    if (!associatedLevelId) continue;
+    const level = levelsById.get(associatedLevelId);
+    if (level?.id) return { level, view };
+  }
+  return undefined;
 }
 
 async function preflightRequiredTagCoverage(
@@ -2329,6 +2493,9 @@ async function preflightRequiredTagCoverage(
     }
     if (views.length === 0) {
       result.failures.push("No printable non-template plan or section view is available for room tags.");
+    }
+    if (!views.some((view) => typeof view?.associatedLevelId === "string" && view.associatedLevelId.length > 0)) {
+      result.failures.push("No printable room-tag view reports an associatedLevelId for placement-level matching.");
     }
   }
 
@@ -2778,22 +2945,23 @@ Runs a live Revit MCP smoke against the active Revit project:
   15. preview/apply create_sheet and read it back with revit.get_sheets
   16. preview/apply place_view_on_sheet when an unplaced printable view exists
   17. preview/apply create_text_note when the current view supports annotations
-  18. preview/apply tag_room with expectedUniqueId when a room tag type, room, and plan/section view are available
-  19. preview/apply tag_element with expectedUniqueId when a wall/multi-category tag type and visible wall are available
-  20. preview/apply guarded set_parameter on the created wall
-  21. revit.catalog for compatible wall type changes
-  22. preview/apply guarded change_element_type when an alternate valid type exists
-  23. preview/apply guarded move_element
-  24. assert the wall Y location changed by --move-y-mm
-  25. preview/apply guarded rotate_element
-  26. preview/apply guarded copy_element
-  27. preview/apply guarded set_element_pinned true
-  28. blocked preview for moving a pinned element
-  29. rejected apply for mismatched changeSetHash
-  30. preview/apply guarded set_element_pinned false
-  31. preview/apply guarded delete_element for the copied smoke wall
-  32. revit.cancel_request no-op probe
-  33. revitctl direct bridge probe proving apply_change_set cannot be mislabeled as operationKind=read
+  18. optional preview/apply load_family for vetted local tag .rfa files
+  19. preview/apply tag_room with expectedUniqueId when a room tag type, room, and plan/section view are available
+  20. preview/apply tag_element with expectedUniqueId when a wall/multi-category tag type and visible wall are available
+  21. preview/apply guarded set_parameter on the created wall
+  22. revit.catalog for compatible wall type changes
+  23. preview/apply guarded change_element_type when an alternate valid type exists
+  24. preview/apply guarded move_element
+  25. assert the wall Y location changed by --move-y-mm
+  26. preview/apply guarded rotate_element
+  27. preview/apply guarded copy_element
+  28. preview/apply guarded set_element_pinned true
+  29. blocked preview for moving a pinned element
+  30. rejected apply for mismatched changeSetHash
+  31. preview/apply guarded set_element_pinned false
+  32. preview/apply guarded delete_element for the copied smoke wall
+  33. revit.cancel_request no-op probe
+  34. revitctl direct bridge probe proving apply_change_set cannot be mislabeled as operationKind=read
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
@@ -2813,9 +2981,15 @@ Options:
   --skip-room-tag                 Allow tag_room coverage to be skipped. Default.
   --skip-element-tag              Allow tag_element coverage to be skipped. Default.
   --skip-tags                     Allow both tag operations to be skipped. Default.
+  --room-tag-family-path <path>   Preview/apply load_family for this vetted local .rfa before room tag preflight.
+  --room-tag-family-sha256 <hex>  Optional SHA-256 guard for --room-tag-family-path.
   --room-tag-type-id <id>         Require tag_room smoke to use this loaded room tag FamilySymbol id.
   --room-tag-type-name-contains <text>
                                   Require tag_room smoke to use a loaded room tag FamilySymbol whose name/family contains this text.
+  --element-tag-family-path <path>
+                                  Preview/apply load_family for this vetted local wall/multi-category tag .rfa before element tag preflight.
+  --element-tag-family-sha256 <hex>
+                                  Optional SHA-256 guard for --element-tag-family-path.
   --element-tag-type-id <id>      Require tag_element smoke to use this loaded wall or multi-category tag FamilySymbol id.
   --element-tag-type-name-contains <text>
                                   Require tag_element smoke to use a loaded wall or multi-category tag FamilySymbol whose name/family contains this text.

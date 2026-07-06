@@ -617,7 +617,7 @@ try {
             throw "Client discovery did not advertise expected tool: $expectedTool"
         }
     }
-    foreach ($expectedOperation in @("place_family_instance", "create_sheet", "place_view_on_sheet", "create_text_note", "tag_room", "tag_element", "create_room", "delete_element")) {
+    foreach ($expectedOperation in @("place_family_instance", "load_family", "create_sheet", "place_view_on_sheet", "create_text_note", "tag_room", "tag_element", "create_room", "delete_element")) {
         if (@($clientDiscovery.writeOperations) -notcontains $expectedOperation) {
             throw "Client discovery did not advertise expected write operation: $expectedOperation"
         }

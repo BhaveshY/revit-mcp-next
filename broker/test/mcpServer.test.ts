@@ -604,6 +604,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "create_sheet",
       "place_view_on_sheet",
       "create_text_note",
+      "load_family",
       "tag_room",
       "tag_element",
       "move_element",
@@ -629,6 +630,11 @@ test("broker exposes annotated tools with output schemas and callable structured
       "text",
       "position",
       "textNoteTypeId",
+      "familyPath",
+      "expectedSha256",
+      "allowedCategories",
+      "overwriteParameterValues",
+      "allowNetworkPath",
       "roomId",
       "elementId",
       "tagTypeId",
@@ -796,6 +802,13 @@ test("broker exposes annotated tools with output schemas and callable structured
         rotation: { value: 0, unit: "degrees" },
       },
       {
+        type: "load_family",
+        familyPath: "C:\\Families\\Room Tag.rfa",
+        expectedSha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        allowedCategories: ["OST_RoomTags"],
+        overwriteParameterValues: false,
+      },
+      {
         type: "tag_room",
         roomId: "601",
         expectedUniqueId: "room-601",
@@ -961,9 +974,9 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.ok(preview.structuredContent?.data?.changeSetHash);
     assert.ok(preview.structuredContent?.data?.expiresAt);
     assert.equal(preview.structuredContent?.data?.transactionName, "Update Mark Wall Move");
-    assert.equal(preview.structuredContent?.data?.operationCount, 17);
+    assert.equal(preview.structuredContent?.data?.operationCount, 18);
     assert.equal(preview.structuredContent?.data?.requiresConfirmation, true);
-    assert.equal(preview.structuredContent?.data?.changes?.length, 17);
+    assert.equal(preview.structuredContent?.data?.changes?.length, 18);
     const firstPreviewChange = preview.structuredContent?.data?.changes?.[0];
     assert.equal(Object.hasOwn(firstPreviewChange ?? {}, "operationId"), false);
     assert.deepEqual(firstPreviewChange, {
@@ -1032,13 +1045,13 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(apply.isError, undefined);
     assertNoUndefinedValues(apply.structuredContent, "apply.structuredContent");
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 17);
+    assert.equal(apply.structuredContent?.data?.changedCount, 18);
     assert.equal(apply.structuredContent?.data?.previewId, preview.structuredContent?.data?.previewId);
     assert.equal(apply.structuredContent?.data?.documentFingerprint, preview.structuredContent?.data?.documentFingerprint);
     assert.equal(apply.structuredContent?.data?.baseGeneration, preview.structuredContent?.data?.baseGeneration);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
     assert.equal(apply.structuredContent?.data?.transactionName, "Update Mark Wall Move");
-    assert.equal(apply.structuredContent?.data?.changes?.length, 17);
+    assert.equal(apply.structuredContent?.data?.changes?.length, 18);
     assert.equal(Object.hasOwn(apply.structuredContent?.data?.changes?.[0] ?? {}, "operationId"), false);
     assert.equal(apply.structuredContent?.data?.changes?.[0]?.status, "applied");
     assert.deepEqual(apply.structuredContent?.data?.changes?.[0]?.after, { value: "A-101" });
@@ -1124,6 +1137,7 @@ test("broker exposes MCP discovery resources and workflow prompts", async () => 
     assert.ok(discovery.workflow?.some((step) => step.includes("revit.status")));
     assert.ok(discovery.tools?.some((tool) => tool.name === "revit.apply_change_set" && tool.resource === "revit://tools/revit.apply_change_set"));
     assert.ok(discovery.writeOperations?.includes("tag_element"));
+    assert.ok(discovery.writeOperations?.includes("load_family"));
     assert.doesNotMatch(JSON.stringify(discovery), /auth\.env|pipeToken|Bhavesh/i);
 
     const queryResource = await client.readResource({ uri: "revit://tools/revit.query" });

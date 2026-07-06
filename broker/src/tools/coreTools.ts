@@ -16,6 +16,11 @@ interface CoreToolContext {
 
 const boundedString = z.string().min(1).max(128);
 const boundedId = z.string().min(1).max(64);
+const boundedLocalPath = z.string().min(1).max(1024);
+const sha256Schema = z
+  .string()
+  .regex(/^(sha256:)?[a-fA-F0-9]{64}$/)
+  .describe("Optional SHA-256 guard for the exact local family file; accepts hex or sha256:<hex>.");
 const generationSchema = z.number().int().min(0);
 const parameterScalar = z.union([z.string().max(256), z.number(), z.boolean()]);
 const parameterEqualsSchema = z
@@ -466,6 +471,20 @@ const createTextNoteOperationSchema = operationBaseSchema
     rotation: changeAngleValueSchema.optional().describe("Optional rotation in the target view."),
   })
   .strict();
+const loadFamilyOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("load_family"),
+    familyPath: boundedLocalPath.describe("Absolute local path to a vetted Revit .rfa family file visible to the Revit process."),
+    expectedSha256: sha256Schema.optional(),
+    allowedCategories: z
+      .array(boundedString)
+      .max(16)
+      .optional()
+      .describe("Optional category guard such as OST_RoomTags or OST_MultiCategoryTags; apply rolls back if the loaded family does not match."),
+    overwriteParameterValues: z.boolean().optional().describe("Passed to Revit family load options. Defaults to false."),
+    allowNetworkPath: z.boolean().optional().describe("Allow UNC/network paths after explicit review. Defaults to false."),
+  })
+  .strict();
 const tagRoomOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("tag_room"),
@@ -596,6 +615,7 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   createSheetOperationSchema,
   placeViewOnSheetOperationSchema,
   createTextNoteOperationSchema,
+  loadFamilyOperationSchema,
   tagRoomOperationSchema,
   tagElementOperationSchema,
   moveElementOperationSchema,
@@ -1735,7 +1755,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: outputSchemas.previewChange,
       annotations: {

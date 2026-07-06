@@ -13,8 +13,12 @@ param(
     [switch]$RequireRoomTag,
     [switch]$RequireElementTag,
     [switch]$RequireTags,
+    [string]$RoomTagFamilyPath = "",
+    [string]$RoomTagFamilySha256 = "",
     [string]$RoomTagTypeId = "",
     [string]$RoomTagTypeNameContains = "",
+    [string]$ElementTagFamilyPath = "",
+    [string]$ElementTagFamilySha256 = "",
     [string]$ElementTagTypeId = "",
     [string]$ElementTagTypeNameContains = "",
     [switch]$StatusOnly
@@ -101,6 +105,14 @@ if ($RequireTags) {
     }
 }
 
+if (-not [string]::IsNullOrWhiteSpace($RoomTagFamilyPath)) {
+    $nodeArgs += @("--room-tag-family-path", $RoomTagFamilyPath)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($RoomTagFamilySha256)) {
+    $nodeArgs += @("--room-tag-family-sha256", $RoomTagFamilySha256)
+}
+
 if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeId)) {
     $nodeArgs += @("--room-tag-type-id", $RoomTagTypeId)
 }
@@ -111,6 +123,14 @@ if (-not [string]::IsNullOrWhiteSpace($RoomTagTypeNameContains)) {
 
 if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeId)) {
     $nodeArgs += @("--element-tag-type-id", $ElementTagTypeId)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ElementTagFamilyPath)) {
+    $nodeArgs += @("--element-tag-family-path", $ElementTagFamilyPath)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ElementTagFamilySha256)) {
+    $nodeArgs += @("--element-tag-family-sha256", $ElementTagFamilySha256)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ElementTagTypeNameContains)) {

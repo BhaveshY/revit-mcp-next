@@ -835,6 +835,7 @@ export type ChangeOperationType =
   | "create_sheet"
   | "place_view_on_sheet"
   | "create_text_note"
+  | "load_family"
   | "tag_room"
   | "tag_element"
   | "move_element"
@@ -917,6 +918,15 @@ export interface CreateTextNoteOperation extends ChangeOperationBase {
   textNoteTypeId?: ElementId;
   width?: UnitValue;
   rotation?: AngleValue;
+}
+
+export interface LoadFamilyOperation extends ChangeOperationBase {
+  type: "load_family";
+  familyPath: string;
+  expectedSha256?: string;
+  allowedCategories?: string[];
+  overwriteParameterValues?: boolean;
+  allowNetworkPath?: boolean;
 }
 
 export interface TagRoomOperation extends ChangeOperationBase {
@@ -1024,6 +1034,7 @@ export type ChangeOperation =
   | CreateSheetOperation
   | PlaceViewOnSheetOperation
   | CreateTextNoteOperation
+  | LoadFamilyOperation
   | TagRoomOperation
   | TagElementOperation
   | MoveElementChangeOperation

@@ -284,6 +284,7 @@ const writeOperations = [
   "create_sheet",
   "place_view_on_sheet",
   "create_text_note",
+  "load_family",
   "tag_room",
   "tag_element",
   "move_element",
