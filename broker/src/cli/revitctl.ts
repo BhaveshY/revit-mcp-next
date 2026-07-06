@@ -260,15 +260,26 @@ function resolveCommandOperation(options: RevitCtlOptions): {
       return { operation: "get_sheets", operationKind: "read", payload: payloadObject(options.payload) };
     case "current-view":
       return { operation: "get_current_view", operationKind: "read", payload: payloadObject(options.payload) };
+    case "current-view-elements":
+    case "view-elements":
+      return { operation: "get_current_view_elements", operationKind: "read", payload: payloadObject(options.payload) };
     case "selection":
       return { operation: "get_selection", operationKind: "read", payload: payloadObject(options.payload) };
+    case "analyze":
+    case "analyze-model":
+      return { operation: "analyze_model", operationKind: "read", payload: payloadObject(options.payload) };
     case "readiness":
       return { operation: "get_model_readiness", operationKind: "read", payload: payloadObject(options.payload) };
     case "model-context":
     case "context":
       return { operation: "get_model_context", operationKind: "read", payload: payloadObject(options.payload) };
+    case "materials":
+    case "material-quantities":
+      return { operation: "get_material_quantities", operationKind: "read", payload: payloadObject(options.payload) };
     case "warnings":
       return { operation: "get_warnings", operationKind: "read", payload: payloadObject(options.payload) };
+    case "rooms":
+      return { operation: "get_rooms", operationKind: "read", payload: payloadObject(options.payload) };
     case "query":
       return { operation: "query", operationKind: "read", payload: payloadObject(options.payload) };
     case "catalog":
@@ -480,7 +491,11 @@ Usage:
   revitctl views [--payload <json-or-path>]
   revitctl sheets [--payload <json-or-path>]
   revitctl current-view [--payload <json-or-path>]
+  revitctl current-view-elements [--payload <json-or-path>]
   revitctl selection [--payload <json-or-path>]
+  revitctl analyze [--payload <json-or-path>]
+  revitctl materials [--payload <json-or-path>]
+  revitctl rooms [--payload <json-or-path>]
   revitctl query --payload <json-or-path>
   revitctl catalog --payload <json-or-path>
   revitctl parameters --payload <json-or-path>

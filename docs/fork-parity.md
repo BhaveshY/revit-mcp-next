@@ -2,6 +2,8 @@
 
 This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-revit`. The goal is not one-for-one cloning; direct mutation tools from the fork should become bounded `preview_change_set` / `apply_change_set` operations unless they are intentionally deferred.
 
+See [tooling-roadmap.md](tooling-roadmap.md) for the tracked implementation state, contract owner, and smoke requirement for deferred high-value tools.
+
 ## Covered Or Better
 
 | Old fork capability | Revit MCP Next status |

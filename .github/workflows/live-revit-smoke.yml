@@ -68,6 +68,20 @@ on:
         description: Seconds to wait for Dynamo-for-Revit host-smoke evidence.
         required: true
         default: "900"
+      use_dynamo_journal:
+        description: Use a temporary Revit journal to open and run the packaged Dynamo graph. Requires a warmed Dynamo profile by default.
+        required: true
+        type: boolean
+        default: false
+      allow_unwarmed_dynamo_journal:
+        description: Allow Dynamo journal mode when DynamoSettings.xml is missing or unparseable. Use only for supervised disposable-runner experiments.
+        required: true
+        type: boolean
+        default: false
+      dynamo_settings_path:
+        description: Optional DynamoSettings.xml path used by the Dynamo journal preflight.
+        required: false
+        default: ""
       require_type_change:
         description: Fail unless the smoke can discover and apply an alternate compatible wall type.
         required: true
@@ -152,6 +166,9 @@ jobs:
       SEED_PYREVIT_HOSTS: ${{ inputs.seed_pyrevit_hosts }}
       PYREVIT_BUILDS: ${{ inputs.pyrevit_builds }}
       DYNAMO_TIMEOUT_SECONDS: ${{ inputs.dynamo_timeout_seconds }}
+      USE_DYNAMO_JOURNAL: ${{ inputs.use_dynamo_journal }}
+      ALLOW_UNWARMED_DYNAMO_JOURNAL: ${{ inputs.allow_unwarmed_dynamo_journal }}
+      DYNAMO_SETTINGS_PATH: ${{ inputs.dynamo_settings_path }}
       REQUIRE_TYPE_CHANGE: ${{ inputs.require_type_change }}
       REQUIRE_ROOM_TAG: ${{ inputs.require_room_tag }}
       REQUIRE_ELEMENT_TAG: ${{ inputs.require_element_tag }}
@@ -224,6 +241,9 @@ jobs:
             roomTagTypeNameContains = $env:ROOM_TAG_TYPE_NAME_CONTAINS
             elementTagTypeId = $env:ELEMENT_TAG_TYPE_ID
             elementTagTypeNameContains = $env:ELEMENT_TAG_TYPE_NAME_CONTAINS
+            useDynamoJournal = $env:USE_DYNAMO_JOURNAL
+            allowUnwarmedDynamoJournal = $env:ALLOW_UNWARMED_DYNAMO_JOURNAL
+            dynamoSettingsPath = $env:DYNAMO_SETTINGS_PATH
             readinessProfile = $env:READINESS_PROFILE
             signingNoTimestamp = $env:SIGNING_NO_TIMESTAMP
             runnerName = $env:RUNNER_NAME
@@ -435,6 +455,15 @@ jobs:
           }
           if (-not [string]::IsNullOrWhiteSpace($env:PYREVIT_BUILDS)) {
             $hostArgs += @("-PyRevitBuilds", $env:PYREVIT_BUILDS)
+          }
+          if ($env:USE_DYNAMO_JOURNAL -eq "true") {
+            $hostArgs += "-UseDynamoJournalForDynamo"
+          }
+          if ($env:ALLOW_UNWARMED_DYNAMO_JOURNAL -eq "true") {
+            $hostArgs += "-AllowUnwarmedDynamoJournal"
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:DYNAMO_SETTINGS_PATH)) {
+            $hostArgs += @("-DynamoSettingsPath", $env:DYNAMO_SETTINGS_PATH)
           }
 
           & npm.cmd @hostArgs 2>&1 | Tee-Object -FilePath $log

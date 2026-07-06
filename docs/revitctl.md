@@ -26,8 +26,12 @@ It forwards the local pipe auth token to the add-in but does not print the token
 ```powershell
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"filter":{"isTemplate":false},"limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" sheets --payload '{"includePlacedViews":true,"limit":10}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" current-view-elements --payload '{"preset":"geometrySummary","limit":10}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" analyze --payload '{"bucketLimit":20,"maxElementsScanned":20000}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" model-context --payload '{"phaseLimit":10,"worksetLimit":10,"designOptionLimit":10,"revitLinkLimit":10}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" materials --payload '{"limit":10,"maxElementsScanned":10000}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" warnings --payload '{"preset":"summary","limit":10}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" rooms --payload '{"preset":"schedule","limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" query --payload '{"filter":{"selectionOnly":true},"preset":"summary","limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" query --payload '{"filter":{"selectionOnly":true},"preset":"geometrySummary","limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter":{"selectionOnly":true},"preset":"writableEdit","limit":5}' --pretty
@@ -70,6 +74,8 @@ npm run revitctl -- query --payload .\query.json --pretty
 ```
 
 Use `--install-root`, `--discovery`, `--auth-config`, `--pipe`, and `--timeout-ms` to target non-default installs.
+
+Compact read aliases map directly to the MCP bridge operation names: `current-view-elements`/`view-elements` to `get_current_view_elements`, `analyze`/`analyze-model` to `analyze_model`, `materials`/`material-quantities` to `get_material_quantities`, and `rooms` to `get_rooms`. Use `call <operation>` only when a named alias does not exist.
 
 ## Boundaries
 

@@ -4,7 +4,7 @@ This project is shareable as an unsigned Revit 2024 external preview when labele
 
 Use this audit to separate evidence that already exists from blockers that still need release work.
 
-See [fork-parity.md](fork-parity.md) for the current old-fork capability comparison and the remaining parity backlog.
+See [fork-parity.md](fork-parity.md) for the current old-fork capability comparison and [tooling-roadmap.md](tooling-roadmap.md) for the tracked backlog of deferred high-value tools.
 
 ## Current Evidence
 
@@ -59,7 +59,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - True bounded large-model reads: several add-in handlers still collect or materialize full result sets before returning a page. Production readiness needs native filters, lazy/keyset pagination, scan counters, and clear `elementsScanned`/`nativeFilterUsed`/`scanTruncated` metrics for broad reads.
 - Shared per-operation payload schemas across broker, CLI, named pipe, in-process bridge, and add-in. The broker is strict, but raw bridge ingress still relies on envelope validation plus C# ad hoc conversions.
 - Richer request lifecycle diagnostics and cancellation: status should expose queue depth/request timing/last ExternalEvent raise result, and cancellation should be more than the current no-op availability probe.
-- High-value production workflow tools are still missing, especially dimensions, view creation/duplication/template control, schedules, navigation/review helpers such as select/open/zoom/isolate, richer family placement, and broader MEP/structural/domain element creation.
+- High-value production workflow tools are still missing, especially dimensions, view creation/duplication/template control, schedules, navigation/review helpers such as select/open/zoom/isolate, richer family placement, and broader MEP/structural/domain element creation. Track these through [tooling-roadmap.md](tooling-roadmap.md); do not imply roadmap items are complete until their contract and smoke requirements are satisfied.
 - Multi-version Revit compatibility implementation and validation beyond the current Revit 2024 target. Revit 2025/2026 are blocked intentionally until year-specific .NET 8 add-in artifacts are built, packaged, installed, and smoked.
 - Archived release evidence bundle for each release candidate, generated from that exact package, signing state, validation logs, support bundle, live-smoke output, and hosted integration output.
 
@@ -151,6 +151,7 @@ The workflow:
 - Builds the current checkout with Node 24 and the configured Revit API path.
 - Creates a staged package under `artifacts\release-candidate` and installs from that package.
 - Refuses to install over a running Revit process unless `skip_install=true`.
+- Can collect Dynamo host evidence interactively, or with `use_dynamo_journal=true` after the runner's Dynamo profile has been warmed manually and `DynamoSettings.xml` exists. `allow_unwarmed_dynamo_journal=true` is only for supervised disposable-runner experiments; the workflow and scripts do not change privacy settings or click startup prompts.
 - Uses an existing Revit process or launches Revit with the configured disposable model path.
 - Runs `npm run doctor:windows` and `npm run smoke:revit`; by default the workflow requires `change_element_type`, `tag_room`, `tag_element`, hosted pyRevit/Dynamo evidence, support evidence, release evidence collection, and `npm run evidence:check -- -Profile release-candidate`. Relax `readiness_profile`, `require_tags`, `require_room_tag`, or `require_element_tag` only for explicitly labeled preview runs where skipped evidence is acceptable.
 - Supports `signing_mode=none`, `signing_mode=local-dev`, and `signing_mode=release-cert`. Local-dev signing is only for disposable smoke runners; production release candidates should use release certificate secrets.

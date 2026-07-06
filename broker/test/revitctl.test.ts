@@ -101,6 +101,61 @@ test("revitctl routes warnings command as a read operation", async () => {
   );
 });
 
+test("revitctl routes compact support read aliases as read operations", async () => {
+  const cases = [
+    {
+      argv: ["current-view-elements", "--payload", '{"preset":"summary","limit":5}'],
+      operation: "get_current_view_elements",
+      payload: { preset: "summary", limit: 5 },
+    },
+    {
+      argv: ["view-elements", "--payload", '{"preset":"geometrySummary","limit":2}'],
+      operation: "get_current_view_elements",
+      payload: { preset: "geometrySummary", limit: 2 },
+    },
+    {
+      argv: ["analyze", "--payload", '{"bucketLimit":3}'],
+      operation: "analyze_model",
+      payload: { bucketLimit: 3 },
+    },
+    {
+      argv: ["analyze-model", "--payload", '{"includeClassBreakdown":false}'],
+      operation: "analyze_model",
+      payload: { includeClassBreakdown: false },
+    },
+    {
+      argv: ["materials", "--payload", '{"limit":4}'],
+      operation: "get_material_quantities",
+      payload: { limit: 4 },
+    },
+    {
+      argv: ["material-quantities", "--payload", '{"materialNameContains":"Concrete"}'],
+      operation: "get_material_quantities",
+      payload: { materialNameContains: "Concrete" },
+    },
+    {
+      argv: ["rooms", "--payload", '{"preset":"schedule","limit":6}'],
+      operation: "get_rooms",
+      payload: { preset: "schedule", limit: 6 },
+    },
+  ] as const;
+
+  for (const item of cases) {
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, item.operation);
+        assert.equal(request.operationKind, "read");
+        assert.deepEqual(request.payload, item.payload);
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(parseArgs([...item.argv, "--pipe", pipeName]));
+        assert.equal(result.exitCode, 0);
+        assert.equal((result.body as { ok?: boolean }).ok, true);
+      }
+    );
+  }
+});
+
 test("revitctl routes model-context command as a read operation", async () => {
   await withPipeServer(
     (request) => {
@@ -284,6 +339,10 @@ test("revitctl help lists write-control and raw call support", async () => {
   assert.match(help, /revitctl preview/);
   assert.match(help, /revitctl apply/);
   assert.match(help, /revitctl cancel/);
+  assert.match(help, /revitctl current-view-elements/);
+  assert.match(help, /revitctl analyze/);
+  assert.match(help, /revitctl materials/);
+  assert.match(help, /revitctl rooms/);
   assert.match(help, /revitctl call/);
   assert.match(help, /--operation-kind/);
 });
