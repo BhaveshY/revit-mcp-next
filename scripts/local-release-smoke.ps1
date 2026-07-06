@@ -62,7 +62,7 @@ Options:
   -RevitYear <year>          Revit major year. Default: 2024.
   -RevitApiPath <path>       Directory containing RevitAPI.dll. Default: Program Files Autodesk Revit <year>.
   -RevitExePath <path>       Revit.exe path. Default: Program Files Autodesk Revit <year>\Revit.exe.
-  -ModelPath <path>          Disposable RVT to copy before launch. Default: Dynamo sample RVT for the year.
+  -ModelPath <path>          Disposable RVT to copy before launch. Default: Dynamo sample RVT for the year. Templates (.rte) are rejected; create/save a disposable RVT from the template first.
   -InstallRoot <path>        Install root. Default: %APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext.
   -OutputRoot <path>         Evidence root. Default: C:\tmp\revit-mcp-next-smoke when writable.
   -PackageRoot <path>        Existing staged package root when using -SkipBuild.
@@ -247,7 +247,15 @@ function Resolve-SourceModel {
     param([int] $Year, [string] $Configured)
 
     if (-not [string]::IsNullOrWhiteSpace($Configured)) {
-        return Resolve-RequiredFile $Configured "Configured disposable RVT model was not found."
+        $resolved = Resolve-RequiredFile $Configured "Configured disposable RVT model was not found."
+        $extension = [System.IO.Path]::GetExtension($resolved)
+        if ($extension -ieq ".rte") {
+            throw "Configured -ModelPath points to a Revit template (.rte): $resolved. local-release-smoke copies the source model to a disposable .rvt before launch, and Revit rejects templates renamed as projects. Create and save a disposable .rvt from this template first, then pass that .rvt with -ModelPath."
+        }
+        if ($extension -ine ".rvt") {
+            throw "Configured -ModelPath must point to a disposable .rvt project file, not '$extension': $resolved."
+        }
+        return $resolved
     }
 
     $defaultSample = "C:\ProgramData\Autodesk\RVT $Year\Dynamo\samples\Data\DynamoSample_$Year.rvt"

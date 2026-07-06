@@ -12,6 +12,8 @@ param(
     [string] $DynamoEvidencePath = "",
     [string] $DynamoGraphPath = "",
     [string] $DynamoRevitPath = "",
+    [string] $DynamoSettingsPath = "",
+    [string] $DynamoPreflightReportPath = "",
     [switch] $LaunchRevitForDynamo,
     [switch] $DynamoValidateOnly,
     [int] $DynamoTimeoutSeconds = 900,
@@ -127,6 +129,14 @@ if ([string]::IsNullOrWhiteSpace($DynamoEvidencePath)) {
 
 $pyRevitEvidenceFull = Get-FullPath $PyRevitEvidencePath
 $dynamoEvidenceFull = Get-FullPath $DynamoEvidencePath
+if ([string]::IsNullOrWhiteSpace($DynamoPreflightReportPath)) {
+    $dynamoEvidenceParent = Split-Path -Parent $dynamoEvidenceFull
+    if ([string]::IsNullOrWhiteSpace($dynamoEvidenceParent)) {
+        $dynamoEvidenceParent = $rawRoot
+    }
+    $DynamoPreflightReportPath = Join-Path $dynamoEvidenceParent "dynamo-preflight.json"
+}
+$dynamoPreflightReportFull = Get-FullPath $DynamoPreflightReportPath
 
 $pyRevitArgs = @(
     "-RevitYear", "$RevitYear",
@@ -159,7 +169,8 @@ $dynamoArgs = @(
     "-RevitYear", "$RevitYear",
     "-EvidencePath", $dynamoEvidenceFull,
     "-TimeoutSeconds", "$DynamoTimeoutSeconds",
-    "-InstallRoot", $installRootFull
+    "-InstallRoot", $installRootFull,
+    "-PreflightReportPath", $dynamoPreflightReportFull
 )
 if (-not [string]::IsNullOrWhiteSpace($ModelPath)) {
     $dynamoArgs += @("-ModelPath", (Get-FullPath $ModelPath))
@@ -169,6 +180,9 @@ if (-not [string]::IsNullOrWhiteSpace($DynamoGraphPath)) {
 }
 if (-not [string]::IsNullOrWhiteSpace($DynamoRevitPath)) {
     $dynamoArgs += @("-RevitPath", (Get-FullPath $DynamoRevitPath))
+}
+if (-not [string]::IsNullOrWhiteSpace($DynamoSettingsPath)) {
+    $dynamoArgs += @("-DynamoSettingsPath", (Get-FullPath $DynamoSettingsPath))
 }
 if ($LaunchRevitForDynamo) {
     $dynamoArgs += "-LaunchRevit"
@@ -203,6 +217,7 @@ if ($DryRun) {
         installRoot = $installRootFull
         pyRevitEvidencePath = $pyRevitEvidenceFull
         dynamoEvidencePath = $dynamoEvidenceFull
+        dynamoPreflightReportPath = $dynamoPreflightReportFull
         summaryPath = (Join-Path $outputRootFull "host-integrations-summary.json")
         pyRevitArgs = $pyRevitArgs
         dynamoArgs = $dynamoArgs
@@ -247,6 +262,7 @@ $result = [ordered] @{
     installRoot = $installRootFull
     pyRevitEvidencePath = Join-Path $outputRootFull "pyrevit.json"
     dynamoEvidencePath = Join-Path $outputRootFull "dynamo.json"
+    dynamoPreflightReportPath = $dynamoPreflightReportFull
     logsRoot = $logsRoot
 }
 

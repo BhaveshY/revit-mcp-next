@@ -21,7 +21,7 @@ on:
         type: boolean
         default: false
       revit_model_path:
-        description: Optional local RVT path to pass when launching Revit. Use a disposable model.
+        description: Optional local RVT path to pass when launching Revit. Use a disposable project, not an RTE template.
         required: false
         default: ""
       document_fingerprint:

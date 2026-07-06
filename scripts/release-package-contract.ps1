@@ -204,6 +204,28 @@ function Assert-PyRevitHostsCacheDryRun($RepoRoot, $RunRoot) {
     }
 }
 
+function Assert-LocalReleaseSmokeRejectsTemplates($RepoRoot, $RunRoot) {
+    $localReleaseSmokeScript = Join-Path $RepoRoot "scripts\local-release-smoke.ps1"
+    $fakeRoot = Join-Path $RunRoot "local-smoke-template-gate"
+    $fakeApiRoot = Join-Path $fakeRoot "RevitApi"
+    $fakeToolsRoot = Join-Path $fakeRoot "tools"
+    $fakeTemplate = Join-Path $fakeRoot "DefaultMetric.rte"
+    New-Item -ItemType Directory -Force -Path $fakeApiRoot, $fakeToolsRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $fakeApiRoot "RevitAPI.dll") -Value "synthetic api" -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $fakeApiRoot "RevitAPIUI.dll") -Value "synthetic api ui" -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $fakeToolsRoot "Revit.exe") -Value "synthetic revit exe" -Encoding ASCII
+    Set-Content -LiteralPath $fakeTemplate -Value "synthetic revit template" -Encoding ASCII
+
+    Assert-ScriptFailsLike $localReleaseSmokeScript @(
+        "-DryRun",
+        "-SkipBuild",
+        "-RevitApiPath", $fakeApiRoot,
+        "-RevitExePath", (Join-Path $fakeToolsRoot "Revit.exe"),
+        "-ModelPath", $fakeTemplate,
+        "-PackageRoot", (Join-Path $fakeRoot "package")
+    ) "*Revit template (.rte)*" "Local release smoke template model gate"
+}
+
 function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) {
     $pyRevitSmokeScript = Join-Path $PackageRoot "scripts\run-pyrevit-host-smoke.ps1"
     $dynamoSmokeScript = Join-Path $PackageRoot "scripts\run-dynamo-host-smoke.ps1"
@@ -211,6 +233,10 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     $pyRevitEvidencePath = Join-Path $RunRoot "host-smoke\pyrevit.json"
     $dynamoEvidencePath = Join-Path $RunRoot "host-smoke\dynamo.json"
     $modelPath = Join-Path $RunRoot "host-smoke\disposable.rvt"
+    $dynamoSettingsPath = Join-Path $RunRoot "host-smoke\Dynamo\Dynamo Revit\2.17\DynamoSettings.xml"
+    $dynamoPreflightReportPath = Join-Path $RunRoot "host-smoke\dynamo-preflight.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dynamoSettingsPath) | Out-Null
+    Set-Content -LiteralPath $dynamoSettingsPath -Value "<PreferenceSettings />" -Encoding UTF8
 
     $pyRevitOutput = Invoke-RepoScriptCapture $pyRevitSmokeScript @(
         "-DryRun",
@@ -253,7 +279,9 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         "-EvidencePath", $dynamoEvidencePath,
         "-ModelPath", $modelPath,
         "-LaunchRevit",
-        "-RevitPath", (Join-Path $RunRoot "tools\Revit.exe")
+        "-RevitPath", (Join-Path $RunRoot "tools\Revit.exe"),
+        "-DynamoSettingsPath", $dynamoSettingsPath,
+        "-PreflightReportPath", $dynamoPreflightReportPath
     )
     $dynamoState = $dynamoOutput | ConvertFrom-Json
     if ($dynamoState.status -ne "planned") {
@@ -268,6 +296,90 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ([string] $dynamoState.environment.REVIT_MCP_NEXT_DYNAMO_EVIDENCE -ne [System.IO.Path]::GetFullPath($dynamoEvidencePath)) {
         throw "Dynamo host smoke dry run did not plan the evidence environment variable."
     }
+    if ([string] $dynamoState.preflightReportPath -ne [System.IO.Path]::GetFullPath($dynamoPreflightReportPath)) {
+        throw "Dynamo host smoke dry run used unexpected preflight report path: $($dynamoState.preflightReportPath)"
+    }
+    if ($dynamoState.preflight.revitYear -ne 2024) {
+        throw "Dynamo host smoke dry run did not include the Revit year in preflight."
+    }
+    if ([string] $dynamoState.preflight.dynamoSettingsPath -ne [System.IO.Path]::GetFullPath($dynamoSettingsPath)) {
+        throw "Dynamo host smoke dry run used unexpected Dynamo settings path: $($dynamoState.preflight.dynamoSettingsPath)"
+    }
+    if ($dynamoState.preflight.dynamoSettingsAppearsWarmed -ne $true) {
+        throw "Dynamo host smoke dry run did not report the synthetic Dynamo settings profile as warmed."
+    }
+    if ($dynamoState.preflight.privacyPromptAutomation -ne $false) {
+        throw "Dynamo host smoke dry run must not report privacy prompt automation."
+    }
+    if (Test-Path -LiteralPath $dynamoPreflightReportPath -PathType Leaf) {
+        throw "Dynamo host smoke dry run wrote the preflight report."
+    }
+
+    $preflightOnlyReportPath = Join-Path $RunRoot "host-smoke\dynamo-preflight-only.json"
+    $preflightOnlyOutput = Invoke-RepoScriptCapture $dynamoSmokeScript @(
+        "-PreflightOnly",
+        "-Json",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $dynamoEvidencePath,
+        "-DynamoSettingsPath", $dynamoSettingsPath,
+        "-PreflightReportPath", $preflightOnlyReportPath
+    )
+    $preflightOnlyState = $preflightOnlyOutput | ConvertFrom-Json
+    if ($preflightOnlyState.status -ne "preflight") {
+        throw "Dynamo host smoke preflight-only did not report preflight status."
+    }
+    if (-not (Test-Path -LiteralPath $preflightOnlyReportPath -PathType Leaf)) {
+        throw "Dynamo host smoke preflight-only did not write the preflight report."
+    }
+    $preflightOnlyReport = Read-JsonFile $preflightOnlyReportPath
+    if ($preflightOnlyReport.schemaVersion -ne 1) {
+        throw "Dynamo host smoke preflight-only report used unexpected schemaVersion: $($preflightOnlyReport.schemaVersion)"
+    }
+    if ($preflightOnlyReport.privacyPromptAutomation -ne $false -or $preflightOnlyReport.uiPromptAutomation -ne $false) {
+        throw "Dynamo host smoke preflight-only report must not claim prompt automation."
+    }
+    if ([string] $preflightOnlyReport.preflightReportPath -ne [System.IO.Path]::GetFullPath($preflightOnlyReportPath)) {
+        throw "Dynamo host smoke preflight-only report recorded the wrong report path."
+    }
+    if (Test-Path -LiteralPath $dynamoEvidencePath -PathType Leaf) {
+        throw "Dynamo host smoke preflight-only wrote host-smoke evidence."
+    }
+
+    $syntheticDynamoEvidence = [ordered] @{
+        schemaVersion = 1
+        host = "dynamo"
+        status = "passed"
+        previewReady = $true
+        applyWrites = $true
+        coveredOperations = @("create_level")
+        createdElementIds = @(1001)
+        activeDocument = [ordered] @{
+            fingerprint = "synthetic-dynamo-document"
+        }
+        inProcessBridge = [ordered] @{
+            addinHandlerActive = $true
+            handler = "configuredAddin"
+        }
+    }
+    Set-Content -LiteralPath $dynamoEvidencePath -Value ($syntheticDynamoEvidence | ConvertTo-Json -Depth 8) -Encoding UTF8
+    $validateOnlyReportPath = Join-Path $RunRoot "host-smoke\dynamo-validate-only-preflight.json"
+    $validateOnlyOutput = Invoke-RepoScriptCapture $dynamoSmokeScript @(
+        "-ValidateOnly",
+        "-Json",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $dynamoEvidencePath,
+        "-PreflightReportPath", $validateOnlyReportPath
+    )
+    $validateOnlyState = $validateOnlyOutput | ConvertFrom-Json
+    if ($validateOnlyState.status -ne "passed") {
+        throw "Dynamo host smoke validate-only did not validate synthetic evidence."
+    }
+    if (Test-Path -LiteralPath $validateOnlyReportPath -PathType Leaf) {
+        throw "Dynamo host smoke validate-only wrote a fresh preflight report."
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string] $validateOnlyState.preflightReportPath)) {
+        throw "Dynamo host smoke validate-only reported a written preflight report path."
+    }
 
     $aggregateOutputRoot = Join-Path $RunRoot "host-integrations"
     $aggregateOutput = Invoke-RepoScriptCapture $hostIntegrationsSmokeScript @(
@@ -278,7 +390,8 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         "-ModelPath", $modelPath,
         "-PyRevitPath", (Join-Path $RunRoot "tools\pyrevit.exe"),
         "-LaunchRevitForDynamo",
-        "-DynamoRevitPath", (Join-Path $RunRoot "tools\Revit.exe")
+        "-DynamoRevitPath", (Join-Path $RunRoot "tools\Revit.exe"),
+        "-DynamoSettingsPath", $dynamoSettingsPath
     )
     $aggregateState = $aggregateOutput | ConvertFrom-Json
     if ($aggregateState.status -ne "planned") {
@@ -286,6 +399,23 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     }
     if ([string] $aggregateState.summaryPath -ne [System.IO.Path]::GetFullPath((Join-Path $aggregateOutputRoot "host-integrations-summary.json"))) {
         throw "Aggregate hosted integration smoke dry run used unexpected summary path."
+    }
+    if ([string] $aggregateState.dynamoPreflightReportPath -ne [System.IO.Path]::GetFullPath((Join-Path $aggregateOutputRoot "raw\dynamo-preflight.json"))) {
+        throw "Aggregate hosted integration smoke dry run used unexpected Dynamo preflight report path."
+    }
+
+    $customDynamoEvidencePath = Join-Path $RunRoot "custom-host-smoke\nested\dynamo-custom.json"
+    $customAggregateOutput = Invoke-RepoScriptCapture $hostIntegrationsSmokeScript @(
+        "-DryRun",
+        "-Json",
+        "-OutputRoot", (Join-Path $RunRoot "host-integrations-custom"),
+        "-InstallRoot", $InstallRoot,
+        "-DynamoEvidencePath", $customDynamoEvidencePath
+    )
+    $customAggregateState = $customAggregateOutput | ConvertFrom-Json
+    $expectedCustomPreflightReportPath = Join-Path (Split-Path -Parent ([System.IO.Path]::GetFullPath($customDynamoEvidencePath))) "dynamo-preflight.json"
+    if ([string] $customAggregateState.dynamoPreflightReportPath -ne $expectedCustomPreflightReportPath) {
+        throw "Aggregate hosted integration smoke dry run did not default Dynamo preflight next to custom evidence."
     }
 
     $passedPyRevitEvidencePath = Join-Path $RunRoot "host-smoke\passed-pyrevit.json"
@@ -505,6 +635,7 @@ try {
     Assert-DevSigningDryRuns $repoRoot $syntheticAddinRoot $runRoot
     Assert-RevitTrustDryRun $repoRoot
     Assert-PyRevitHostsCacheDryRun $repoRoot $runRoot
+    Assert-LocalReleaseSmokeRejectsTemplates $repoRoot $runRoot
 
     $packageScript = Join-Path $repoRoot "scripts\package-release.ps1"
     Assert-ScriptFailsLike $packageScript @(

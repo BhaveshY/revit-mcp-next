@@ -212,7 +212,7 @@ For deterministic curated runners, select the intended loaded tag symbols by id 
 npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag" -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
-The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. `smoke-summary.json.requiredCoverage` records that requirement, `tagSelectors` records requested tag type selectors when supplied, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
+The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. Pass a real disposable `.rvt` project file to `-ModelPath`; templates (`.rte`) must be opened from Revit and saved as `.rvt` first because the local release smoke runner copies the source model before launch. `smoke-summary.json.requiredCoverage` records that requirement, `tagSelectors` records requested tag type selectors when supplied, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
 
 Build hosted pyRevit/Dynamo summary evidence from raw host-smoke JSON before passing `-HostedIntegrationEvidencePath`.
 
@@ -227,7 +227,7 @@ npm run smoke:host-integrations -- `
   -LaunchRevitForDynamo
 ```
 
-This command writes `raw\pyrevit.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, and leaves host-smoke logs under `logs`.
+This command writes `raw\pyrevit.json`, writes a read-only Dynamo preflight report to `raw\dynamo-preflight.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, and leaves host-smoke logs under `logs`.
 
 For pyRevit CLI runs, use the packaged runner. It stages a temporary
 `RevitMcpNext.addin` into pyRevit's unattended runner with `--import`, pins
@@ -254,6 +254,15 @@ npm run smoke:dynamo-host -- `
   -ModelPath C:\tmp\disposable.rvt `
   -EvidencePath artifacts\host-integrations\raw\dynamo.json `
   -LaunchRevit
+```
+
+The wrapper also prints and, during collection, records a bounded Dynamo preflight report next to the evidence as `dynamo-preflight.json`. It includes the Revit year, Dynamo version/settings path when discoverable, graph path, install root, evidence path, model path, and whether an existing `DynamoSettings.xml` appears warmed. The report is read-only: it does not alter privacy settings, simulate consent, or automate UI prompts. To collect only that report:
+
+```powershell
+npm run smoke:dynamo-host -- `
+  -RevitYear 2024 `
+  -EvidencePath artifacts\host-integrations\raw\dynamo.json `
+  -PreflightOnly
 ```
 
 Open and run this graph in Dynamo for Revit:

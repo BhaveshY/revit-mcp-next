@@ -7,8 +7,11 @@ param(
     [string] $InstallRoot = "",
     [string] $GraphPath = "",
     [string] $RevitPath = "",
+    [string] $DynamoSettingsPath = "",
+    [string] $PreflightReportPath = "",
     [int] $TimeoutSeconds = 900,
     [switch] $LaunchRevit,
+    [switch] $PreflightOnly,
     [switch] $ValidateOnly,
     [switch] $AllowFailed,
     [switch] $DryRun,
@@ -114,6 +117,280 @@ function Resolve-RevitPath {
     throw "Revit.exe was not found. Pass -RevitPath or install Revit $RevitYear."
 }
 
+function Get-OptionalRevitPathForReport {
+    if (-not [string]::IsNullOrWhiteSpace($RevitPath)) {
+        return Get-FullPath $RevitPath
+    }
+
+    $default = "C:\Program Files\Autodesk\Revit $RevitYear\Revit.exe"
+    if (Test-Path -LiteralPath $default -PathType Leaf) {
+        return $default
+    }
+
+    return ""
+}
+
+function Get-DynamoVersionFromRevit($RevitExecutablePath) {
+    $empty = [ordered] @{
+        version = ""
+        sourcePath = ""
+    }
+
+    $revitRoot = ""
+    if (-not [string]::IsNullOrWhiteSpace($RevitExecutablePath)) {
+        $revitRoot = Split-Path -Parent $RevitExecutablePath
+    } else {
+        $defaultRevitPath = "C:\Program Files\Autodesk\Revit $RevitYear\Revit.exe"
+        if (Test-Path -LiteralPath $defaultRevitPath -PathType Leaf) {
+            $revitRoot = Split-Path -Parent $defaultRevitPath
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($revitRoot)) {
+        return $empty
+    }
+
+    $relativeCandidates = @(
+        "AddIns\DynamoForRevit\DynamoRevitDS.dll",
+        "AddIns\DynamoForRevit\DynamoRevit.dll",
+        "AddIns\DynamoForRevit\DynamoCore.dll",
+        "AddIns\DynamoForRevit\DynamoServices.dll"
+    )
+
+    foreach ($relative in $relativeCandidates) {
+        $candidate = Join-Path $revitRoot $relative
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            continue
+        }
+
+        $item = Get-Item -LiteralPath $candidate
+        $version = [string] $item.VersionInfo.ProductVersion
+        if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = [string] $item.VersionInfo.FileVersion
+        }
+
+        return [ordered] @{
+            version = $version
+            sourcePath = $item.FullName
+        }
+    }
+
+    return $empty
+}
+
+function Get-DynamoMajorMinorVersion($Version) {
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return ""
+    }
+
+    if ($Version -match '^(\d+)\.(\d+)') {
+        return "$($matches[1]).$($matches[2])"
+    }
+
+    return ""
+}
+
+function Resolve-DynamoSettingsPath($RequestedPath, $DynamoVersion) {
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+        return [ordered] @{
+            path = Get-FullPath $RequestedPath
+            source = "explicit"
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        return [ordered] @{
+            path = ""
+            source = ""
+        }
+    }
+
+    $dynamoRevitRoot = Join-Path $env:APPDATA "Dynamo\Dynamo Revit"
+    $majorMinor = Get-DynamoMajorMinorVersion $DynamoVersion
+
+    if (Test-Path -LiteralPath $dynamoRevitRoot -PathType Container) {
+        $existingSettings = @(Get-ChildItem -LiteralPath $dynamoRevitRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $settings = Join-Path $_.FullName "DynamoSettings.xml"
+                if (Test-Path -LiteralPath $settings -PathType Leaf) {
+                    Get-Item -LiteralPath $settings
+                }
+            })
+
+        if (-not [string]::IsNullOrWhiteSpace($majorMinor)) {
+            $matching = $existingSettings |
+                Where-Object { (Split-Path -Leaf $_.DirectoryName) -eq $majorMinor } |
+                Sort-Object LastWriteTimeUtc -Descending |
+                Select-Object -First 1
+            if ($matching) {
+                return [ordered] @{
+                    path = $matching.FullName
+                    source = "appdata"
+                }
+            }
+
+            return [ordered] @{
+                path = Get-FullPath (Join-Path $dynamoRevitRoot "$majorMinor\DynamoSettings.xml")
+                source = "expected-from-dynamo-version"
+            }
+        }
+
+        $latest = $existingSettings | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($latest) {
+            return [ordered] @{
+                path = $latest.FullName
+                source = "appdata"
+            }
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($majorMinor)) {
+        return [ordered] @{
+            path = Get-FullPath (Join-Path $dynamoRevitRoot "$majorMinor\DynamoSettings.xml")
+            source = "expected-from-dynamo-version"
+        }
+    }
+
+    return [ordered] @{
+        path = ""
+        source = ""
+    }
+}
+
+function Get-DynamoSettingsReport($RequestedPath, $DynamoVersion) {
+    $selected = Resolve-DynamoSettingsPath $RequestedPath $DynamoVersion
+    $selectedPath = [string] $selected.path
+    if ([string]::IsNullOrWhiteSpace($selectedPath)) {
+        return [ordered] @{
+            path = ""
+            source = ""
+            version = ""
+            exists = $false
+            parseableXml = $false
+            appearsWarmed = $false
+            warmedReason = "settings-path-not-discovered"
+            lastWriteTimeUtc = $null
+        }
+    }
+
+    $exists = Test-Path -LiteralPath $selectedPath -PathType Leaf
+    $lastWriteTimeUtc = $null
+    if ($exists) {
+        $lastWriteTimeUtc = (Get-Item -LiteralPath $selectedPath).LastWriteTimeUtc.ToString("o")
+    }
+
+    $parseableXml = $false
+    $warmedReason = "settings-file-not-found"
+    if ($exists) {
+        try {
+            [xml] $settingsXml = Get-Content -LiteralPath $selectedPath -Raw
+            if ($settingsXml.DocumentElement) {
+                $parseableXml = $true
+                $warmedReason = "existing-parseable-settings-file"
+            } else {
+                $warmedReason = "settings-file-has-no-root-element"
+            }
+        } catch {
+            $warmedReason = "settings-file-not-parseable"
+        }
+    }
+
+    return [ordered] @{
+        path = $selectedPath
+        source = [string] $selected.source
+        version = Split-Path -Leaf (Split-Path -Parent $selectedPath)
+        exists = [bool] $exists
+        parseableXml = [bool] $parseableXml
+        appearsWarmed = [bool] ($exists -and $parseableXml)
+        warmedReason = $warmedReason
+        lastWriteTimeUtc = $lastWriteTimeUtc
+    }
+}
+
+function Get-DefaultPreflightReportPath($EvidenceFull) {
+    $parent = Split-Path -Parent $EvidenceFull
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        $parent = (Get-Location).Path
+    }
+
+    return Join-Path $parent "dynamo-preflight.json"
+}
+
+function New-DynamoPreflightReport($RevitExecutablePath, $InstallRootFull, $GraphFull, $EvidenceFull, $ModelFull, $ReportPath) {
+    $versionInfo = Get-DynamoVersionFromRevit $RevitExecutablePath
+    $settingsInfo = Get-DynamoSettingsReport $DynamoSettingsPath ([string] $versionInfo.version)
+    $dynamoVersion = [string] $versionInfo.version
+    $dynamoVersionSource = [string] $versionInfo.sourcePath
+    if ([string]::IsNullOrWhiteSpace($dynamoVersion) -and -not [string]::IsNullOrWhiteSpace([string] $settingsInfo.version)) {
+        $dynamoVersion = [string] $settingsInfo.version
+        $dynamoVersionSource = "DynamoSettings.xml parent directory"
+    }
+
+    $modelExists = $null
+    if (-not [string]::IsNullOrWhiteSpace($ModelFull)) {
+        $modelExists = Test-Path -LiteralPath $ModelFull -PathType Leaf
+    }
+
+    return [ordered] @{
+        schemaVersion = 1
+        status = "preflight"
+        createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        revitYear = $RevitYear
+        revitPath = $RevitExecutablePath
+        dynamoVersion = $dynamoVersion
+        dynamoVersionSource = $dynamoVersionSource
+        dynamoSettingsPath = [string] $settingsInfo.path
+        dynamoSettingsSource = [string] $settingsInfo.source
+        dynamoSettingsExists = [bool] $settingsInfo.exists
+        dynamoSettingsParseableXml = [bool] $settingsInfo.parseableXml
+        dynamoSettingsAppearsWarmed = [bool] $settingsInfo.appearsWarmed
+        dynamoSettingsWarmedReason = [string] $settingsInfo.warmedReason
+        dynamoSettingsLastWriteTimeUtc = $settingsInfo.lastWriteTimeUtc
+        graphPath = $GraphFull
+        graphExists = Test-Path -LiteralPath $GraphFull -PathType Leaf
+        installRoot = $InstallRootFull
+        installRootExists = Test-Path -LiteralPath $InstallRootFull -PathType Container
+        evidencePath = $EvidenceFull
+        modelPath = $ModelFull
+        modelExists = $modelExists
+        preflightReportPath = $ReportPath
+        privacySettingsChanged = $false
+        privacyPromptAutomation = $false
+        uiPromptAutomation = $false
+        note = "This preflight only inspects existing files and planned paths. It does not edit DynamoSettings.xml, change privacy choices, or automate Dynamo/Revit prompts."
+    }
+}
+
+function Write-DynamoPreflight($Report) {
+    Write-Step "Dynamo preflight report:"
+    Write-Step "  Revit year: $($Report.revitYear)"
+    $version = if ([string]::IsNullOrWhiteSpace([string] $Report.dynamoVersion)) { "not discovered" } else { [string] $Report.dynamoVersion }
+    Write-Step "  Dynamo version: $version"
+    $settingsPath = if ([string]::IsNullOrWhiteSpace([string] $Report.dynamoSettingsPath)) { "not discovered" } else { [string] $Report.dynamoSettingsPath }
+    Write-Step "  Dynamo settings path: $settingsPath"
+    Write-Step "  Dynamo settings warmed: $($Report.dynamoSettingsAppearsWarmed) ($($Report.dynamoSettingsWarmedReason))"
+    Write-Step "  Graph path: $($Report.graphPath)"
+    Write-Step "  Install root: $($Report.installRoot)"
+    Write-Step "  Evidence path: $($Report.evidencePath)"
+    $modelPath = if ([string]::IsNullOrWhiteSpace([string] $Report.modelPath)) { "not supplied" } else { [string] $Report.modelPath }
+    Write-Step "  Model path: $modelPath"
+    Write-Step "  Privacy/UI prompt automation: false"
+}
+
+function Save-DynamoPreflightReport($Report, $Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    $parent = Split-Path -Parent $Path
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        $parent = (Get-Location).Path
+    }
+
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    Set-Content -LiteralPath $Path -Value ($Report | ConvertTo-Json -Depth 12) -Encoding UTF8
+}
+
 function Get-JsonArray($Value) {
     if ($null -eq $Value) {
         return @()
@@ -193,22 +470,28 @@ $installRootFull = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 if ([string]::IsNullOrWhiteSpace($GraphPath)) {
     $GraphPath = Join-Path $installRootFull "integrations\dynamo\revit_mcp_next_host_smoke.dyn"
 }
-$graphFull = if ($DryRun) { Get-FullPath $GraphPath } else { Resolve-RequiredFile $GraphPath "Dynamo host-smoke graph" }
+$graphFull = Get-FullPath $GraphPath
 
-$modelFull = Resolve-OptionalFile $ModelPath "Disposable Revit model"
-$revitExe = if ($LaunchRevit) { Resolve-RevitPath } else { "" }
+$modelFull = if ([string]::IsNullOrWhiteSpace($ModelPath)) { "" } else { Get-FullPath $ModelPath }
+$revitExe = if ($LaunchRevit -and -not $PreflightOnly) { Resolve-RevitPath } else { Get-OptionalRevitPathForReport }
 
 if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
     $EvidencePath = Get-DefaultEvidencePath
 }
 $evidenceFull = Get-FullPath $EvidencePath
+if ([string]::IsNullOrWhiteSpace($PreflightReportPath)) {
+    $PreflightReportPath = Get-DefaultPreflightReportPath $evidenceFull
+}
+$preflightReportFull = Get-FullPath $PreflightReportPath
+$preflight = New-DynamoPreflightReport $revitExe $installRootFull $graphFull $evidenceFull $modelFull $preflightReportFull
 
 $instructions = @(
     "Open Revit $RevitYear with the disposable model.",
     "Open Dynamo for Revit.",
     "Open graph: $graphFull",
     "Run the graph once.",
-    "Wait for evidence: $evidenceFull"
+    "Wait for evidence: $evidenceFull",
+    "If Revit or Dynamo shows Autodesk/Dynamo privacy or startup prompts, answer them manually in the intended test profile. This script does not click prompts or simulate consent."
 )
 
 if ($DryRun) {
@@ -220,12 +503,14 @@ if ($DryRun) {
         revitPath = $revitExe
         modelPath = $modelFull
         graphPath = $graphFull
+        preflightReportPath = $preflightReportFull
         evidencePath = $evidenceFull
         timeoutSeconds = $TimeoutSeconds
         environment = [ordered] @{
             REVIT_MCP_NEXT_DYNAMO_EVIDENCE = $evidenceFull
             REVIT_MCP_NEXT_DYNAMO_MODEL = $modelFull
         }
+        preflight = $preflight
         instructions = $instructions
     }
 
@@ -233,10 +518,39 @@ if ($DryRun) {
         $result | ConvertTo-Json -Depth 8
     } else {
         Write-Step "Would prepare Dynamo host smoke."
-        Write-Step "Graph: $graphFull"
-        Write-Step "Evidence path: $evidenceFull"
+        Write-DynamoPreflight $preflight
     }
     return
+}
+
+if ($PreflightOnly) {
+    Save-DynamoPreflightReport $preflight $preflightReportFull
+    $result = [ordered] @{
+        status = "preflight"
+        preflightReportPath = $preflightReportFull
+        preflight = $preflight
+    }
+
+    if ($Json) {
+        $result | ConvertTo-Json -Depth 12
+    } else {
+        Write-DynamoPreflight $preflight
+        Write-Step "Dynamo preflight report: $preflightReportFull"
+    }
+    return
+}
+
+if (-not (Test-Path -LiteralPath $graphFull -PathType Leaf)) {
+    throw "Dynamo host-smoke graph file was not found: $GraphPath"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($modelFull) -and -not (Test-Path -LiteralPath $modelFull -PathType Leaf)) {
+    throw "Disposable Revit model file was not found: $ModelPath"
+}
+
+$shouldWritePreflightReport = -not $ValidateOnly
+if ($shouldWritePreflightReport) {
+    Save-DynamoPreflightReport $preflight $preflightReportFull
 }
 
 if ($ValidateOnly) {
@@ -249,6 +563,8 @@ if ($ValidateOnly) {
         status = [string] $evidence.status
         evidencePath = $evidenceFull
         graphPath = $graphFull
+        preflightReportPath = if ($shouldWritePreflightReport) { $preflightReportFull } else { "" }
+        preflight = $preflight
     }
 
     if ($Json) {
@@ -274,6 +590,11 @@ try {
     $env:REVIT_MCP_NEXT_DYNAMO_EVIDENCE = $evidenceFull
     if (-not [string]::IsNullOrWhiteSpace($modelFull)) {
         $env:REVIT_MCP_NEXT_DYNAMO_MODEL = $modelFull
+    }
+
+    Write-DynamoPreflight $preflight
+    if ($shouldWritePreflightReport) {
+        Write-Step "Dynamo preflight report: $preflightReportFull"
     }
 
     if ($LaunchRevit) {
@@ -312,6 +633,8 @@ $result = [ordered] @{
     graphPath = $graphFull
     modelPath = $modelFull
     installRoot = $installRootFull
+    preflightReportPath = if ($shouldWritePreflightReport) { $preflightReportFull } else { "" }
+    preflight = $preflight
 }
 
 if ($Json) {

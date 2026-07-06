@@ -35,6 +35,16 @@ when the model and add-in return a ready preview.
 
 For release candidates, run `revit_mcp_next_host_smoke.dyn` against the installed package and set `REVIT_MCP_NEXT_DYNAMO_EVIDENCE` before launching Revit when you need a specific JSON output path. If Dynamo starts without an active document, set `REVIT_MCP_NEXT_DYNAMO_MODEL` to a disposable RVT. Archive the Dynamo evidence JSON and include it in `host-integrations-summary.json` together with the pyRevit host smoke result.
 
+The packaged runner also writes a bounded preflight report next to the Dynamo evidence as `dynamo-preflight.json` during a normal host-smoke collection. The report records the Revit year, Dynamo version and `DynamoSettings.xml` path when discoverable, graph path, install root, evidence path, model path, and whether an existing settings file appears warmed. "Warmed" is only a read-only signal that an existing `DynamoSettings.xml` is present and parseable; it does not mean privacy consent was approved.
+
+To collect only the report without launching Revit or running the graph:
+
+```powershell
+npm run smoke:dynamo-host -- -RevitYear 2024 -EvidencePath artifacts\host-integrations\raw\dynamo.json -PreflightOnly
+```
+
+The preflight and smoke runners do not change Dynamo privacy settings, preseed consent, or click Autodesk/Dynamo prompts. If Dynamo displays privacy or startup prompts, answer them manually in the intended dedicated test profile before collecting release evidence.
+
 Use the packaged wrapper to launch Revit with those environment variables, wait for the graph output, and validate the raw JSON:
 
 ```powershell
