@@ -218,11 +218,19 @@ export function resolveAuthToken(authConfigPath?: string): string | undefined {
 }
 
 export function parseAuthTokenConfig(text: string): string | undefined {
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of stripUtf8Bom(text).split(/\r?\n/)) {
     const match = line.match(/^\s*REVIT_MCP_NEXT_AUTH_TOKEN\s*=\s*"?([^"\s]+)"?\s*$/i);
     if (match?.[1]) return match[1];
   }
   return undefined;
+}
+
+export function stripUtf8Bom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+function parseJsonText<T = unknown>(text: string): T {
+  return JSON.parse(stripUtf8Bom(text)) as T;
 }
 
 function resolveCommandOperation(options: RevitCtlOptions): {
@@ -410,18 +418,18 @@ function readPositionalJson(value: string | undefined, command: string): unknown
 }
 
 function readJsonArgument(value: string): unknown {
-  const trimmed = value.trim();
+  const trimmed = stripUtf8Bom(value).trim();
   if (trimmed === "-") {
-    return JSON.parse(readFileSync(0, "utf8"));
+    return parseJsonText(readFileSync(0, "utf8"));
   }
   if (trimmed.startsWith("{")) {
-    return JSON.parse(trimmed);
+    return parseJsonText(trimmed);
   }
   return readJsonFile(trimmed);
 }
 
 function readJsonFile<T = unknown>(filePath: string): T {
-  return JSON.parse(readFileSync(path.resolve(filePath), "utf8")) as T;
+  return parseJsonText(readFileSync(path.resolve(filePath), "utf8"));
 }
 
 function resolveDiscoveryPath(options: RevitCtlOptions): string | undefined {

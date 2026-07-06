@@ -40,6 +40,8 @@ import type {
 } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
 
+const MAX_BRIDGE_FRAME_BYTES = 4 * 1024 * 1024;
+
 export interface NamedPipeBridgeClientOptions {
   pipeName: string;
   sessionId: string;
@@ -214,7 +216,10 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
     return new Promise((resolve) => {
       const socket = net.createConnection(this.pipePath);
-      const chunks: Buffer[] = [];
+      const responseHeader = Buffer.alloc(4);
+      const responseChunks: Buffer[] = [];
+      let headerBytes = 0;
+      let payloadBytes = 0;
       let expectedLength: number | null = null;
       let settled = false;
 
@@ -244,23 +249,66 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
       socket.once("connect", () => {
         const body = Buffer.from(JSON.stringify(this.prepareRequest(request)), "utf8");
+        if (body.byteLength > MAX_BRIDGE_FRAME_BYTES) {
+          finish(
+            errorResponse<T>(
+              request,
+              "BRIDGE_REQUEST_TOO_LARGE",
+              `Bridge request frame is ${body.byteLength} bytes, above the ${MAX_BRIDGE_FRAME_BYTES} byte limit.`
+            )
+          );
+          return;
+        }
+
         const header = Buffer.allocUnsafe(4);
         header.writeUInt32BE(body.byteLength, 0);
         socket.write(Buffer.concat([header, body]));
       });
 
       socket.on("data", (chunk) => {
-        chunks.push(chunk);
-        const buffer = Buffer.concat(chunks);
-        if (expectedLength === null && buffer.byteLength >= 4) {
-          expectedLength = buffer.readUInt32BE(0);
-        }
-        if (expectedLength !== null && buffer.byteLength >= expectedLength + 4) {
-          const payload = buffer.subarray(4, expectedLength + 4).toString("utf8");
-          try {
-            finish(JSON.parse(payload) as BridgeResponse<T>);
-          } catch (error) {
-            finish(errorResponse<T>(request, "BRIDGE_PARSE_ERROR", error instanceof Error ? error.message : String(error)));
+        if (settled) return;
+
+        let offset = 0;
+        while (offset < chunk.byteLength && !settled) {
+          if (expectedLength === null) {
+            const headerRemaining = responseHeader.byteLength - headerBytes;
+            const headerTake = Math.min(headerRemaining, chunk.byteLength - offset);
+            chunk.copy(responseHeader, headerBytes, offset, offset + headerTake);
+            headerBytes += headerTake;
+            offset += headerTake;
+
+            if (headerBytes < responseHeader.byteLength) {
+              return;
+            }
+
+            expectedLength = responseHeader.readUInt32BE(0);
+            if (expectedLength > MAX_BRIDGE_FRAME_BYTES) {
+              finish(
+                errorResponse<T>(
+                  request,
+                  "BRIDGE_FRAME_TOO_LARGE",
+                  `Bridge response frame announced ${expectedLength} bytes, above the ${MAX_BRIDGE_FRAME_BYTES} byte limit.`
+                )
+              );
+              return;
+            }
+          }
+
+          const payloadRemaining = expectedLength - payloadBytes;
+          const payloadTake = Math.min(payloadRemaining, chunk.byteLength - offset);
+          if (payloadTake > 0) {
+            responseChunks.push(chunk.subarray(offset, offset + payloadTake));
+            payloadBytes += payloadTake;
+            offset += payloadTake;
+          }
+
+          if (payloadBytes === expectedLength) {
+            const payload = Buffer.concat(responseChunks, expectedLength).toString("utf8");
+            try {
+              finish(JSON.parse(payload) as BridgeResponse<T>);
+            } catch (error) {
+              finish(errorResponse<T>(request, "BRIDGE_PARSE_ERROR", error instanceof Error ? error.message : String(error)));
+            }
           }
         }
       });

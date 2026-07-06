@@ -4,6 +4,8 @@ import net from "node:net";
 import { NamedPipeBridgeClient } from "../src/ipc/NamedPipeBridgeClient.js";
 import { makeRequest } from "../src/ipc/RequestFactory.js";
 
+const maxBridgeFrameBytes = 4 * 1024 * 1024;
+
 interface CapturedBridgeRequest {
   requestId: string;
   sessionId: string;
@@ -95,24 +97,37 @@ test("named pipe bridge client sends auth token from client config over environm
   }
 });
 
+test("named pipe bridge client rejects oversized response frames", async () => {
+  await withRawPipeServer(
+    () => undefined,
+    (socket) => {
+      const header = Buffer.allocUnsafe(4);
+      header.writeUInt32BE(maxBridgeFrameBytes + 1, 0);
+      socket.write(header);
+    },
+    async (pipeName) => {
+      const client = new NamedPipeBridgeClient({
+        pipeName,
+        sessionId: "pipe-test",
+        defaultTimeoutMs: 2000,
+      });
+      const response = await client.status(makeRequest("pipe-test", "status", "read", {}, 2000));
+
+      assert.equal(response.ok, false);
+      if (response.ok) return;
+      assert.equal(response.error.code, "BRIDGE_FRAME_TOO_LARGE");
+      assert.match(response.error.message, /above the 4194304 byte limit/);
+    }
+  );
+});
+
 async function withStatusPipeServer(
   onRequest: (request: CapturedBridgeRequest) => void,
   runClient: (pipeName: string) => Promise<void>
 ): Promise<void> {
-  const pipeName = `revit-mcp-next-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const pipePath = `\\\\.\\pipe\\${pipeName}`;
-
-  const server = net.createServer((socket) => {
-    let buffer = Buffer.alloc(0);
-    socket.on("data", (chunk) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      if (buffer.byteLength < 4) return;
-      const length = buffer.readUInt32BE(0);
-      if (buffer.byteLength < length + 4) return;
-
-      const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as CapturedBridgeRequest;
-      onRequest(request);
-
+  await withRawPipeServer(
+    onRequest,
+    (socket, request) => {
       const response = Buffer.from(
         JSON.stringify({
           ok: true,
@@ -132,6 +147,30 @@ async function withStatusPipeServer(
       const header = Buffer.allocUnsafe(4);
       header.writeUInt32BE(response.byteLength, 0);
       socket.write(Buffer.concat([header, response]));
+    },
+    runClient
+  );
+}
+
+async function withRawPipeServer(
+  onRequest: (request: CapturedBridgeRequest) => void,
+  writeResponse: (socket: net.Socket, request: CapturedBridgeRequest) => void,
+  runClient: (pipeName: string) => Promise<void>
+): Promise<void> {
+  const pipeName = `revit-mcp-next-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const pipePath = `\\\\.\\pipe\\${pipeName}`;
+
+  const server = net.createServer((socket) => {
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.byteLength < 4) return;
+      const length = buffer.readUInt32BE(0);
+      if (buffer.byteLength < length + 4) return;
+
+      const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as CapturedBridgeRequest;
+      onRequest(request);
+      writeResponse(socket, request);
     });
   });
 

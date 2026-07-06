@@ -117,6 +117,7 @@ async function main() {
     coveredOperations: [],
     skippedOperations: [],
     operationKindGuard: null,
+    tagPreflight: null,
     requiredCoverage: {
       typeChange: options.requireTypeChange,
       roomTag: options.requireRoomTag,
@@ -203,6 +204,22 @@ async function main() {
       documentFingerprint,
       expectedGeneration: startingGeneration,
     });
+
+    const tagPreflight = await preflightRequiredTagCoverage(client, {
+      documentFingerprint,
+      requireRoomTag: options.requireRoomTag,
+      requireElementTag: options.requireElementTag,
+      roomTagSelector,
+      elementTagSelector,
+    });
+    summary.tagPreflight = tagPreflight;
+    if (tagPreflight.status !== "passed") {
+      throw new Error(formatTagPreflightFailure(tagPreflight));
+    }
+    if (options.requireRoomTag || options.requireElementTag) {
+      console.log("Required tag preflight OK");
+    }
+
     const currentView = await callRequiredTool(client, "revit.get_current_view", {
       ...documentGuard,
       includeCropBox: false,
@@ -918,6 +935,8 @@ async function main() {
       elementId: copiedWallId,
       expectedUniqueId: copiedWallUniqueId,
       expectedPinned: false,
+      allowDependentDeletes: true,
+      dependentDeleteLimit: 20,
     });
     const deleteTransaction = makeTransactionName(options.transactionPrefix, "delete copied wall", runId);
     const deleteChangeSet = compactObject({
@@ -1323,7 +1342,7 @@ function runRevitCtlProbe(revitCtlPath, args) {
     const command = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : revitCtlPath;
     const spawnArgs =
       process.platform === "win32"
-        ? ["/d", "/s", "/c", [revitCtlPath, ...args].map(quoteCmdArg).join(" ")]
+        ? ["/d", "/c", "call", revitCtlPath, ...args]
         : args;
     const child = spawn(command, spawnArgs, {
       cwd: process.cwd(),
@@ -1357,10 +1376,6 @@ function runRevitCtlProbe(revitCtlPath, args) {
   });
 }
 
-function quoteCmdArg(value) {
-  return `"${String(value).replace(/"/g, '\\"')}"`;
-}
-
 function uniquePaths(values) {
   const seen = new Set();
   const result = [];
@@ -1380,7 +1395,7 @@ function makeTransport(launcherPath, StdioClientTransport) {
     const command = process.env.ComSpec || "cmd.exe";
     return new StdioClientTransport({
       command,
-      args: ["/d", "/c", launcherPath],
+      args: ["/d", "/c", "call", launcherPath],
       stderr: "pipe",
     });
   }
@@ -2268,6 +2283,124 @@ async function listAnnotationViews(client, documentFingerprint, acceptedTypes) {
   assert(Array.isArray(result.items), "revit.get_views did not return an items array for annotation views.");
   const accepted = new Set(acceptedTypes);
   return result.items.filter((view) => typeof view?.id === "string" && accepted.has(viewTypeOf(view)));
+}
+
+async function preflightRequiredTagCoverage(
+  client,
+  { documentFingerprint, requireRoomTag, requireElementTag, roomTagSelector, elementTagSelector }
+) {
+  const result = {
+    status: "passed",
+    failures: [],
+    room: null,
+    element: null,
+  };
+
+  if (requireRoomTag) {
+    const roomTagTypes = await catalog(client, {
+      kind: "tagTypes",
+      filter: { categories: ["OST_RoomTags"] },
+      preset: "annotation",
+      limit: 50,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(roomTagTypes, "tagTypes");
+    const views = await listAnnotationViews(client, documentFingerprint, [
+      "FloorPlan",
+      "CeilingPlan",
+      "EngineeringPlan",
+      "Section",
+    ]);
+    const selected = selectTagType(roomTagTypes.items, roomTagSelector);
+    result.room = compactObject({
+      selector: roomTagSelector,
+      tagTypeCount: Array.isArray(roomTagTypes.items) ? roomTagTypes.items.length : 0,
+      selectedTagType: selected ? sampleEvidenceItems([selected], 1)[0] : undefined,
+      tagTypeSamples: sampleEvidenceItems(roomTagTypes.items),
+      viewCount: views.length,
+      viewSamples: sampleEvidenceItems(views),
+    });
+    if (!selected) {
+      result.failures.push(
+        roomTagSelector
+          ? `No loaded room tag type matched ${formatTagTypeSelector(roomTagSelector)}.`
+          : "No loaded room tag type is available."
+      );
+    }
+    if (views.length === 0) {
+      result.failures.push("No printable non-template plan or section view is available for room tags.");
+    }
+  }
+
+  if (requireElementTag) {
+    const wallTagTypes = await catalog(client, {
+      kind: "tagTypes",
+      filter: { categories: ["OST_WallTags"] },
+      preset: "annotation",
+      limit: 50,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(wallTagTypes, "tagTypes");
+    const multiTagTypes = await catalog(client, {
+      kind: "tagTypes",
+      filter: { categories: ["OST_MultiCategoryTags"] },
+      preset: "annotation",
+      limit: 50,
+      includeTotalCount: true,
+    });
+    assertCatalogPage(multiTagTypes, "tagTypes");
+    const tagCandidates = [...(wallTagTypes.items ?? []), ...(multiTagTypes.items ?? [])];
+    const selected = selectTagType(tagCandidates, elementTagSelector);
+    const views = await listAnnotationViews(client, documentFingerprint, [
+      "FloorPlan",
+      "CeilingPlan",
+      "EngineeringPlan",
+      "Section",
+      "DraftingView",
+    ]);
+    result.element = compactObject({
+      selector: elementTagSelector,
+      tagTypeCatalogs: [
+        {
+          categories: ["OST_WallTags"],
+          tagTypeCount: Array.isArray(wallTagTypes.items) ? wallTagTypes.items.length : 0,
+          tagTypeSamples: sampleEvidenceItems(wallTagTypes.items),
+        },
+        {
+          categories: ["OST_MultiCategoryTags"],
+          tagTypeCount: Array.isArray(multiTagTypes.items) ? multiTagTypes.items.length : 0,
+          tagTypeSamples: sampleEvidenceItems(multiTagTypes.items),
+        },
+      ],
+      selectedTagType: selected ? sampleEvidenceItems([selected], 1)[0] : undefined,
+      viewCount: views.length,
+      viewSamples: sampleEvidenceItems(views),
+    });
+    if (!selected) {
+      result.failures.push(
+        elementTagSelector
+          ? `No loaded wall or multi-category tag FamilySymbol matched ${formatTagTypeSelector(elementTagSelector)}.`
+          : "No loaded wall or multi-category tag FamilySymbol is available."
+      );
+    }
+    if (views.length === 0) {
+      result.failures.push("No printable non-template graphical view is available for element tags.");
+    }
+  }
+
+  if (result.failures.length > 0) {
+    result.status = "failed";
+  }
+
+  return result;
+}
+
+function formatTagPreflightFailure(preflight) {
+  return [
+    "Required tag smoke preflight failed before model mutations.",
+    ...preflight.failures.map((failure) => `- ${failure}`),
+    "Use a curated disposable RVT with loaded room and wall/multi-category tag types plus printable plan/section views, or rerun without --require-tags for preview-only tag evidence.",
+  ].join("\n");
 }
 
 async function tryPreviewChangeSet(client, changeSet, operationName) {

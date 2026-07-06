@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
@@ -73,6 +74,11 @@ namespace RevitMcpNext.Addin
         {
             try
             {
+                if (IsPreviewOnlyDocumentChange(args))
+                {
+                    return;
+                }
+
                 Document document = args.GetDocument();
                 if (document != null)
                 {
@@ -83,6 +89,25 @@ namespace RevitMcpNext.Addin
             {
                 DiagnosticsLogger.Error("Failed to update document generation after Revit document change.", ex);
             }
+        }
+
+        private static bool IsPreviewOnlyDocumentChange(DocumentChangedEventArgs args)
+        {
+            if (args == null) return false;
+
+            ICollection<string> transactionNames = args.GetTransactionNames();
+            if (transactionNames == null || transactionNames.Count == 0) return false;
+
+            foreach (string transactionName in transactionNames)
+            {
+                if (string.IsNullOrWhiteSpace(transactionName) ||
+                    !transactionName.StartsWith("Revit MCP preview ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

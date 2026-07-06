@@ -17,6 +17,7 @@ interface CapturedRequest {
 test("revitctl parses compact command payloads and auth token config", () => {
   assert.equal(parseAuthTokenConfig("REVIT_MCP_NEXT_AUTH_TOKEN=abc123\n"), "abc123");
   assert.equal(parseAuthTokenConfig('REVIT_MCP_NEXT_AUTH_TOKEN="quoted-token"\n'), "quoted-token");
+  assert.equal(parseAuthTokenConfig('\ufeffREVIT_MCP_NEXT_AUTH_TOKEN="bom-token"\n'), "bom-token");
 
   const query = parseArgs(["query", "--payload", '{"filter":{"classes":["Wall"]},"limit":2}', "--timeout-ms", "1234"]);
   assert.equal(query.command, "query");
@@ -46,7 +47,8 @@ test("revitctl parses compact command payloads and auth token config", () => {
 test("revitctl calls the named pipe bridge with auth from config", async () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "revitctl-test-"));
   const authConfig = path.join(tempRoot, "auth.env");
-  writeFileSync(authConfig, "REVIT_MCP_NEXT_AUTH_TOKEN=test-token\n", "utf8");
+  const discoveryConfig = path.join(tempRoot, "client-discovery.json");
+  writeFileSync(authConfig, "\ufeffREVIT_MCP_NEXT_AUTH_TOKEN=test-token\n", "utf8");
 
   try {
     await withPipeServer(
@@ -57,7 +59,12 @@ test("revitctl calls the named pipe bridge with auth from config", async () => {
         assert.deepEqual(request.payload, {});
       },
       async (pipeName) => {
-        const result = await runRevitCtl(parseArgs(["status", "--pipe", pipeName, "--auth-config", authConfig]));
+        writeFileSync(
+          discoveryConfig,
+          `\ufeff${JSON.stringify({ authConfigPath: authConfig, pipeName })}`,
+          "utf8"
+        );
+        const result = await runRevitCtl(parseArgs(["status", "--discovery", discoveryConfig]));
         assert.equal(result.exitCode, 0);
         assert.equal((result.body as { ok?: boolean }).ok, true);
       }

@@ -421,7 +421,9 @@ namespace RevitMcpNext.Addin.Revit
                 ["units"] = new Dictionary<string, object>
                 {
                     ["elevation"] = "mm",
-                    ["length"] = "mm"
+                    ["length"] = "mm",
+                    ["location"] = "mm",
+                    ["bounds"] = "mm"
                 },
                 ["scope"] = scope,
                 ["source"] = "revit-addin"
@@ -1337,7 +1339,6 @@ namespace RevitMcpNext.Addin.Revit
 
             if (parsedExpiresAt <= DateTimeOffset.UtcNow)
             {
-                _previewTokens.Consume(providedPreviewId);
                 return Failure(request, "PREVIEW_EXPIRED", "The preview has expired. Run revit.preview_change_set again before applying.", sw);
             }
 
@@ -1356,7 +1357,6 @@ namespace RevitMcpNext.Addin.Revit
             string expectedPreviewId = ComputePreviewId(document, transactionName, operations);
             if (!string.Equals(providedPreviewId, expectedPreviewId, StringComparison.Ordinal))
             {
-                _previewTokens.Consume(providedPreviewId);
                 return Failure(request, "PREVIEW_ID_MISMATCH", "The supplied previewId does not match the current change set and document.", sw);
             }
 
@@ -1367,7 +1367,6 @@ namespace RevitMcpNext.Addin.Revit
                 providedChangeSetHash);
             if (!metadataValidation.Ok)
             {
-                _previewTokens.Consume(providedPreviewId);
                 return Failure(request, metadataValidation.Code, metadataValidation.Message, sw);
             }
 
@@ -1389,11 +1388,9 @@ namespace RevitMcpNext.Addin.Revit
                 providedChangeSetHash);
             if (!tokenValidation.Ok)
             {
-                _previewTokens.Consume(providedPreviewId);
                 return Failure(request, tokenValidation.Code, tokenValidation.Message, sw);
             }
 
-            _previewTokens.Consume(providedPreviewId);
             List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
             {
                 var results = new List<Dictionary<string, object>>();
@@ -1403,6 +1400,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 return results;
             });
+            _previewTokens.Consume(providedPreviewId);
             long appliedGeneration = _generations.GetGeneration(document);
 
             var data = new Dictionary<string, object>
@@ -3209,6 +3207,9 @@ namespace RevitMcpNext.Addin.Revit
                 return BlockedChange(operation, index, "Element " + elementId + " is pinned. Pass allowPinned=true only after explicitly reviewing the target.");
             }
 
+            ElementId targetId = element.Id;
+            Dictionary<string, object> target = ElementTarget(element, null);
+            Dictionary<string, object> before = DeleteSnapshot(document, element);
             DeleteProbeResult probe;
             try
             {
@@ -3219,15 +3220,14 @@ namespace RevitMcpNext.Addin.Revit
                 return BlockedChange(operation, index, "Revit could not preview delete_element for " + elementId + ": " + FormatPreviewProbeError("delete_element", ex));
             }
 
-            Dictionary<string, object> before = DeleteSnapshot(document, element);
-            Dictionary<string, object> after = DeleteAfterSnapshot(probe.DeletedIds, element.Id);
+            Dictionary<string, object> after = DeleteAfterSnapshot(probe.DeletedIds, targetId);
             string guardFailure = ValidateDeleteProbeGuards(operation, probe);
             if (!string.IsNullOrWhiteSpace(guardFailure))
             {
-                return Change(operation, index, "blocked", ElementTarget(element, null), before, after, guardFailure);
+                return Change(operation, index, "blocked", target, before, after, guardFailure);
             }
 
-            return Change(operation, index, "ready", ElementTarget(element, null),
+            return Change(operation, index, "ready", target,
                 before: before,
                 after: after);
         }
@@ -3298,6 +3298,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static DeleteProbeResult ProbeDeleteElement(Document document, Element element)
         {
+            ElementId targetId = element.Id;
             if (document.IsModifiable)
             {
                 using (var subTransaction = new SubTransaction(document))
@@ -3310,8 +3311,8 @@ namespace RevitMcpNext.Addin.Revit
                             throw new InvalidOperationException("Could not start Revit subtransaction for delete preview.");
                         }
                         started = true;
-                        ICollection<ElementId> deletedIds = document.Delete(element.Id);
-                        return new DeleteProbeResult(deletedIds ?? Array.Empty<ElementId>(), element.Id);
+                        ICollection<ElementId> deletedIds = document.Delete(targetId);
+                        return new DeleteProbeResult(deletedIds ?? Array.Empty<ElementId>(), targetId);
                     }
                     finally
                     {
@@ -3331,8 +3332,8 @@ namespace RevitMcpNext.Addin.Revit
                 ConfigurePreviewProbeTransaction(transaction);
                 try
                 {
-                    ICollection<ElementId> deletedIds = document.Delete(element.Id);
-                    return new DeleteProbeResult(deletedIds ?? Array.Empty<ElementId>(), element.Id);
+                    ICollection<ElementId> deletedIds = document.Delete(targetId);
+                    return new DeleteProbeResult(deletedIds ?? Array.Empty<ElementId>(), targetId);
                 }
                 finally
                 {
@@ -5309,128 +5310,235 @@ namespace RevitMcpNext.Addin.Revit
 
         private static Dictionary<string, object> BuildModelReadiness(UIApplication app, Document document, long generation, Dictionary<string, object> payload)
         {
+            IReadOnlyList<string> requestedScenarios = GetStringList(payload, "scenarios");
+            HashSet<string> requestedScenarioSet = requestedScenarios.Count > 0
+                ? new HashSet<string>(requestedScenarios, StringComparer.OrdinalIgnoreCase)
+                : null;
+
+            bool WantsScenario(string name)
+            {
+                return requestedScenarioSet == null || requestedScenarioSet.Contains(name);
+            }
+
             Level[] levels = new FilteredElementCollector(document)
                 .OfClass(typeof(Level))
                 .Cast<Level>()
                 .OrderBy(level => level.Elevation)
                 .ToArray();
 
-            int wallCount = CountCollectorElements(new FilteredElementCollector(document)
-                .OfCategory(BuiltInCategory.OST_Walls)
-                .WhereElementIsNotElementType());
-            int wallTypeCount = CountCollectorElements(new FilteredElementCollector(document)
-                .OfClass(typeof(WallType)));
-            int floorTypeCount = CountCollectorElements(new FilteredElementCollector(document)
-                .OfClass(typeof(FloorType)));
-            int roomCount = CountCollectorElements(new FilteredElementCollector(document)
-                .OfCategory(BuiltInCategory.OST_Rooms)
-                .WhereElementIsNotElementType());
-            int textNoteTypeCount = CountCollectorElements(new FilteredElementCollector(document)
-                .OfClass(typeof(TextNoteType)));
-
-            FamilySymbol[] familySymbols = new FilteredElementCollector(document)
-                .OfClass(typeof(FamilySymbol))
-                .Cast<FamilySymbol>()
-                .ToArray();
-            FamilySymbol[] wallHostedSymbols = familySymbols
-                .Where(IsSupportedWallHostedFamilySymbol)
-                .ToArray();
-            FamilySymbol[] levelBasedSymbols = familySymbols
-                .Where(IsSupportedLevelBasedFamilySymbol)
-                .ToArray();
-
-            int typeChangeScanned;
-            bool typeChangeScanTruncated;
-            int typeChangeCandidateCount = CountTypeChangeCandidates(document, 250, out typeChangeScanned, out typeChangeScanTruncated);
-
-            UIDocument uidocument = app.ActiveUIDocument;
-            bool selectionAvailable = uidocument != null && ReferenceEquals(uidocument.Document, document);
-            int selectionCount = selectionAvailable ? uidocument.Selection.GetElementIds().Count : 0;
             View activeView = SafeActiveView(document);
-            bool activeGraphicalView = IsGraphicalView(activeView);
+            int? wallCount = null;
+            int? wallTypeCount = null;
+            int? floorTypeCount = null;
+            int? roomCount = null;
+            int? textNoteTypeCount = null;
+            FamilySymbol[] familySymbols = null;
+            FamilySymbol[] wallHostedSymbols = null;
+            FamilySymbol[] levelBasedSymbols = null;
 
-            var scenarios = new List<Dictionary<string, object>>
+            int GetWallCount()
             {
-                ScenarioReadiness(
+                if (!wallCount.HasValue)
+                {
+                    wallCount = CountCollectorElements(new FilteredElementCollector(document)
+                        .OfCategory(BuiltInCategory.OST_Walls)
+                        .WhereElementIsNotElementType());
+                }
+                return wallCount.Value;
+            }
+
+            int GetWallTypeCount()
+            {
+                if (!wallTypeCount.HasValue)
+                {
+                    wallTypeCount = CountCollectorElements(new FilteredElementCollector(document)
+                        .OfClass(typeof(WallType)));
+                }
+                return wallTypeCount.Value;
+            }
+
+            int GetFloorTypeCount()
+            {
+                if (!floorTypeCount.HasValue)
+                {
+                    floorTypeCount = CountCollectorElements(new FilteredElementCollector(document)
+                        .OfClass(typeof(FloorType)));
+                }
+                return floorTypeCount.Value;
+            }
+
+            int GetRoomCount()
+            {
+                if (!roomCount.HasValue)
+                {
+                    roomCount = CountCollectorElements(new FilteredElementCollector(document)
+                        .OfCategory(BuiltInCategory.OST_Rooms)
+                        .WhereElementIsNotElementType());
+                }
+                return roomCount.Value;
+            }
+
+            int GetTextNoteTypeCount()
+            {
+                if (!textNoteTypeCount.HasValue)
+                {
+                    textNoteTypeCount = CountCollectorElements(new FilteredElementCollector(document)
+                        .OfClass(typeof(TextNoteType)));
+                }
+                return textNoteTypeCount.Value;
+            }
+
+            FamilySymbol[] GetFamilySymbols()
+            {
+                if (familySymbols == null)
+                {
+                    familySymbols = new FilteredElementCollector(document)
+                        .OfClass(typeof(FamilySymbol))
+                        .Cast<FamilySymbol>()
+                        .ToArray();
+                }
+                return familySymbols;
+            }
+
+            FamilySymbol[] GetWallHostedSymbols()
+            {
+                if (wallHostedSymbols == null)
+                {
+                    wallHostedSymbols = GetFamilySymbols()
+                        .Where(IsSupportedWallHostedFamilySymbol)
+                        .ToArray();
+                }
+                return wallHostedSymbols;
+            }
+
+            FamilySymbol[] GetLevelBasedSymbols()
+            {
+                if (levelBasedSymbols == null)
+                {
+                    levelBasedSymbols = GetFamilySymbols()
+                        .Where(IsSupportedLevelBasedFamilySymbol)
+                        .ToArray();
+                }
+                return levelBasedSymbols;
+            }
+
+            var scenarios = new List<Dictionary<string, object>>();
+            if (WantsScenario("levels"))
+            {
+                scenarios.Add(ScenarioReadiness(
                     "levels",
                     levels.Length > 0,
                     levels.Length > 0 ? Array.Empty<string>() : new[] { "At least one project level." },
                     levels.Length > 0 ? "Use revit.get_levels to pick exact level IDs." : "Create a level before level-based model operations.",
-                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["defaultLevelId"] = levels.FirstOrDefault() == null ? null : ToElementIdString(levels.First().Id) }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["defaultLevelId"] = levels.FirstOrDefault() == null ? null : ToElementIdString(levels.First().Id) }));
+            }
+            if (WantsScenario("wallCreation"))
+            {
+                int wallCreationWallTypeCount = GetWallTypeCount();
+                int wallCreationWallCount = GetWallCount();
+                scenarios.Add(ScenarioReadiness(
                     "wallCreation",
-                    levels.Length > 0 && wallTypeCount > 0,
+                    levels.Length > 0 && wallCreationWallTypeCount > 0,
                     MissingPrerequisites(
                         levels.Length > 0 ? null : "At least one project level.",
-                        wallTypeCount > 0 ? null : "At least one wall type."),
+                        wallCreationWallTypeCount > 0 ? null : "At least one wall type."),
                     "Use create_wall with levelId, start, end, and optional wallTypeId discovered from revit.catalog.",
-                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["wallTypeCount"] = wallTypeCount, ["wallCount"] = wallCount }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["wallTypeCount"] = wallCreationWallTypeCount, ["wallCount"] = wallCreationWallCount }));
+            }
+            if (WantsScenario("floorCreation"))
+            {
+                int floorCreationTypeCount = GetFloorTypeCount();
+                scenarios.Add(ScenarioReadiness(
                     "floorCreation",
-                    levels.Length > 0 && floorTypeCount > 0,
+                    levels.Length > 0 && floorCreationTypeCount > 0,
                     MissingPrerequisites(
                         levels.Length > 0 ? null : "At least one project level.",
-                        floorTypeCount > 0 ? null : "At least one floor type."),
+                        floorCreationTypeCount > 0 ? null : "At least one floor type."),
                     "Use create_floor with a closed outline on the target level elevation.",
-                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["floorTypeCount"] = floorTypeCount }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["floorTypeCount"] = floorCreationTypeCount }));
+            }
+            if (WantsScenario("roomCreation"))
+            {
+                int roomCreationWallCount = GetWallCount();
+                int roomCreationRoomCount = GetRoomCount();
+                scenarios.Add(ScenarioReadiness(
                     "roomCreation",
                     levels.Length > 0,
                     levels.Length > 0 ? Array.Empty<string>() : new[] { "At least one project level." },
-                    wallCount > 0
+                    roomCreationWallCount > 0
                         ? "Create or reuse an enclosed room-bounding region, then preview create_room."
                         : "Create room-bounding walls or separators before expecting room area and enclosure.",
-                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["roomCount"] = roomCount, ["wallCount"] = wallCount }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["levelCount"] = levels.Length, ["roomCount"] = roomCreationRoomCount, ["wallCount"] = roomCreationWallCount }));
+            }
+            if (WantsScenario("roomReadback"))
+            {
+                int roomReadbackCount = GetRoomCount();
+                scenarios.Add(ScenarioReadiness(
                     "roomReadback",
-                    roomCount > 0,
-                    roomCount > 0 ? Array.Empty<string>() : new[] { "At least one placed room." },
+                    roomReadbackCount > 0,
+                    roomReadbackCount > 0 ? Array.Empty<string>() : new[] { "At least one placed room." },
                     "Use revit.get_rooms with preset=schedule for compact room export.",
-                    new Dictionary<string, object> { ["roomCount"] = roomCount }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["roomCount"] = roomReadbackCount }));
+            }
+            if (WantsScenario("typeChange"))
+            {
+                int typeChangeScanned;
+                bool typeChangeScanTruncated;
+                int typeChangeCandidateCount = CountTypeChangeCandidates(document, 250, out typeChangeScanned, out typeChangeScanTruncated);
+                scenarios.Add(ScenarioReadiness(
                     "typeChange",
                     typeChangeCandidateCount > 0,
                     typeChangeCandidateCount > 0 ? Array.Empty<string>() : new[] { "A non-pinned model element with compatible alternate types." },
                     "Use revit.catalog with kind=elementTypes and filter.forElementId before change_element_type.",
-                    new Dictionary<string, object> { ["sampledElements"] = typeChangeScanned, ["candidateElements"] = typeChangeCandidateCount, ["scanTruncated"] = typeChangeScanTruncated }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["sampledElements"] = typeChangeScanned, ["candidateElements"] = typeChangeCandidateCount, ["scanTruncated"] = typeChangeScanTruncated }));
+            }
+            if (WantsScenario("familyPlacement"))
+            {
+                int familyPlacementWallCount = GetWallCount();
+                FamilySymbol[] familyPlacementWallHostedSymbols = GetWallHostedSymbols();
+                FamilySymbol[] familyPlacementLevelBasedSymbols = GetLevelBasedSymbols();
+                scenarios.Add(ScenarioReadiness(
                     "familyPlacement",
-                    levels.Length > 0 && (levelBasedSymbols.Length > 0 || (wallCount > 0 && wallHostedSymbols.Length > 0)),
+                    levels.Length > 0 && (familyPlacementLevelBasedSymbols.Length > 0 || (familyPlacementWallCount > 0 && familyPlacementWallHostedSymbols.Length > 0)),
                     MissingPrerequisites(
                         levels.Length > 0 ? null : "At least one project level.",
-                        levelBasedSymbols.Length > 0 || wallHostedSymbols.Length > 0 ? null : "At least one supported door/window/furniture/equipment/fixture FamilySymbol.",
-                        wallHostedSymbols.Length == 0 || wallCount > 0 ? null : "At least one wall host for hosted door/window placement."),
+                        familyPlacementLevelBasedSymbols.Length > 0 || familyPlacementWallHostedSymbols.Length > 0 ? null : "At least one supported door/window/furniture/equipment/fixture FamilySymbol.",
+                        familyPlacementWallHostedSymbols.Length == 0 || familyPlacementWallCount > 0 ? null : "At least one wall host for hosted door/window placement."),
                     "Use revit.catalog kind=familySymbols preset=placement to discover familySymbolId and placementType.",
                     new Dictionary<string, object>
                     {
-                        ["wallHostedDoorWindowSymbols"] = wallHostedSymbols.Length,
-                        ["levelBasedFurnitureEquipmentFixtureSymbols"] = levelBasedSymbols.Length,
-                        ["wallHostedReady"] = levels.Length > 0 && wallCount > 0 && wallHostedSymbols.Length > 0,
-                        ["levelBasedReady"] = levels.Length > 0 && levelBasedSymbols.Length > 0,
-                        ["sampleHostedFamilySymbolId"] = wallHostedSymbols.FirstOrDefault() == null ? null : ToElementIdString(wallHostedSymbols.First().Id),
-                        ["sampleLevelBasedFamilySymbolId"] = levelBasedSymbols.FirstOrDefault() == null ? null : ToElementIdString(levelBasedSymbols.First().Id)
-                    }),
-                ScenarioReadiness(
+                        ["wallHostedDoorWindowSymbols"] = familyPlacementWallHostedSymbols.Length,
+                        ["levelBasedFurnitureEquipmentFixtureSymbols"] = familyPlacementLevelBasedSymbols.Length,
+                        ["wallHostedReady"] = levels.Length > 0 && familyPlacementWallCount > 0 && familyPlacementWallHostedSymbols.Length > 0,
+                        ["levelBasedReady"] = levels.Length > 0 && familyPlacementLevelBasedSymbols.Length > 0,
+                        ["sampleHostedFamilySymbolId"] = familyPlacementWallHostedSymbols.FirstOrDefault() == null ? null : ToElementIdString(familyPlacementWallHostedSymbols.First().Id),
+                        ["sampleLevelBasedFamilySymbolId"] = familyPlacementLevelBasedSymbols.FirstOrDefault() == null ? null : ToElementIdString(familyPlacementLevelBasedSymbols.First().Id)
+                    }));
+            }
+            if (WantsScenario("selection"))
+            {
+                UIDocument uidocument = app.ActiveUIDocument;
+                bool selectionAvailable = uidocument != null && ReferenceEquals(uidocument.Document, document);
+                int selectionCount = selectionAvailable ? uidocument.Selection.GetElementIds().Count : 0;
+                scenarios.Add(ScenarioReadiness(
                     "selection",
                     selectionAvailable && selectionCount > 0,
                     selectionAvailable
                         ? selectionCount > 0 ? Array.Empty<string>() : new[] { "At least one selected element." }
                         : new[] { "The requested document must be the active UI document." },
                     "Use revit.query filters when no active selection is available.",
-                    new Dictionary<string, object> { ["available"] = selectionAvailable, ["selectionCount"] = selectionCount }),
-                ScenarioReadiness(
+                    new Dictionary<string, object> { ["available"] = selectionAvailable, ["selectionCount"] = selectionCount }));
+            }
+            if (WantsScenario("annotations"))
+            {
+                bool activeGraphicalView = IsGraphicalView(activeView);
+                int annotationTextNoteTypeCount = GetTextNoteTypeCount();
+                scenarios.Add(ScenarioReadiness(
                     "annotations",
                     activeGraphicalView,
                     activeGraphicalView ? Array.Empty<string>() : new[] { "An active graphical non-template view." },
                     "Annotation operations should be scoped to an explicit graphical view and valid references.",
-                    new Dictionary<string, object> { ["activeGraphicalView"] = activeGraphicalView, ["textNoteTypeCount"] = textNoteTypeCount })
-            };
-            IReadOnlyList<string> requestedScenarios = GetStringList(payload, "scenarios");
-            if (requestedScenarios.Count > 0)
-            {
-                scenarios = scenarios
-                    .Where(scenario => requestedScenarios.Contains(GetString(scenario, "name"), StringComparer.OrdinalIgnoreCase))
-                    .ToList();
+                    new Dictionary<string, object> { ["activeGraphicalView"] = activeGraphicalView, ["textNoteTypeCount"] = annotationTextNoteTypeCount }));
             }
 
             if (!GetBool(payload, "includeHints", true))
