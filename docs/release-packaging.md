@@ -32,6 +32,7 @@ The package is written under `artifacts\release\revit-mcp-next-<version>-windows
 - `integrations\python`, `integrations\pyrevit`, and `integrations\dynamo` examples for external Revit automation clients.
 - `release-manifest.json` with file inventory, build metadata, and signing status.
 - `CHECKSUMS.sha256` for installer-side integrity verification.
+- `SHARING-NOTICE.md` with the generated share profile, signing mode, public-trust label, allowed claim, and recipient prompt expectation.
 
 Hosted CI also runs a release package contract test:
 
@@ -265,6 +266,16 @@ npm run smoke:pyrevit-host -- `
 
 For Dynamo, run the packaged graph inside Dynamo for Revit so the evidence is produced by the installed package. Do not use headless `DynamoCLI.exe` as release evidence; it does not provide RevitServices. The wrapper below launches Revit with `REVIT_MCP_NEXT_INSTALL_ROOT`, `REVIT_MCP_NEXT_AUTH_CONFIG`, and the Dynamo evidence environment variables pinned to the installed package, waits for `dynamo.json`, and validates the result after you run the graph:
 
+For first-run profiles, run the warm-up helper before release evidence collection. It records `dynamo-warmup-report.json`, writes a next-step file with the exact hosted-smoke command, and can launch Revit so you can open Dynamo for Revit and answer startup/privacy prompts manually:
+
+```powershell
+npm run dynamo:warmup -- `
+  -RevitYear 2024 `
+  -ModelPath C:\tmp\disposable.rvt `
+  -OutputRoot artifacts\dynamo-warmup `
+  -LaunchRevit
+```
+
 ```powershell
 npm run smoke:dynamo-host -- `
   -RevitYear 2024 `
@@ -278,6 +289,12 @@ After the Dynamo profile has already been warmed manually once, add `-UseDynamoJ
 For unattended runners, add `-RequireWarmedDynamo` so the command fails fast with the exact settings path and preflight reason instead of waiting for evidence that cannot be produced behind first-run UI:
 
 ```powershell
+npm run smoke:dynamo-host -- `
+  -RevitYear 2024 `
+  -EvidencePath artifacts\host-integrations\raw\dynamo.json `
+  -PreflightOnly `
+  -RequireWarmedDynamo
+
 npm run smoke:dynamo-host -- `
   -RevitYear 2024 `
   -ModelPath C:\tmp\disposable.rvt `
@@ -317,7 +334,7 @@ The command writes `artifacts\release-evidence\revit-mcp-next-<version>-windows-
 
 - `release-evidence-manifest.json` with package metadata, package zip SHA-256, signing status, validation logs, support-bundle evidence, live-smoke evidence, hosted pyRevit/Dynamo evidence, and an inventory of copied evidence files. Local source paths are redacted from the manifest; auditability comes from relative `storedAs` paths, SHA-256 hashes, and the inventory.
 - `release-evidence-summary.md` with the release evidence headline facts.
-- Copies of `release-manifest.json`, `CHECKSUMS.sha256`, and `package-zip.sha256`.
+- Copies of `release-manifest.json`, `CHECKSUMS.sha256`, `SHARING-NOTICE.md`, and `package-zip.sha256`.
 - Named validation logs when paths are provided.
 - Live-smoke artifacts when `smoke-summary.json` reports `status: "passed"` and its loaded add-in `assemblySha256` matches the package manifest, hosted pyRevit/Dynamo artifacts when `host-integrations-summary.json` reports both hosts passed, plus support-bundle artifacts when paths are provided.
 

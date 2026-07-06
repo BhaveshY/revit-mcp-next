@@ -787,6 +787,7 @@ if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
 $packageRootFull = Resolve-RequiredDirectory $PackageRoot "Package root was not found."
 $releaseManifestPath = Resolve-RequiredFile (Join-Path $packageRootFull "release-manifest.json") "Release manifest is missing."
 $checksumsPath = Resolve-RequiredFile (Join-Path $packageRootFull "CHECKSUMS.sha256") "Package checksum file is missing."
+$sharingNoticePath = Resolve-RequiredFile (Join-Path $packageRootFull "SHARING-NOTICE.md") "Package sharing notice is missing."
 
 if ([string]::IsNullOrWhiteSpace($PackageZipPath)) {
     $PackageZipPath = "$packageRootFull.zip"
@@ -826,6 +827,7 @@ Write-Step "Collecting release evidence: $stageRoot"
 $packageEvidenceRoot = Join-Path $stageRoot "package"
 Copy-RequiredFile $releaseManifestPath (Join-Path $packageEvidenceRoot "release-manifest.json")
 Copy-RequiredFile $checksumsPath (Join-Path $packageEvidenceRoot "CHECKSUMS.sha256")
+Copy-RequiredFile $sharingNoticePath (Join-Path $packageEvidenceRoot "SHARING-NOTICE.md")
 
 $packageZip = Get-Item -LiteralPath $packageZipFull
 $packageZipHash = Get-Sha256Hash $packageZip.FullName
@@ -973,6 +975,7 @@ $packageSummary = [ordered] @{
     releaseManifest = "package/release-manifest.json"
     checksums = "package/CHECKSUMS.sha256"
     packageZipChecksum = "package/package-zip.sha256"
+    sharingNotice = "package/SHARING-NOTICE.md"
 }
 
 $evidenceManifest = [ordered] @{
@@ -989,6 +992,7 @@ $evidenceManifest = [ordered] @{
         revitYears = $releaseManifest.package.revitYears
         nodeMajor = $releaseManifest.package.nodeMajor
         nodeModulesBundled = [bool] $releaseManifest.package.nodeModulesBundled
+        sharing = ConvertTo-ShareableObject $releaseManifest.sharing
         evidence = $packageSummary
     }
     signing = [ordered] @{
@@ -1018,6 +1022,8 @@ $summaryLines = @(
     "- Package zip SHA-256: $packageZipHash",
     "- Git commit: $($releaseManifest.package.gitCommit)",
     "- Git dirty: $($releaseManifest.package.gitDirty)",
+    "- Share profile: $($releaseManifest.sharing.shareProfile)",
+    "- Signing mode: $($releaseManifest.sharing.signingMode)",
     "- Signing: $signingStatus",
     "- Live smoke: $($liveSmokeSection.status)",
     "- Support bundle: $($supportSection.status)",

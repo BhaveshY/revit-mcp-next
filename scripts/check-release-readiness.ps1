@@ -279,6 +279,7 @@ function Test-RecordedFile($Inventory, $Name, $Entry, $Label) {
 
 function Test-SigningTargets($Manifest, $Profile) {
     $targets = @(@($Manifest.signing.targets) | Where-Object { $null -ne $_ })
+    $localDevSubject = "CN=Revit MCP Next Local Dev Code Signing"
     if ($targets.Count -eq 0) {
         if ($Profile -eq "production") {
             Fail "signing.targets" "Production readiness requires recorded Authenticode target signature statuses."
@@ -290,6 +291,7 @@ function Test-SigningTargets($Manifest, $Profile) {
 
     $missingFields = New-Object System.Collections.Generic.List[string]
     $invalidTargets = New-Object System.Collections.Generic.List[string]
+    $localDevTargets = New-Object System.Collections.Generic.List[string]
     foreach ($target in $targets) {
         $path = [string] $target.path
         $status = [string] $target.status
@@ -305,6 +307,9 @@ function Test-SigningTargets($Manifest, $Profile) {
         if ($status -ne "Valid") {
             $invalidTargets.Add("$path=$status") | Out-Null
         }
+        if ([string] $target.signerSubject -eq $localDevSubject) {
+            $localDevTargets.Add($path) | Out-Null
+        }
     }
 
     if ($missingFields.Count -gt 0) {
@@ -318,6 +323,11 @@ function Test-SigningTargets($Manifest, $Profile) {
             Fail "signing.targets.valid" "Production readiness requires every signed target to have Authenticode status Valid. Invalid targets: $($invalidTargets -join '; ')"
         } else {
             Pass "signing.targets.valid" "All signing targets have Authenticode status Valid."
+        }
+        if ($localDevTargets.Count -gt 0) {
+            Fail "signing.targets.publicTrust" "Production readiness cannot use the local dev signing certificate. Local-dev targets: $($localDevTargets -join '; ')"
+        } else {
+            Pass "signing.targets.publicTrust" "Signing targets are not using the known local dev signing certificate."
         }
     } else {
         if ($invalidTargets.Count -gt 0) {
@@ -621,7 +631,13 @@ try {
         Fail "package.addinSha256" "Packaged add-in SHA-256 is missing or malformed."
     }
 
-    foreach ($relativePath in @("package/release-manifest.json", "package/CHECKSUMS.sha256", "package/package-zip.sha256", "release-evidence-summary.md")) {
+    if (-not (Test-Blank $manifest.package.sharing.shareProfile) -and -not (Test-Blank $manifest.package.sharing.signingMode) -and $null -ne $manifest.package.sharing.publicTrust) {
+        Pass "package.sharing" "Package sharing profile and signing mode are recorded."
+    } else {
+        Fail "package.sharing" "Package sharing profile or signing mode is missing."
+    }
+
+    foreach ($relativePath in @("package/release-manifest.json", "package/CHECKSUMS.sha256", "package/SHARING-NOTICE.md", "package/package-zip.sha256", "release-evidence-summary.md")) {
         Require-InventoryPath $inventory $relativePath "contents.$relativePath" "Evidence inventory is missing $relativePath."
     }
 

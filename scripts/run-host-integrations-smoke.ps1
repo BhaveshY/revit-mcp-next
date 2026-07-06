@@ -248,6 +248,14 @@ if ($DryRun) {
 
 New-Item -ItemType Directory -Force -Path $rawRoot, $logsRoot | Out-Null
 
+if ($UseDynamoJournalForDynamo -or $RequireWarmedDynamoForDynamo) {
+    $preflightArgs = @($dynamoArgs + "-PreflightOnly")
+    Invoke-Logged "Preflight Dynamo host profile" `
+        (Join-Path $logsRoot "dynamo-preflight.log") `
+        (Join-Path $PSScriptRoot "run-dynamo-host-smoke.ps1") `
+        $preflightArgs
+}
+
 Invoke-Logged "Run pyRevit host smoke" `
     (Join-Path $logsRoot "pyrevit-host-smoke.log") `
     (Join-Path $PSScriptRoot "run-pyrevit-host-smoke.ps1") `

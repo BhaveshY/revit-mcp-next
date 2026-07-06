@@ -229,6 +229,7 @@ function Assert-LocalReleaseSmokeRejectsTemplates($RepoRoot, $RunRoot) {
 function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) {
     $pyRevitSmokeScript = Join-Path $PackageRoot "scripts\run-pyrevit-host-smoke.ps1"
     $dynamoSmokeScript = Join-Path $PackageRoot "scripts\run-dynamo-host-smoke.ps1"
+    $dynamoWarmupScript = Join-Path $PackageRoot "scripts\prepare-dynamo-profile.ps1"
     $hostIntegrationsSmokeScript = Join-Path $PackageRoot "scripts\run-host-integrations-smoke.ps1"
     $hostIntegrationEvidenceScript = Join-Path $PackageRoot "scripts\collect-host-integration-evidence.ps1"
     $pyRevitEvidencePath = Join-Path $RunRoot "host-smoke\pyrevit.json"
@@ -321,6 +322,9 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ($dynamoState.preflight.privacyPromptAutomation -ne $false) {
         throw "Dynamo host smoke dry run must not report privacy prompt automation."
     }
+    if ($dynamoState.preflight.manualWarmupRequired -ne $false -or $dynamoState.preflight.dynamoJournalAllowed -ne $true) {
+        throw "Dynamo host smoke dry run did not record warmed-profile audit fields."
+    }
     if (Test-Path -LiteralPath $dynamoPreflightReportPath -PathType Leaf) {
         throw "Dynamo host smoke dry run wrote the preflight report."
     }
@@ -349,6 +353,9 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ($dynamoJournalState.dynamoJournalRequiresWarmedSettings -ne $true -or $dynamoJournalState.dynamoJournalAllowed -ne $true) {
         throw "Dynamo host smoke journal dry run did not require and allow warmed settings."
     }
+    if ($dynamoJournalState.preflight.useDynamoJournal -ne $true -or $dynamoJournalState.preflight.allowUnwarmedDynamoJournal -ne $false) {
+        throw "Dynamo host smoke journal dry run did not record journal policy in preflight."
+    }
     if (Test-Path -LiteralPath $dynamoJournalPath -PathType Leaf) {
         throw "Dynamo host smoke journal dry run wrote the journal file."
     }
@@ -376,11 +383,58 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ($preflightOnlyReport.privacyPromptAutomation -ne $false -or $preflightOnlyReport.uiPromptAutomation -ne $false) {
         throw "Dynamo host smoke preflight-only report must not claim prompt automation."
     }
+    if ($preflightOnlyReport.manualWarmupRequired -ne $false -or [string]::IsNullOrWhiteSpace([string] $preflightOnlyReport.manualNextAction)) {
+        throw "Dynamo host smoke preflight-only report did not preserve manual warm-up audit fields."
+    }
     if ([string] $preflightOnlyReport.preflightReportPath -ne [System.IO.Path]::GetFullPath($preflightOnlyReportPath)) {
         throw "Dynamo host smoke preflight-only report recorded the wrong report path."
     }
     if (Test-Path -LiteralPath $dynamoEvidencePath -PathType Leaf) {
         throw "Dynamo host smoke preflight-only wrote host-smoke evidence."
+    }
+
+    $unwarmedDynamoSettingsPath = Join-Path $RunRoot "host-smoke\unwarmed\Dynamo\Dynamo Revit\2.17\DynamoSettings.xml"
+    $unwarmedPreflightReportPath = Join-Path $RunRoot "host-smoke\unwarmed-dynamo-preflight.json"
+    Assert-ScriptFailsLike $dynamoSmokeScript @(
+        "-PreflightOnly",
+        "-RequireWarmedDynamo",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", (Join-Path $RunRoot "host-smoke\unwarmed-dynamo.json"),
+        "-DynamoSettingsPath", $unwarmedDynamoSettingsPath,
+        "-PreflightReportPath", $unwarmedPreflightReportPath
+    ) "*requires an existing parseable DynamoSettings.xml*" "Dynamo preflight warmed-profile gate"
+    if (-not (Test-Path -LiteralPath $unwarmedPreflightReportPath -PathType Leaf)) {
+        throw "Dynamo preflight warmed-profile gate did not write its preflight report before failing."
+    }
+    $unwarmedPreflightReport = Read-JsonFile $unwarmedPreflightReportPath
+    if ($unwarmedPreflightReport.manualWarmupRequired -ne $true -or [string]::IsNullOrWhiteSpace([string] $unwarmedPreflightReport.blockingReason)) {
+        throw "Dynamo preflight warmed-profile gate did not record manual warm-up blocker fields."
+    }
+
+    $dynamoWarmupRoot = Join-Path $RunRoot "host-smoke\dynamo-warmup"
+    $dynamoWarmupOutput = Invoke-RepoScriptCapture $dynamoWarmupScript @(
+        "-Json",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", (Join-Path $dynamoWarmupRoot "raw\dynamo.json"),
+        "-ModelPath", $modelPath,
+        "-OutputRoot", $dynamoWarmupRoot,
+        "-DynamoSettingsPath", $dynamoSettingsPath
+    )
+    $dynamoWarmupState = $dynamoWarmupOutput | ConvertFrom-Json
+    if ($dynamoWarmupState.status -ne "already_warmed") {
+        throw "Dynamo warm-up helper did not report already_warmed for the synthetic settings profile."
+    }
+    if ($dynamoWarmupState.promptAutomationPolicy.privacyPromptAutomation -ne $false -or $dynamoWarmupState.promptAutomationPolicy.uiPromptAutomation -ne $false) {
+        throw "Dynamo warm-up helper must not claim prompt automation."
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $dynamoWarmupRoot "dynamo-warmup-report.json") -PathType Leaf)) {
+        throw "Dynamo warm-up helper did not write its report."
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $dynamoWarmupRoot "dynamo-warmup-next-steps.txt") -PathType Leaf)) {
+        throw "Dynamo warm-up helper did not write next-step instructions."
+    }
+    if (-not ([string] $dynamoWarmupState.next.aggregateHostSmokeCommand).Contains("-RequireWarmedDynamoForDynamo")) {
+        throw "Dynamo warm-up helper did not print the release-safe aggregate follow-up command."
     }
 
     $syntheticAssemblyPath = Join-Path $installRoot "addin\RevitMcpNext.Addin.dll"
@@ -786,13 +840,16 @@ exit 0
 
 function Assert-PackagedNpmAliases($PackageRoot) {
     $package = Read-JsonFile (Join-Path $PackageRoot "package.json")
-    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "evidence:check", "fixture:revit-project", "revitctl")) {
+    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "evidence:check", "fixture:revit-project", "dynamo:warmup", "revitctl")) {
         if (-not $package.scripts.PSObject.Properties[$alias]) {
             throw "Packaged package.json is missing npm alias: $alias"
         }
     }
     if ([string] $package.scripts."fixture:revit-project" -ne "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-revit-project-from-template.ps1") {
         throw "Packaged package.json has unexpected fixture:revit-project command."
+    }
+    if ([string] $package.scripts."dynamo:warmup" -ne "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-dynamo-profile.ps1") {
+        throw "Packaged package.json has unexpected dynamo:warmup command."
     }
 }
 
@@ -1029,6 +1086,7 @@ try {
     Assert-FileExists "$packageRoot.zip" "package zip"
     Assert-FileExists (Join-Path $packageRoot "release-manifest.json") "release manifest"
     Assert-FileExists (Join-Path $packageRoot "CHECKSUMS.sha256") "package checksums"
+    Assert-FileExists (Join-Path $packageRoot "SHARING-NOTICE.md") "package sharing notice"
     Assert-FileExists (Join-Path $packageRoot "LICENSE") "packaged license"
     Assert-FileExists (Join-Path $packageRoot "SECURITY.md") "packaged security policy"
     $packagedRevitCtl = Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js"
@@ -1044,6 +1102,12 @@ try {
     }
     if ($manifest.package.integrationsIncluded -ne $true) {
         throw "Release contract expected packaged pyRevit/Dynamo integrations."
+    }
+    if ([string]::IsNullOrWhiteSpace([string] $manifest.sharing.shareProfile) -or [string]::IsNullOrWhiteSpace([string] $manifest.sharing.signingMode)) {
+        throw "Release contract expected package sharing metadata."
+    }
+    if ([string] $manifest.sharing.signingMode -ne "unsigned" -or $manifest.sharing.publicTrust -ne $false) {
+        throw "Release contract expected unsigned synthetic package sharing metadata."
     }
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_client.py") "packaged Python integration client"
     Assert-FileExists (Join-Path $packageRoot "integrations\python\revit_mcp_next_inprocess.py") "packaged Python in-process integration helper"
@@ -1089,6 +1153,7 @@ try {
     Assert-FileExists (Join-Path $packageRoot "scripts\create-revit-project-from-template.ps1") "packaged Revit project fixture creator"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-revit-addin-trust.ps1") "packaged Revit trust helper"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-pyrevit-hosts-cache.ps1") "packaged pyRevit hosts cache helper"
+    Assert-FileExists (Join-Path $packageRoot "scripts\prepare-dynamo-profile.ps1") "packaged Dynamo profile warm-up helper"
     Assert-FileExists (Join-Path $packageRoot "scripts\run-pyrevit-host-smoke.ps1") "packaged pyRevit host-smoke runner"
     Assert-FileExists (Join-Path $packageRoot "scripts\run-dynamo-host-smoke.ps1") "packaged Dynamo host-smoke runner"
     Assert-FileExists (Join-Path $packageRoot "scripts\run-host-integrations-smoke.ps1") "packaged aggregate hosted integration smoke runner"

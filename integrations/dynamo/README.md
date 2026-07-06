@@ -48,6 +48,12 @@ npm run smoke:dynamo-host -- -RevitYear 2024 -EvidencePath artifacts\host-integr
 
 The preflight and smoke runners do not change Dynamo privacy settings, preseed consent, or click Autodesk/Dynamo prompts. If Dynamo displays privacy or startup prompts, answer them manually in the intended dedicated test profile before collecting release evidence.
 
+For a first-run test profile, use the warm-up helper. It writes `dynamo-warmup-report.json`, writes `dynamo-warmup-next-steps.txt`, can launch Revit with the evidence environment variables, and waits for either a parseable `DynamoSettings.xml` or passed Dynamo evidence:
+
+```powershell
+npm run dynamo:warmup -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\dynamo-warmup -LaunchRevit
+```
+
 Use the packaged wrapper to launch Revit with those environment variables, wait for the graph output, and validate the raw JSON:
 
 ```powershell
@@ -65,6 +71,12 @@ Use `-RequireWarmedDynamo` for unattended runs to fail fast when `DynamoSettings
 
 ```powershell
 npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit -UseDynamoJournal -RequireWarmedDynamo
+```
+
+The preflight-only command also honors `-RequireWarmedDynamo`, writes `dynamo-preflight.json`, and then fails when the settings file is missing or unparseable:
+
+```powershell
+npm run smoke:dynamo-host -- -RevitYear 2024 -EvidencePath artifacts\host-integrations\raw\dynamo.json -PreflightOnly -RequireWarmedDynamo
 ```
 
 `-AllowUnwarmedDynamoJournal` is only for supervised disposable-machine experiments. It does not make a blocked first-run prompt acceptable release evidence.

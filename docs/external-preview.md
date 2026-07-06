@@ -9,11 +9,13 @@ For each preview build, attach:
 - `revit-mcp-next-<version>-windows.zip`
 - `CHECKSUMS.sha256`
 - `release-manifest.json`
+- `SHARING-NOTICE.md`
 - release evidence bundle from `npm run evidence:release:windows`
 - live Revit smoke output when available
 - hosted pyRevit/Dynamo evidence when available, or the explicit skip reason from the evidence bundle
 
 The preview is Revit 2024-only. Revit 2025/2026 support is intentionally blocked until year-specific add-in artifacts are built, packaged, and smoked.
+The package `release-manifest.json` also records `sharing.shareProfile`, `sharing.signingMode`, `sharing.publicTrust`, and `sharing.allowedClaim`; these fields are the source of truth for whether a package is unsigned, local-dev-signed, or production-signed.
 
 ## Recipient Prerequisites
 

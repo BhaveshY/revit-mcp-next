@@ -352,6 +352,14 @@ function New-DynamoPreflightReport($RevitExecutablePath, $InstallRootFull, $Grap
     if (-not [string]::IsNullOrWhiteSpace($ModelFull)) {
         $modelExists = Test-Path -LiteralPath $ModelFull -PathType Leaf
     }
+    $settingsAppearsWarmed = [bool] $settingsInfo.appearsWarmed
+    $journalAllowed = [bool] (-not $UseDynamoJournal -or $AllowUnwarmedDynamoJournal -or $settingsAppearsWarmed)
+    $manualWarmupRequired = [bool] (-not $settingsAppearsWarmed)
+    $blockingReason = ""
+    if ($manualWarmupRequired) {
+        $blockingReason = [string] $settingsInfo.warmedReason
+    }
+    $manualNextAction = "Open Revit $RevitYear as this Windows user, open Dynamo for Revit, answer Autodesk/Dynamo startup or privacy prompts manually, close Revit, then rerun the Dynamo preflight and host-smoke command."
 
     return [ordered] @{
         schemaVersion = 1
@@ -368,9 +376,16 @@ function New-DynamoPreflightReport($RevitExecutablePath, $InstallRootFull, $Grap
         dynamoSettingsConfidence = [string] $settingsInfo.confidence
         dynamoSettingsExists = [bool] $settingsInfo.exists
         dynamoSettingsParseableXml = [bool] $settingsInfo.parseableXml
-        dynamoSettingsAppearsWarmed = [bool] $settingsInfo.appearsWarmed
+        dynamoSettingsAppearsWarmed = $settingsAppearsWarmed
         dynamoSettingsWarmedReason = [string] $settingsInfo.warmedReason
         dynamoSettingsLastWriteTimeUtc = $settingsInfo.lastWriteTimeUtc
+        useDynamoJournal = [bool] $UseDynamoJournal
+        requireWarmedDynamo = [bool] $RequireWarmedDynamo
+        allowUnwarmedDynamoJournal = [bool] $AllowUnwarmedDynamoJournal
+        dynamoJournalAllowed = $journalAllowed
+        manualWarmupRequired = $manualWarmupRequired
+        blockingReason = $blockingReason
+        manualNextAction = $manualNextAction
         graphPath = $GraphFull
         graphExists = Test-Path -LiteralPath $GraphFull -PathType Leaf
         installRoot = $InstallRootFull
@@ -394,6 +409,10 @@ function Write-DynamoPreflight($Report) {
     $settingsPath = if ([string]::IsNullOrWhiteSpace([string] $Report.dynamoSettingsPath)) { "not discovered" } else { [string] $Report.dynamoSettingsPath }
     Write-Step "  Dynamo settings path: $settingsPath"
     Write-Step "  Dynamo settings warmed: $($Report.dynamoSettingsAppearsWarmed) ($($Report.dynamoSettingsWarmedReason))"
+    if ([bool] $Report.manualWarmupRequired) {
+        Write-Step "  Manual warm-up required: true ($($Report.blockingReason))"
+        Write-Step "  Next action: $($Report.manualNextAction)"
+    }
     Write-Step "  Graph path: $($Report.graphPath)"
     Write-Step "  Install root: $($Report.installRoot)"
     Write-Step "  Evidence path: $($Report.evidencePath)"
@@ -619,11 +638,21 @@ if ($PreflightOnly) {
         preflight = $preflight
     }
 
+    $preflightBlocker = ""
+    if ($RequireWarmedDynamo -and [bool] $preflight.dynamoSettingsAppearsWarmed -ne $true) {
+        $preflightBlocker = "Dynamo preflight requires an existing parseable DynamoSettings.xml but reported '$($preflight.dynamoSettingsWarmedReason)' at '$($preflight.dynamoSettingsPath)'. Open Dynamo for Revit once in this test profile, answer prompts manually, close Revit, then rerun."
+    } elseif ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal -and [bool] $preflight.dynamoSettingsAppearsWarmed -ne $true) {
+        $preflightBlocker = "Dynamo journal preflight requires an existing parseable DynamoSettings.xml but reported '$($preflight.dynamoSettingsWarmedReason)' at '$($preflight.dynamoSettingsPath)'. Open Dynamo for Revit once in this test profile, answer prompts manually, close Revit, then rerun."
+    }
+
     if ($Json) {
         $result | ConvertTo-Json -Depth 12
     } else {
         Write-DynamoPreflight $preflight
         Write-Step "Dynamo preflight report: $preflightReportFull"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($preflightBlocker)) {
+        throw $preflightBlocker
     }
     return
 }

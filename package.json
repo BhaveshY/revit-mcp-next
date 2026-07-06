@@ -41,6 +41,7 @@
     "dev-cert:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-dev-signing-certificate.ps1",
     "revit:trust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-revit-addin-trust.ps1",
     "pyrevit:hosts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-pyrevit-hosts-cache.ps1",
+    "dynamo:warmup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-dynamo-profile.ps1",
     "mcp:config": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/print-mcp-config.ps1",
     "doctor:clients": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor-clients.ps1",
     "revitctl": "node broker/dist/src/cli/revitctl.js"

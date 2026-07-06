@@ -112,7 +112,7 @@ Create a staged Windows release package:
 npm run package:windows
 ```
 
-The package lands in `artifacts\release`, includes `release-manifest.json` plus `CHECKSUMS.sha256`, and can be installed from the unpacked package by running `installer\install-windows.ps1`. See [release-packaging.md](docs/release-packaging.md).
+The package lands in `artifacts\release`, includes `release-manifest.json`, `CHECKSUMS.sha256`, and `SHARING-NOTICE.md`, and can be installed from the unpacked package by running `installer\install-windows.ps1`. See [release-packaging.md](docs/release-packaging.md).
 
 Collect a redacted support bundle:
 
@@ -183,6 +183,12 @@ npm run smoke:pyrevit-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -
 
 Dynamo evidence must come from Dynamo running inside Revit, not from headless `DynamoCLI.exe`, because headless CLI runs do not provide RevitServices. The helper below launches Revit with the required environment variables, waits while you open and run the packaged graph in Dynamo for Revit, then validates `dynamo.json`:
 
+If the Dynamo profile has not been opened before, run the warm-up helper first. It writes a preflight report and next-step command, can launch Revit for the manual first-run step, and never clicks prompts or changes privacy settings:
+
+```powershell
+npm run dynamo:warmup -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\dynamo-warmup -LaunchRevit
+```
+
 ```powershell
 npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit
 ```
@@ -193,6 +199,7 @@ For unattended CI or release-candidate runs, first require a warmed Dynamo profi
 
 ```powershell
 npm run smoke:dynamo-host -- -RevitYear 2024 -EvidencePath artifacts\host-integrations\raw\dynamo.json -PreflightOnly
+npm run smoke:dynamo-host -- -RevitYear 2024 -EvidencePath artifacts\host-integrations\raw\dynamo.json -PreflightOnly -RequireWarmedDynamo
 npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit -UseDynamoJournal -RequireWarmedDynamo
 ```
 

@@ -678,6 +678,7 @@ try {
     Assert-FileExists "$($evidenceRoot.FullName).zip" "release evidence zip"
     Assert-FileExists (Join-Path $evidenceRoot.FullName "package\release-manifest.json") "copied package release manifest"
     Assert-FileExists (Join-Path $evidenceRoot.FullName "package\CHECKSUMS.sha256") "copied package checksums"
+    Assert-FileExists (Join-Path $evidenceRoot.FullName "package\SHARING-NOTICE.md") "copied package sharing notice"
     Assert-FileExists (Join-Path $evidenceRoot.FullName "package\package-zip.sha256") "package zip checksum"
 
     $evidenceManifest = Read-JsonFile (Join-Path $evidenceRoot.FullName "release-evidence-manifest.json")
@@ -692,6 +693,9 @@ try {
     }
     if ($evidenceManifest.package.evidence.packageZipName -notlike "*.zip") {
         throw "Package zip metadata did not point at a .zip file."
+    }
+    if ([string]::IsNullOrWhiteSpace([string] $evidenceManifest.package.sharing.shareProfile) -or [string]::IsNullOrWhiteSpace([string] $evidenceManifest.package.sharing.signingMode)) {
+        throw "Release evidence did not preserve package sharing metadata."
     }
     if ($evidenceManifest.package.evidence.sourcePathRedacted -ne $true -or [string] $evidenceManifest.package.evidence.packageRoot -ne "<redacted-local-path>") {
         throw "Package evidence did not redact local package paths."
@@ -805,6 +809,7 @@ try {
 
     Assert-InventoryContains $evidenceManifest.contents "package/release-manifest.json"
     Assert-InventoryContains $evidenceManifest.contents "package/CHECKSUMS.sha256"
+    Assert-InventoryContains $evidenceManifest.contents "package/SHARING-NOTICE.md"
     Assert-InventoryContains $evidenceManifest.contents "package/package-zip.sha256"
     Assert-InventoryContains $evidenceManifest.contents "host-integrations/host-integrations-summary.json"
     Assert-InventoryContains $evidenceManifest.contents "host-integrations/pyrevit.json"
