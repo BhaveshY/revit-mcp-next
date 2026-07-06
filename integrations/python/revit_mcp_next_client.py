@@ -116,6 +116,72 @@ class RevitMcpClient(object):
     def status(self):
         return self.call_tool("revit.status", {})
 
+    def read_bundle(self, arguments=None):
+        return self.call_tool("revit.read_bundle", arguments or {})
+
+    def list_documents(self, arguments=None):
+        return self.call_tool("revit.list_documents", arguments or {})
+
+    def get_levels(self, arguments=None):
+        return self.call_tool("revit.get_levels", arguments or {})
+
+    def get_views(self, arguments=None):
+        return self.call_tool("revit.get_views", arguments or {})
+
+    def get_sheets(self, arguments=None):
+        return self.call_tool("revit.get_sheets", arguments or {})
+
+    def get_current_view(self, arguments=None):
+        return self.call_tool("revit.get_current_view", arguments or {})
+
+    def get_current_view_elements(self, arguments=None):
+        return self.call_tool("revit.get_current_view_elements", arguments or {})
+
+    def get_selection(self, arguments=None):
+        return self.call_tool("revit.get_selection", arguments or {})
+
+    def analyze_model(self, arguments=None):
+        return self.call_tool("revit.analyze_model", arguments or {})
+
+    def get_model_readiness(self, arguments=None):
+        return self.call_tool("revit.get_model_readiness", arguments or {})
+
+    def get_model_context(self, arguments=None):
+        return self.call_tool("revit.get_model_context", arguments or {})
+
+    def get_material_quantities(self, arguments=None):
+        return self.call_tool("revit.get_material_quantities", arguments or {})
+
+    def get_warnings(self, arguments=None):
+        return self.call_tool("revit.get_warnings", arguments or {})
+
+    def get_rooms(self, arguments=None):
+        return self.call_tool("revit.get_rooms", arguments or {})
+
+    def query(self, arguments=None):
+        return self.call_tool("revit.query", arguments or {})
+
+    def describe_parameters(self, arguments=None):
+        return self.call_tool("revit.describe_parameters", arguments or {})
+
+    def catalog(self, arguments=None):
+        return self.call_tool("revit.catalog", arguments or {})
+
+    def preview_change_set(self, change_set):
+        return self.call_tool("revit.preview_change_set", change_set or {})
+
+    def apply_change_set(self, change_set):
+        return self.call_tool("revit.apply_change_set", change_set or {})
+
+    def apply_preview(self, change_set, preview):
+        apply_payload = dict(change_set or {})
+        apply_payload["previewId"] = preview.get("previewId")
+        apply_payload["confirm"] = True
+        for key in ("changeSetHash", "baseGeneration", "expiresAt"):
+            if preview.get(key) is not None:
+                apply_payload[key] = preview.get(key)
+        return self.apply_change_set(apply_payload)
+
     def request(self, method, params=None):
         self._ensure_running()
         request_id = self._next_id

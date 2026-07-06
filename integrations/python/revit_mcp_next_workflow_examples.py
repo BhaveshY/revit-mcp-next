@@ -4,7 +4,16 @@ import datetime
 import os
 import traceback
 
-from revit_mcp_next_inprocess import apply_preview, execute_operation, preview_change_set, status
+from revit_mcp_next_inprocess import (
+    apply_preview,
+    catalog,
+    get_current_view_elements,
+    get_levels,
+    get_rooms,
+    preview_change_set,
+    query,
+    status,
+)
 
 
 def utc_stamp():
@@ -77,9 +86,9 @@ def format_blocked_preview(preview):
     return "\n".join(messages) or "Preview was not ready."
 
 
-def safe_execute(evidence, bucket, key, uiapp, operation, payload, addin_path=None):
+def safe_read(evidence, bucket, key, uiapp, reader, payload, addin_path=None):
     try:
-        result = execute_operation(uiapp, operation, payload=payload, addin_path=addin_path)
+        result = reader(uiapp, payload, addin_path=addin_path)
         evidence[bucket][key] = {"ok": True, "result": result}
         return result
     except Exception as error:
@@ -184,23 +193,23 @@ def run_workflow_examples(uiapp, apply_writes=False, apply_placement=False, addi
         }
         return evidence
 
-    levels = safe_execute(
+    levels = safe_read(
         evidence,
         "reads",
         "levels",
         uiapp,
-        "get_levels",
+        get_levels,
         active_document_guard(active_document),
         addin_path=addin_path,
     )
     level = first_item(levels)
 
-    safe_execute(
+    safe_read(
         evidence,
         "reads",
         "currentViewElements",
         uiapp,
-        "get_current_view_elements",
+        get_current_view_elements,
         active_document_guard(
             active_document,
             {
@@ -213,12 +222,12 @@ def run_workflow_examples(uiapp, apply_writes=False, apply_placement=False, addi
         addin_path=addin_path,
     )
 
-    rooms = safe_execute(
+    rooms = safe_read(
         evidence,
         "reads",
         "rooms",
         uiapp,
-        "get_rooms",
+        get_rooms,
         active_document_guard(
             active_document,
             {
@@ -232,12 +241,12 @@ def run_workflow_examples(uiapp, apply_writes=False, apply_placement=False, addi
         addin_path=addin_path,
     )
 
-    wall_types = safe_execute(
+    wall_types = safe_read(
         evidence,
         "reads",
         "wallTypeCatalog",
         uiapp,
-        "catalog",
+        catalog,
         active_document_guard(
             active_document,
             {
@@ -252,12 +261,12 @@ def run_workflow_examples(uiapp, apply_writes=False, apply_placement=False, addi
     )
     wall_type = first_item(wall_types)
 
-    floor_types = safe_execute(
+    floor_types = safe_read(
         evidence,
         "reads",
         "floorTypeCatalog",
         uiapp,
-        "catalog",
+        catalog,
         active_document_guard(
             active_document,
             {
@@ -272,12 +281,12 @@ def run_workflow_examples(uiapp, apply_writes=False, apply_placement=False, addi
     )
     floor_type = first_item(floor_types)
 
-    family_symbols = safe_execute(
+    family_symbols = safe_read(
         evidence,
         "reads",
         "familySymbolCatalog",
         uiapp,
-        "catalog",
+        catalog,
         active_document_guard(
             active_document,
             {
@@ -292,12 +301,12 @@ def run_workflow_examples(uiapp, apply_writes=False, apply_placement=False, addi
     )
     family_symbol = choose_family_symbol(family_symbols)
 
-    walls = safe_execute(
+    walls = safe_read(
         evidence,
         "reads",
         "wallHostQuery",
         uiapp,
-        "query",
+        query,
         active_document_guard(
             active_document,
             {

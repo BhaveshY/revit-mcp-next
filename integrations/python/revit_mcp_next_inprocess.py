@@ -11,6 +11,8 @@ except NameError:
 
 
 BRIDGE_PROTOCOL_VERSION = "2026-06-23"
+DEFAULT_READ_TIMEOUT_MS = 30000
+DEFAULT_WRITE_TIMEOUT_MS = 60000
 
 
 def _candidate_install_roots():
@@ -132,7 +134,7 @@ def require_ok(response, operation):
     raise RuntimeError(code + ": " + message)
 
 
-def execute_operation(uiapp, operation, payload=None, operation_kind="read", document_fingerprint=None, expected_generation=None, timeout_ms=30000, addin_path=None):
+def execute_operation(uiapp, operation, payload=None, operation_kind="read", document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
     request = make_request(
         operation,
         payload=payload,
@@ -144,7 +146,251 @@ def execute_operation(uiapp, operation, payload=None, operation_kind="read", doc
     return require_ok(execute(uiapp, request, addin_path=addin_path), operation)
 
 
-def preview_change_set(uiapp, change_set, document_fingerprint=None, expected_generation=None, addin_path=None):
+def _payload_with(payload=None, values=None):
+    result = dict(payload or {})
+    for key, value in (values or {}).items():
+        if value is not None:
+            result[key] = value
+    return result
+
+
+def execute_read(uiapp, operation, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_operation(
+        uiapp,
+        operation,
+        payload=payload,
+        operation_kind="read",
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def list_documents(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "list_documents",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_levels(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_levels",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_views(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_views",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_sheets(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_sheets",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_current_view(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_current_view",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_current_view_elements(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_current_view_elements",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_selection(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_selection",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def analyze_model(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "analyze_model",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_model_readiness(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_model_readiness",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_model_context(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_model_context",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_material_quantities(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_material_quantities",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_warnings(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_warnings",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_rooms(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_rooms",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def query(uiapp, payload=None, query_filter=None, fields=None, preset=None, limit=None, cursor=None, include_total_count=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "query",
+        payload=_payload_with(
+            payload,
+            {
+                "filter": query_filter,
+                "fields": fields,
+                "preset": preset,
+                "limit": limit,
+                "cursor": cursor,
+                "includeTotalCount": include_total_count,
+            },
+        ),
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def describe_parameters(uiapp, payload=None, parameter_filter=None, fields=None, preset=None, limit=None, cursor=None, include_total_count=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "describe_parameters",
+        payload=_payload_with(
+            payload,
+            {
+                "filter": parameter_filter,
+                "fields": fields,
+                "preset": preset,
+                "limit": limit,
+                "cursor": cursor,
+                "includeTotalCount": include_total_count,
+            },
+        ),
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def catalog(uiapp, kind=None, payload=None, catalog_filter=None, fields=None, preset=None, limit=None, cursor=None, include_total_count=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "catalog",
+        payload=_payload_with(
+            payload,
+            {
+                "kind": kind,
+                "filter": catalog_filter,
+                "fields": fields,
+                "preset": preset,
+                "limit": limit,
+                "cursor": cursor,
+                "includeTotalCount": include_total_count,
+            },
+        ),
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def preview_change_set(uiapp, change_set, document_fingerprint=None, expected_generation=None, addin_path=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS):
     return execute_operation(
         uiapp,
         "preview_change_set",
@@ -152,12 +398,12 @@ def preview_change_set(uiapp, change_set, document_fingerprint=None, expected_ge
         operation_kind="preview",
         document_fingerprint=document_fingerprint,
         expected_generation=expected_generation,
-        timeout_ms=30000,
+        timeout_ms=timeout_ms,
         addin_path=addin_path,
     )
 
 
-def apply_change_set(uiapp, change_set, document_fingerprint=None, expected_generation=None, addin_path=None):
+def apply_change_set(uiapp, change_set, document_fingerprint=None, expected_generation=None, addin_path=None, timeout_ms=DEFAULT_WRITE_TIMEOUT_MS):
     return execute_operation(
         uiapp,
         "apply_change_set",
@@ -165,16 +411,23 @@ def apply_change_set(uiapp, change_set, document_fingerprint=None, expected_gene
         operation_kind="write",
         document_fingerprint=document_fingerprint,
         expected_generation=expected_generation,
-        timeout_ms=60000,
+        timeout_ms=timeout_ms,
         addin_path=addin_path,
     )
 
 
-def apply_preview(uiapp, change_set, preview, addin_path=None):
+def apply_preview(uiapp, change_set, preview, addin_path=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_WRITE_TIMEOUT_MS):
     apply_payload = dict(change_set)
     apply_payload["previewId"] = preview.get("previewId")
     apply_payload["confirm"] = True
     for key in ("changeSetHash", "baseGeneration", "expiresAt"):
         if preview.get(key) is not None:
             apply_payload[key] = preview.get(key)
-    return apply_change_set(uiapp, apply_payload, addin_path=addin_path)
+    return apply_change_set(
+        uiapp,
+        apply_payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        addin_path=addin_path,
+        timeout_ms=timeout_ms,
+    )

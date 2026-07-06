@@ -30,6 +30,11 @@ Common installed helper path:
 %LOCALAPPDATA%\RevitMcpNext\integrations\python\revit_mcp_next_inprocess.py
 ```
 
+The shared in-process helper exposes direct read wrappers such as `get_levels`,
+`get_current_view_elements`, `get_rooms`, `query`, `catalog`, and
+`describe_parameters`, plus guarded `preview_change_set`, `apply_change_set`,
+and `apply_preview` helpers for writes.
+
 Included commands:
 
 - `Diagnostics.panel\Status.pushbutton`: calls `status` through the in-process bridge.

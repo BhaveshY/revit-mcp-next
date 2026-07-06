@@ -165,7 +165,7 @@ MCP clients can also read `revit://discovery` for compact workflow guidance and 
 
 ## pyRevit, Dynamo, And Python
 
-pyRevit and Dynamo run inside Revit, so their examples use `integrations/python/revit_mcp_next_inprocess.py`. That helper calls the add-in's in-process bridge and avoids blocking Revit while waiting for an `ExternalEvent`. It exposes `status`, `execute_operation`, `preview_change_set`, `apply_change_set`, and `apply_preview` for compact hosted scripts.
+pyRevit and Dynamo run inside Revit, so their examples use `integrations/python/revit_mcp_next_inprocess.py`. That helper calls the add-in's in-process bridge and avoids blocking Revit while waiting for an `ExternalEvent`. It exposes `status`, typed read helpers such as `get_levels`, `get_current_view_elements`, `get_rooms`, `query`, `catalog`, and `describe_parameters`, plus `execute_operation`, `preview_change_set`, `apply_change_set`, and `apply_preview` for compact hosted scripts. Plain Python outside Revit can use matching convenience methods on `RevitMcpClient`.
 
 Plain Python processes outside Revit can use `integrations/python/revit_mcp_next_client.py`. It starts the installed MCP launcher and calls normal MCP tools over stdio.
 
