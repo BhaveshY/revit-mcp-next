@@ -67,6 +67,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.analyze_model",
       "revit.get_model_readiness",
       "revit.get_material_quantities",
+      "revit.get_warnings",
       "revit.get_rooms",
       "revit.catalog",
       "revit.query",
@@ -209,6 +210,42 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(materialQuantities.structuredContent?.data?.units?.area, "m2");
     assert.equal(materialQuantities.structuredContent?.data?.units?.volume, "m3");
     assert.equal(materialQuantities.structuredContent?.data?.items?.[0]?.materialId, "7001");
+
+    const warningsTool = tools.tools.find((tool) => tool.name === "revit.get_warnings");
+    assert.ok(warningsTool?.inputSchema, "revit.get_warnings should declare inputSchema");
+    assert.equal(warningsTool.annotations?.readOnlyHint, true);
+    const warningsInputSchema = JSON.stringify(warningsTool.inputSchema);
+    assert.match(warningsInputSchema, /descriptionContains/);
+    assert.match(warningsInputSchema, /elements/);
+    assert.match(warningsInputSchema, /full/);
+    const warningsOutputSchema = JSON.stringify(warningsTool.outputSchema);
+    assert.match(warningsOutputSchema, /returnedCount/);
+    assert.match(warningsOutputSchema, /truncated/);
+    assert.match(warningsOutputSchema, /failingElementIds/);
+    const warnings = (await client.callTool({
+      name: "revit.get_warnings",
+      arguments: {
+        filter: { elementIds: ["501"] },
+        preset: "elements",
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          returnedCount?: number;
+          totalCount?: number;
+          items?: Array<{ severity?: string; description?: string; failingElementIds?: string[]; failingElementCount?: number }>;
+        };
+      };
+    };
+    assert.equal(warnings.isError, undefined);
+    assert.equal(warnings.structuredContent?.data?.returnedCount, 1);
+    assert.equal(warnings.structuredContent?.data?.totalCount, 1);
+    assert.equal(warnings.structuredContent?.data?.items?.[0]?.severity, "Warning");
+    assert.match(warnings.structuredContent?.data?.items?.[0]?.description ?? "", /duplicate Mark/i);
+    assert.deepEqual(warnings.structuredContent?.data?.items?.[0]?.failingElementIds, ["501", "502"]);
+    assert.equal(warnings.structuredContent?.data?.items?.[0]?.failingElementCount, 2);
 
     const roomsTool = tools.tools.find((tool) => tool.name === "revit.get_rooms");
     assert.ok(roomsTool?.inputSchema, "revit.get_rooms should declare inputSchema");

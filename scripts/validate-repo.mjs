@@ -44,6 +44,7 @@ function validateAddinOperationKindGuard() {
     analyze_model: "read",
     get_model_readiness: "read",
     get_material_quantities: "read",
+    get_warnings: "read",
     get_rooms: "read",
     catalog: "read",
     query: "read",

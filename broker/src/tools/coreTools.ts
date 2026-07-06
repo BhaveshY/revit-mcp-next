@@ -259,6 +259,32 @@ const materialQuantitiesSchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const warningFilterSchema = z
+  .object({
+    elementIds: z.array(boundedId).max(256).optional().describe("Warnings whose failing or additional element IDs include any of these IDs."),
+    failureDefinitionIds: z.array(boundedString).max(64).optional().describe("Exact Revit failure definition GUID strings."),
+    severities: z.array(boundedString).max(8).optional().describe("Failure severities such as Warning."),
+    descriptionContains: z.string().min(1).max(256).optional().describe("Case-insensitive warning description substring."),
+  })
+  .strict();
+
+const warningsSchema = {
+  ...documentGuardSchema,
+  filter: warningFilterSchema.optional().describe("Optional warning filters. Use elementIds after a query/selection read to focus results."),
+  fields: z
+    .array(boundedString)
+    .max(32)
+    .optional()
+    .describe("Warning fields to return. Use explicit fields or preset=elements/full when element IDs or definitions are needed."),
+  preset: z
+    .enum(["idOnly", "summary", "elements", "full"])
+    .default("summary")
+    .describe("summary returns description/severity/counts; elements adds element IDs; full adds failure definition and default resolution."),
+  limit: z.number().int().min(1).max(200).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+};
+
 const roomFilterSchema = z
   .object({
     elementIds: z.array(boundedId).max(256).optional().describe("Explicit room element IDs."),
@@ -926,6 +952,30 @@ const materialQuantitiesResultSchema = pageBaseSchema
   })
   .passthrough();
 
+const warningItemSchema = z
+  .object({
+    id: z.string(),
+    severity: z.string().optional(),
+    description: z.string().optional(),
+    failureDefinitionId: z.string().optional(),
+    defaultResolution: z.string().optional(),
+    failingElementIds: z.array(z.string()).optional(),
+    additionalElementIds: z.array(z.string()).optional(),
+    failingElementCount: z.number().optional(),
+    additionalElementCount: z.number().optional(),
+    failingElementIdsTruncated: z.boolean().optional(),
+    additionalElementIdsTruncated: z.boolean().optional(),
+  })
+  .passthrough();
+
+const warningsResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(warningItemSchema),
+    fields: z.array(z.string()),
+  })
+  .passthrough();
+
 const roomSummarySchema = z
   .object({
     id: z.string(),
@@ -1031,6 +1081,7 @@ const outputSchemas = {
   modelStatistics: toolOutputSchema(modelStatisticsResultSchema),
   modelReadiness: toolOutputSchema(modelReadinessResultSchema),
   materialQuantities: toolOutputSchema(materialQuantitiesResultSchema),
+  warnings: toolOutputSchema(warningsResultSchema),
   rooms: toolOutputSchema(roomsResultSchema),
   catalog: toolOutputSchema(catalogResultSchema),
   query: toolOutputSchema(queryResultSchema),
@@ -1379,6 +1430,44 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         withOpaqueCursor(response, context, "get_material_quantities", basePayload),
         (result) =>
           `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} material quantity row(s) returned from ${result.scope}.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_warnings",
+    {
+      title: "Get Revit Warnings",
+      description:
+        "Return compact, paginated Revit model warnings with descriptions, severities, counts, optional element IDs, and failure definition IDs.",
+      inputSchema: warningsSchema,
+      outputSchema: outputSchemas.warnings,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const basePayload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        fields: args.fields,
+        preset: args.preset ?? "summary",
+        limit: args.limit ?? 50,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const page = preparePagedPayload(context, "get_warnings", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
+      const request = makeRequest(context.sessionId, "get_warnings", "read", payload, 30000);
+      const response = await context.bridge.getWarnings(request, { signal: extra.signal });
+      return asToolResult(
+        withOpaqueCursor(response, context, "get_warnings", basePayload),
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} Revit warning(s) returned.`
       );
     }
   );

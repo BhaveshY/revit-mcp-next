@@ -22,6 +22,7 @@ const REQUIRED_TOOLS = [
   "revit.analyze_model",
   "revit.get_model_readiness",
   "revit.get_material_quantities",
+  "revit.get_warnings",
   "revit.get_rooms",
   "revit.catalog",
   "revit.query",
@@ -282,6 +283,20 @@ async function main() {
     assert(materialQuantities.returnedCount === materialQuantities.items.length, "revit.get_material_quantities returnedCount did not match items length.");
     assert(materialQuantities.units?.area === "m2" && materialQuantities.units?.volume === "m3", "revit.get_material_quantities did not return normalized units.");
     console.log(`Material quantities OK: ${materialQuantities.returnedCount} material row(s)`);
+
+    const modelWarnings = await callRequiredTool(client, "revit.get_warnings", {
+      ...documentGuard,
+      preset: "summary",
+      limit: 5,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(modelWarnings.items), "revit.get_warnings did not return an items array.");
+    assert(modelWarnings.returnedCount === modelWarnings.items.length, "revit.get_warnings returnedCount did not match items length.");
+    assert(Array.isArray(modelWarnings.fields), "revit.get_warnings did not return a field projection.");
+    assert(modelWarnings.fields.includes("description"), "revit.get_warnings summary projection did not include description.");
+    console.log(
+      `Model warnings OK: ${modelWarnings.returnedCount}${modelWarnings.totalCount === undefined ? "" : ` of ${modelWarnings.totalCount}`} warning row(s)`
+    );
 
     const levels = await callRequiredTool(client, "revit.get_levels", { documentFingerprint });
     assert(Array.isArray(levels), "revit.get_levels returned an unexpected result shape.");

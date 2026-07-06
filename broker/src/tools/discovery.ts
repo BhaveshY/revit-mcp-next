@@ -156,6 +156,18 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     related: ["revit.query"],
   },
   {
+    name: "revit.get_warnings",
+    title: "Get Revit Warnings",
+    category: "analysis",
+    description: "Return compact paginated model warnings with descriptions, severities, counts, and optional element IDs.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use for model health audits, cleanup planning, and before risky write workflows.",
+    compactUse: "Start with preset=summary and low limits; use preset=elements only when element IDs are needed for follow-up revit.query calls.",
+    related: ["revit.query", "revit.analyze_model", "revit.get_model_readiness"],
+  },
+  {
     name: "revit.get_rooms",
     title: "Get Revit Rooms",
     category: "read",
@@ -427,7 +439,7 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
     async ({ workflow }) => {
       const workflows: Record<typeof workflow, string> = {
         audit:
-          "Audit workflow: call revit.status, revit.get_model_readiness with focused scenarios, revit.analyze_model with bounded bucketLimit, then revit.query with explicit fields for any category or class that needs detail. Use preset=geometrySummary for element location/bounds checks and consume data.units.location/bounds, currently mm.",
+          "Audit workflow: call revit.status, revit.get_model_readiness with focused scenarios, revit.analyze_model with bounded bucketLimit, revit.get_warnings with preset=summary for model health, then revit.query with explicit fields for any category or class that needs detail. Use preset=geometrySummary for element location/bounds checks and consume data.units.location/bounds, currently mm.",
         "selection-update":
           "Selection update workflow: call revit.status, revit.get_selection with preset=summary, revit.describe_parameters with preset=writableEdit for target IDs, preview set_parameter/change_element_type, then apply only the matching ready preview.",
         "sheet-planning":

@@ -23,6 +23,10 @@ test("revitctl parses compact command payloads and auth token config", () => {
   assert.equal(query.timeoutMs, 1234);
   assert.deepEqual(query.payload, { filter: { classes: ["Wall"] }, limit: 2 });
 
+  const warnings = parseArgs(["warnings", "--payload", '{"preset":"elements","limit":5}']);
+  assert.equal(warnings.command, "warnings");
+  assert.deepEqual(warnings.payload, { preset: "elements", limit: 5 });
+
   const call = parseArgs(["call", "get_rooms", "--payload", '{"preset":"schedule"}']);
   assert.equal(call.command, "call");
   assert.equal(call.operation, "get_rooms");
@@ -57,6 +61,21 @@ test("revitctl calls the named pipe bridge with auth from config", async () => {
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("revitctl routes warnings command as a read operation", async () => {
+  await withPipeServer(
+    (request) => {
+      assert.equal(request.operation, "get_warnings");
+      assert.equal(request.operationKind, "read");
+      assert.deepEqual(request.payload, { preset: "summary", limit: 3 });
+    },
+    async (pipeName) => {
+      const result = await runRevitCtl(parseArgs(["warnings", "--payload", '{"preset":"summary","limit":3}', "--pipe", pipeName]));
+      assert.equal(result.exitCode, 0);
+      assert.equal((result.body as { ok?: boolean }).ok, true);
+    }
+  );
 });
 
 test("revitctl routes write-control commands through guarded bridge operations", async () => {

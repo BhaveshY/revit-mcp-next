@@ -242,6 +242,33 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   assert.equal(materials.data.units.area, "m2");
   assert.equal(materials.data.units.volume, "m3");
 
+  const warnings = await bridge.getWarnings(
+    makeRequest(
+      "test",
+      "get_warnings",
+      "read",
+      { filter: { elementIds: ["501"] }, preset: "elements", limit: 1, includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(warnings.ok, true);
+  if (!warnings.ok) return;
+  assert.equal(warnings.data.returnedCount, 1);
+  assert.equal(warnings.data.totalCount, 1);
+  assert.deepEqual(warnings.data.fields, [
+    "id",
+    "severity",
+    "description",
+    "failingElementIds",
+    "additionalElementIds",
+    "failingElementCount",
+    "additionalElementCount",
+  ]);
+  assert.equal(warnings.data.items[0]?.severity, "Warning");
+  assert.match(warnings.data.items[0]?.description ?? "", /duplicate Mark/i);
+  assert.deepEqual(warnings.data.items[0]?.failingElementIds, ["501", "502"]);
+  assert.equal(warnings.data.items[0]?.failingElementCount, 2);
+
   const rooms = await bridge.getRooms(
     makeRequest(
       "test",

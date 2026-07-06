@@ -612,6 +612,7 @@ $clientDiscoveryContent = [ordered] @{
         "revit.analyze_model",
         "revit.get_model_readiness",
         "revit.get_material_quantities",
+        "revit.get_warnings",
         "revit.get_rooms",
         "revit.catalog",
         "revit.query",

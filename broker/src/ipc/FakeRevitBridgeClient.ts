@@ -40,6 +40,9 @@ import type {
   SheetsResult,
   ViewsRequest,
   ViewsResult,
+  WarningItem,
+  WarningsRequest,
+  WarningsResult,
 } from "@revit-mcp-next/contracts";
 import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
@@ -141,6 +144,7 @@ const capabilities = [
   "revit.analyze_model",
   "revit.get_model_readiness",
   "revit.get_material_quantities",
+  "revit.get_warnings",
   "revit.get_rooms",
   "revit.catalog",
   "revit.query",
@@ -193,6 +197,31 @@ const fakeQueryItems: QueryItem[] = [
     name: "Single-Flush",
     typeId: "9200",
     levelId: "311",
+  },
+];
+
+const fakeWarnings: WarningItem[] = [
+  {
+    id: "warning-duplicate-mark-501",
+    severity: "Warning",
+    description: "Elements have duplicate Mark values.",
+    failureDefinitionId: "6b45b815-19dd-4a7e-8f5b-51f6f4be7f01",
+    defaultResolution: "Edit one of the duplicate Mark values.",
+    failingElementIds: ["501", "502"],
+    additionalElementIds: [],
+    failingElementCount: 2,
+    additionalElementCount: 0,
+  },
+  {
+    id: "warning-room-not-enclosed-601",
+    severity: "Warning",
+    description: "Room is not in a properly enclosed region.",
+    failureDefinitionId: "2f88f84c-f1a9-4e14-995e-8c8a5721fd4b",
+    defaultResolution: "Adjust room-bounding elements or room placement.",
+    failingElementIds: ["601"],
+    additionalElementIds: ["311"],
+    failingElementCount: 1,
+    additionalElementCount: 1,
   },
 ];
 
@@ -597,6 +626,33 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       cursor: truncated ? String(offset + page.length) : undefined,
       truncated,
       units: { area: "m2", volume: "m3" },
+      source: "fake-bridge",
+    });
+  }
+
+  async getWarnings(
+    request: BridgeRequest<WarningsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<WarningsResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 200);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    const fields = request.payload.fields ?? warningFieldsForPreset(request.payload.preset);
+    const filteredItems = fakeWarnings.filter((warning) => matchesWarningFilter(warning, filter));
+    const page = filteredItems.slice(offset, offset + limit).map((warning) => projectWarning(warning, fields));
+    const truncated = offset + page.length < filteredItems.length;
+
+    return ok(request, {
+      document: documentReference(),
+      items: page,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? filteredItems.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      fields,
+      scope: "warnings",
       source: "fake-bridge",
     });
   }
@@ -1075,6 +1131,59 @@ function roomFieldsForPreset(preset?: string): string[] {
     default:
       return ["id", "uniqueId", "number", "name", "levelId", "area"];
   }
+}
+
+function warningFieldsForPreset(preset?: string): string[] {
+  switch (preset) {
+    case "idOnly":
+      return ["id"];
+    case "elements":
+      return ["id", "severity", "description", "failingElementIds", "additionalElementIds", "failingElementCount", "additionalElementCount"];
+    case "full":
+      return [
+        "id",
+        "severity",
+        "description",
+        "failureDefinitionId",
+        "defaultResolution",
+        "failingElementIds",
+        "additionalElementIds",
+        "failingElementCount",
+        "additionalElementCount",
+      ];
+    default:
+      return ["id", "severity", "description", "failingElementCount", "additionalElementCount"];
+  }
+}
+
+function matchesWarningFilter(warning: WarningItem, filter: WarningsRequest["filter"]): boolean {
+  if (!filter) return true;
+  if (filter.elementIds?.length) {
+    const ids = new Set([...(warning.failingElementIds ?? []), ...(warning.additionalElementIds ?? [])]);
+    if (!filter.elementIds.some((id) => ids.has(id))) return false;
+  }
+  if (filter.failureDefinitionIds?.length && (!warning.failureDefinitionId || !filter.failureDefinitionIds.includes(warning.failureDefinitionId))) {
+    return false;
+  }
+  if (filter.severities?.length && (!warning.severity || !filter.severities.some((severity) => equalsCatalogToken(severity, warning.severity)))) {
+    return false;
+  }
+  if (filter.descriptionContains && !containsIgnoreCase(warning.description ?? "", filter.descriptionContains)) {
+    return false;
+  }
+  return true;
+}
+
+function projectWarning(warning: WarningItem, fields: string[]): WarningItem {
+  const projected: WarningItem = { id: warning.id };
+  for (const field of fields) {
+    if (field === "id") continue;
+    const value = (warning as unknown as Record<string, unknown>)[field];
+    if (value !== undefined) {
+      (projected as unknown as Record<string, unknown>)[field] = value;
+    }
+  }
+  return projected;
 }
 
 function matchesRoomFilter(room: RoomSummary, filter: RoomsRequest["filter"], includeUnplaced: boolean): boolean {

@@ -32,6 +32,8 @@ import type {
   SheetsResult,
   ViewsRequest,
   ViewsResult,
+  WarningsRequest,
+  WarningsResult,
 } from "@revit-mcp-next/contracts";
 
 export interface RevitBridgeClient {
@@ -79,6 +81,10 @@ export interface RevitBridgeClient {
     request: BridgeRequest<MaterialQuantitiesRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<MaterialQuantitiesResult>>;
+  getWarnings(
+    request: BridgeRequest<WarningsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<WarningsResult>>;
   getRooms(
     request: BridgeRequest<RoomsRequest>,
     options?: BridgeCallOptions

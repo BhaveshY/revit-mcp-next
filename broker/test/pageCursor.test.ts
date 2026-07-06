@@ -10,6 +10,7 @@ const cursorOperations = [
   "get_current_view_elements",
   "get_selection",
   "get_material_quantities",
+  "get_warnings",
   "get_rooms",
   "catalog",
   "query",

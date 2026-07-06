@@ -33,6 +33,8 @@ import type {
   SheetsResult,
   ViewsRequest,
   ViewsResult,
+  WarningsRequest,
+  WarningsResult,
 } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
 
@@ -128,6 +130,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<MaterialQuantitiesRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<MaterialQuantitiesResult>> {
+    return this.send(request, options);
+  }
+
+  getWarnings(
+    request: BridgeRequest<WarningsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<WarningsResult>> {
     return this.send(request, options);
   }
 

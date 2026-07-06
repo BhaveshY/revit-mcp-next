@@ -514,6 +514,53 @@ export interface MaterialQuantitiesResult {
   source: string;
 }
 
+export type WarningPreset = "idOnly" | "summary" | "elements" | "full";
+
+export interface WarningFilter {
+  elementIds?: ElementId[];
+  failureDefinitionIds?: string[];
+  severities?: string[];
+  descriptionContains?: string;
+}
+
+export interface WarningsRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: WarningFilter;
+  fields?: string[];
+  preset?: WarningPreset;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+}
+
+export interface WarningItem {
+  id: string;
+  severity?: string;
+  description?: string;
+  failureDefinitionId?: string;
+  defaultResolution?: string;
+  failingElementIds?: ElementId[];
+  additionalElementIds?: ElementId[];
+  failingElementCount?: number;
+  additionalElementCount?: number;
+  failingElementIdsTruncated?: boolean;
+  additionalElementIdsTruncated?: boolean;
+}
+
+export interface WarningsResult {
+  document: DocumentReference;
+  items: WarningItem[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  fields: string[];
+  scope: string;
+  source: string;
+}
+
 export type RoomPreset = "idOnly" | "summary" | "schedule";
 
 export interface RoomFilter {
