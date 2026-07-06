@@ -891,6 +891,45 @@ const statusDataSchema = z
     protocolVersion: z.string().optional(),
     activeDocument: documentSummarySchema.optional(),
     selection: z.object({ count: z.number() }).passthrough().optional(),
+    diagnostics: z
+      .object({
+        queue: z
+          .object({
+            pendingCount: z.number(),
+            hasPending: z.boolean(),
+            enqueuedCount: z.number(),
+            dequeuedCount: z.number(),
+            cancelledCount: z.number(),
+            raiseCount: z.number(),
+            raiseNotAcceptedCount: z.number(),
+            lastRaiseResult: z.string().optional(),
+            externalEventAttached: z.boolean().optional(),
+            lastEnqueuedAtUtc: z.string().optional(),
+            lastDequeuedAtUtc: z.string().optional(),
+            lastCancelledAtUtc: z.string().optional(),
+            lastRaiseAtUtc: z.string().optional(),
+            oldestPendingRequestId: z.string().optional(),
+            oldestPendingOperation: z.string().optional(),
+            oldestPendingAgeMs: z.number().optional(),
+          })
+          .passthrough()
+          .optional(),
+        previewTokens: z
+          .object({
+            activeCount: z.number(),
+            readyCount: z.number(),
+            blockedCount: z.number(),
+            capacity: z.number(),
+            ttlSeconds: z.number(),
+            nextExpiresAtUtc: z.string().optional(),
+            nextExpiresInMs: z.number().optional(),
+          })
+          .passthrough()
+          .optional(),
+        recovery: z.array(z.string()).optional(),
+      })
+      .passthrough()
+      .optional(),
     capabilities: z.array(z.string()).optional(),
     warnings: z.array(warningSchema).optional(),
   })
@@ -1199,7 +1238,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Revit Status",
       description:
-        "Check Revit bridge health, active document/view, versions, capabilities, and selection count. Start every Revit workflow here.",
+        "Check Revit bridge health, active document/view, versions, capabilities, selection count, queue diagnostics, and preview-token health. Start every Revit workflow here.",
       inputSchema: {},
       outputSchema: outputSchemas.status,
       annotations: {

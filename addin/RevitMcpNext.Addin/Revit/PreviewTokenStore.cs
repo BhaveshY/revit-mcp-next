@@ -194,6 +194,36 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        public Dictionary<string, object> GetDiagnosticsSnapshot()
+        {
+            lock (_gate)
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                RemoveExpiredUnsafe(now);
+
+                PreviewToken nextExpiry = _tokens.Values
+                    .OrderBy(token => token.ExpiresAtUtc)
+                    .FirstOrDefault();
+
+                var snapshot = new Dictionary<string, object>
+                {
+                    ["activeCount"] = _tokens.Count,
+                    ["readyCount"] = _tokens.Values.Count(token => token.Ready),
+                    ["blockedCount"] = _tokens.Values.Count(token => !token.Ready),
+                    ["capacity"] = MaxPreviewTokens,
+                    ["ttlSeconds"] = (int)Math.Round(_timeToLive.TotalSeconds)
+                };
+
+                if (nextExpiry != null)
+                {
+                    snapshot["nextExpiresAtUtc"] = nextExpiry.ExpiresAtUtc.ToUniversalTime().ToString("o");
+                    snapshot["nextExpiresInMs"] = Math.Max(0, (long)(nextExpiry.ExpiresAtUtc - now).TotalMilliseconds);
+                }
+
+                return snapshot;
+            }
+        }
+
         private void RemoveExpiredUnsafe(DateTimeOffset now)
         {
             foreach (string previewId in _tokens

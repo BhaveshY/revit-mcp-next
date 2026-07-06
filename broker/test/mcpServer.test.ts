@@ -40,6 +40,9 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.match(JSON.stringify(statusTool.outputSchema), /connected/);
     assert.match(JSON.stringify(statusTool.outputSchema), /addinAssembly/);
     assert.match(JSON.stringify(statusTool.outputSchema), /assemblySha256/);
+    assert.match(JSON.stringify(statusTool.outputSchema), /diagnostics/);
+    assert.match(JSON.stringify(statusTool.outputSchema), /pendingCount/);
+    assert.match(JSON.stringify(statusTool.outputSchema), /previewTokens/);
 
     const result = (await client.callTool({
       name: "revit.status",
@@ -47,7 +50,13 @@ test("broker exposes annotated tools with output schemas and callable structured
     })) as {
       isError?: boolean;
       content: Array<{ type: "text"; text: string }>;
-      structuredContent?: { data?: { connected?: boolean; addinAssembly?: { assemblySha256?: string } } };
+      structuredContent?: {
+        data?: {
+          connected?: boolean;
+          addinAssembly?: { assemblySha256?: string };
+          diagnostics?: { queue?: { pendingCount?: number }; previewTokens?: { activeCount?: number } };
+        };
+      };
     };
 
     assert.equal(result.isError, undefined);
@@ -55,6 +64,8 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.match(result.content[0].text, /Revit bridge connected/);
     assert.equal(result.structuredContent?.data?.connected, true);
     assert.match(result.structuredContent?.data?.addinAssembly?.assemblySha256 ?? "", /^[a-f0-9]{64}$/);
+    assert.equal(result.structuredContent?.data?.diagnostics?.queue?.pendingCount, 0);
+    assert.equal(result.structuredContent?.data?.diagnostics?.previewTokens?.activeCount, 0);
 
     for (const expected of [
       "revit.get_current_view",

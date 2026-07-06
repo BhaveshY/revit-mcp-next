@@ -503,6 +503,30 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       },
       activeDocument,
       selection: { count: 1 },
+      diagnostics: {
+        queue: {
+          pendingCount: 0,
+          hasPending: false,
+          enqueuedCount: 1,
+          dequeuedCount: 1,
+          cancelledCount: 0,
+          raiseCount: 0,
+          raiseNotAcceptedCount: 0,
+          lastRaiseResult: "fake",
+          externalEventAttached: true,
+        },
+        previewTokens: {
+          activeCount: 0,
+          readyCount: 0,
+          blockedCount: 0,
+          capacity: 128,
+          ttlSeconds: 600,
+        },
+        recovery: [
+          "If pendingCount stays above zero or lastRaiseResult is not Accepted/Pending, bring Revit forward and close modal dialogs.",
+          "Use revit.cancel_request with a queued requestId to cancel work that has not reached the Revit API yet.",
+        ],
+      },
       capabilities,
       warnings: [],
     });

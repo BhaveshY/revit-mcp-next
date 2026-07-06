@@ -154,6 +154,36 @@ export interface RevitStatus {
   selection?: {
     count: number;
   };
+  diagnostics?: {
+    queue?: {
+      pendingCount: number;
+      hasPending: boolean;
+      enqueuedCount: number;
+      dequeuedCount: number;
+      cancelledCount: number;
+      raiseCount: number;
+      raiseNotAcceptedCount: number;
+      lastRaiseResult?: string;
+      externalEventAttached?: boolean;
+      lastEnqueuedAtUtc?: string;
+      lastDequeuedAtUtc?: string;
+      lastCancelledAtUtc?: string;
+      lastRaiseAtUtc?: string;
+      oldestPendingRequestId?: string;
+      oldestPendingOperation?: string;
+      oldestPendingAgeMs?: number;
+    };
+    previewTokens?: {
+      activeCount: number;
+      readyCount: number;
+      blockedCount: number;
+      capacity: number;
+      ttlSeconds: number;
+      nextExpiresAtUtc?: string;
+      nextExpiresInMs?: number;
+    };
+    recovery?: string[];
+  };
   capabilities: string[];
   warnings: BridgeWarning[];
 }

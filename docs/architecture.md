@@ -24,6 +24,7 @@ The Revit add-in is loaded in-process by Revit. It owns:
 - One `ExternalEvent` dispatcher.
 - Revit API reads/writes.
 - Transaction and failure handling.
+- Queue, ExternalEvent, and preview-token diagnostics surfaced through `revit.status`.
 
 The add-in never writes to stdout and never opens modal dialogs for automation paths.
 
@@ -49,6 +50,7 @@ Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\Revi
 - Large current-contract results are paginated and bounded. MCP resource handles are reserved for future large export surfaces.
 - Read/analysis tools return bounded structured data for current views, active-view elements, selection, model statistics, model-readiness preflights, material quantities, catalogs, rooms, and custom queries.
 - Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `create_room`, `place_family_instance`, guarded `load_family`, `create_sheet`, `place_view_on_sheet`, `create_text_note`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `set_element_pinned`, and guarded `delete_element`. The direct `revit.create_project_from_template` setup tool creates disposable `.rvt` projects from local `.rte` templates for smoke fixtures; it is intentionally outside the preview/apply edit path.
+- `revit.cancel_request` can cancel queued requests that have not reached the Revit API yet. It reports a safe no-op for already in-flight Revit API work, because interrupting active Revit transactions is not safe.
 
 ## External Automation Integrations
 

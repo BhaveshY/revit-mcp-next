@@ -26,12 +26,12 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     name: "revit.status",
     title: "Revit Status",
     category: "session",
-    description: "Check bridge health, active document/view, versions, capabilities, generation, and selection count.",
+    description: "Check bridge health, active document/view, versions, capabilities, generation, selection count, queue diagnostics, and preview-token health.",
     readOnly: true,
     destructive: false,
     idempotent: true,
     whenToUse: "Call first in every workflow.",
-    compactUse: "Use the returned documentFingerprint and generation as guards on later reads and previews.",
+    compactUse: "Use the returned documentFingerprint/generation as guards. Inspect diagnostics.queue and diagnostics.previewTokens before retrying stalled workflows.",
     related: ["revit.list_documents", "revit.get_current_view"],
   },
   {
@@ -329,6 +329,7 @@ function discoveryDocument(context: DiscoveryContext): Record<string, unknown> {
     },
     workflow: [
       "Start with revit.status and keep documentFingerprint/generation for guarded calls.",
+      "Inspect revit.status diagnostics when a request stalls: queue depth, ExternalEvent raise state, preview-token counts, and recovery hints are compact.",
       "Use revit.query, revit.catalog, and revit.describe_parameters with tight filters instead of broad dumps.",
       "Use revit.preview_change_set before every mutation and apply only a ready preview with matching token metadata.",
       "Treat blocked previews as useful model evidence; do not guess Revit IDs or force unsupported operations.",

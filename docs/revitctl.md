@@ -54,7 +54,7 @@ cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" cancel --payload '{"requestId"
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" call preview_change_set --payload .\change-set.json --operation-kind preview --pretty
 ```
 
-Preview validates without mutation. Apply requires the same change set plus `previewId`, `baseGeneration`, `changeSetHash`, `expiresAt`, and `--confirm` or `confirm: true`. Cancel is support/debug only and may return `cancelled: false` when no queued request matches or work is already in-flight.
+Preview validates without mutation. Apply requires the same change set plus `previewId`, `baseGeneration`, `changeSetHash`, `expiresAt`, and `--confirm` or `confirm: true`. Apply consumes a valid preview token before write execution, so every apply attempt is single-use. Cancel is support/debug only; it can cancel a matching queued request that has not reached the Revit API yet and may return `cancelled: false` when no queued request matches or work is already in-flight.
 
 `revitctl call <operation>` can send lower-level bridge requests for debugging known or experimental add-in operations. Unknown operations default to `operationKind: "debug"` unless `--operation-kind` is supplied; the add-in still validates protocol support and can reject the request.
 
@@ -81,5 +81,5 @@ Compact read aliases map directly to the MCP bridge operation names: `current-vi
 
 - Do not use `revitctl` from pyRevit or Dynamo. Revit-hosted Python should use `integrations/python/revit_mcp_next_inprocess.py`.
 - Do not bypass preview/apply for normal model edits. `revitctl create-project` is only for disposable fixture setup; `revitctl apply` requires `--confirm` or `confirm: true`.
-- Use `revitctl cancel` only for queued or cancellable bridge work; it is a support/debug command and may return a clean no-op when nothing matches.
+- Use `revitctl cancel` only for queued bridge work; it is a support/debug command and may return a clean no-op when nothing matches or the target is already in-flight.
 - Treat `revitctl` as an internal/support interface. Agent-facing automation should still use MCP because MCP exposes typed tools, descriptions, annotations, and output schemas.

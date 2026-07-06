@@ -1526,6 +1526,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, tokenValidation.Code, tokenValidation.Message, sw);
             }
 
+            _previewTokens.Consume(providedPreviewId);
             List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
             {
                 var results = new List<Dictionary<string, object>>();
@@ -1535,7 +1536,6 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 return results;
             });
-            _previewTokens.Consume(providedPreviewId);
             long appliedGeneration = _generations.GetGeneration(document);
 
             var data = new Dictionary<string, object>
@@ -1559,16 +1559,21 @@ namespace RevitMcpNext.Addin.Revit
             }, generation: appliedGeneration);
         }
 
-        private static BridgeResponseEnvelope HandleCancel(BridgeRequestEnvelope request, Stopwatch sw)
+        private BridgeResponseEnvelope HandleCancel(BridgeRequestEnvelope request, Stopwatch sw)
         {
+            string requestId = GetString(request.Payload, "requestId");
+            string reason = GetString(request.Payload, "reason");
+            bool cancelled = _queue.TryCancelQueued(requestId, reason);
             var data = new Dictionary<string, object>
             {
-                ["cancelled"] = false,
-                ["message"] = "No queued cancellable request matched. In-flight Revit API work cannot be interrupted safely."
+                ["cancelled"] = cancelled,
+                ["message"] = cancelled
+                    ? "Queued request cancelled before Revit processed it."
+                    : "No queued cancellable request matched. In-flight Revit API work cannot be interrupted safely."
             };
 
-            string requestId = GetString(request.Payload, "requestId");
             if (!string.IsNullOrWhiteSpace(requestId)) data["requestId"] = requestId;
+            if (!string.IsNullOrWhiteSpace(reason)) data["reason"] = reason;
 
             return Success(request, data, sw);
         }
@@ -6191,6 +6196,17 @@ namespace RevitMcpNext.Addin.Revit
                 ["selection"] = new Dictionary<string, object>
                 {
                     ["count"] = activeUiDocument?.Selection?.GetElementIds()?.Count ?? 0
+                },
+                ["diagnostics"] = new Dictionary<string, object>
+                {
+                    ["queue"] = _queue.GetDiagnosticsSnapshot(),
+                    ["previewTokens"] = _previewTokens.GetDiagnosticsSnapshot(),
+                    ["recovery"] = new[]
+                    {
+                        "If pendingCount stays above zero or lastRaiseResult is not Accepted/Pending, bring Revit forward and close modal dialogs.",
+                        "Use revit.cancel_request with a queued requestId to cancel work that has not reached the Revit API yet.",
+                        "Run revit.preview_change_set again when preview tokens expire or document generation changes."
+                    }
                 },
                 ["capabilities"] = new[]
                 {

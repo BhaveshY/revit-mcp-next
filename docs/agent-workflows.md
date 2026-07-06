@@ -1,12 +1,12 @@
 # Agent Workflows
 
-These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP client was configured with `npm run mcp:config`. Start each workflow with `revit.status`; carry the returned `activeDocument.fingerprint` and `activeDocument.generation` into reads and change sets so stale model state is caught early.
+These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP client was configured with `npm run mcp:config`. Start each workflow with `revit.status`; carry the returned `activeDocument.fingerprint` and `activeDocument.generation` into reads and change sets so stale model state is caught early. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
 
 ## Model Audit
 
 Use this sequence when the user asks what is in the model, what is selected, or what needs cleanup:
 
-1. `revit.status` for connection, Revit version, active document, and generation.
+1. `revit.status` for connection, Revit version, active document, generation, queue diagnostics, and preview-token health.
 2. `revit.get_views` and `revit.get_sheets` when the task mentions documentation, sheets, view placement, templates, or drawing organization.
 3. `revit.get_current_view` for view type, scale, and crop state.
 4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; use `preset: "geometrySummary"` instead when the workflow needs compact element `location` and model-space `bounds` in millimeters. When more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
