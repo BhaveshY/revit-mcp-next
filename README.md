@@ -186,6 +186,13 @@ npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -E
 
 Run graph: `%LOCALAPPDATA%\RevitMcpNext\integrations\dynamo\revit_mcp_next_host_smoke.dyn`.
 
+For unattended CI or release-candidate runs, first require a warmed Dynamo profile so the command fails immediately instead of waiting behind a first-run prompt:
+
+```powershell
+npm run smoke:dynamo-host -- -RevitYear 2024 -EvidencePath artifacts\host-integrations\raw\dynamo.json -PreflightOnly
+npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit -UseDynamoJournal -RequireWarmedDynamo
+```
+
 The aggregate runner creates the raw evidence files and composes the summary in one release-oriented command. Dynamo still requires opening and running the graph in Dynamo for Revit while the command waits:
 
 ```powershell
@@ -198,7 +205,9 @@ After the Dynamo profile has already been warmed manually once, the Dynamo runne
 npm run smoke:host-integrations -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\host-integrations -SeedPyRevitHosts -LaunchRevitForDynamo -UseDynamoJournalForDynamo
 ```
 
+For unattended aggregate runs, also pass `-RequireWarmedDynamoForDynamo`.
 Journal mode refuses to run when `DynamoSettings.xml` is missing or not parseable, unless `-AllowUnwarmedDynamoJournal` is passed for an explicitly supervised local experiment. It does not change Dynamo privacy settings or click startup prompts.
+`-AllowUnwarmedDynamoJournal` is not a release-evidence shortcut; if Dynamo blocks on first-run UI, warm the profile manually and rerun without that flag.
 
 After collecting the raw host JSON files and Dynamo preflight report, build the summary with:
 

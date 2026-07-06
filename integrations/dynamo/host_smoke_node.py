@@ -1,5 +1,8 @@
 import os
 import sys
+import datetime
+import json
+import traceback
 
 
 def candidate_python_dirs():
@@ -42,6 +45,41 @@ def add_revit_services_reference():
         pass
 
 
+def utc_now():
+    return datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def write_failed_evidence(error):
+    evidence_path = os.environ.get("REVIT_MCP_NEXT_DYNAMO_EVIDENCE")
+    evidence = {
+        "schemaVersion": 1,
+        "status": "failed",
+        "host": "dynamo",
+        "startedAtUtc": utc_now(),
+        "completedAtUtc": utc_now(),
+        "activeDocument": {},
+        "inProcessBridge": None,
+        "coveredTools": [],
+        "coveredOperations": [],
+        "applyWrites": False,
+        "previewReady": False,
+        "createdElementIds": [],
+        "evidencePath": evidence_path,
+        "error": {
+            "message": str(error),
+            "type": error.__class__.__name__,
+            "traceback": traceback.format_exc(),
+        },
+    }
+    if evidence_path:
+        parent = os.path.dirname(evidence_path)
+        if parent and not os.path.exists(parent):
+            os.makedirs(parent)
+        with open(evidence_path, "w") as handle:
+            json.dump(evidence, handle, indent=2, sort_keys=True)
+    return evidence
+
+
 try:
     add_installed_python_client_to_path()
     add_revit_services_reference()
@@ -53,4 +91,4 @@ try:
     model_path = os.environ.get("REVIT_MCP_NEXT_DYNAMO_MODEL")
     OUT = run_host_smoke(uiapp, "dynamo", evidence_path=evidence_path, model_path=model_path, raise_on_failure=False)
 except Exception as error:
-    OUT = {"schemaVersion": 1, "status": "failed", "host": "dynamo", "error": str(error)}
+    OUT = write_failed_evidence(error)

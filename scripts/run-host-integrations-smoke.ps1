@@ -17,6 +17,7 @@ param(
     [switch] $LaunchRevitForDynamo,
     [switch] $UseDynamoJournalForDynamo,
     [switch] $AllowUnwarmedDynamoJournal,
+    [switch] $RequireWarmedDynamoForDynamo,
     [switch] $DynamoValidateOnly,
     [int] $DynamoTimeoutSeconds = 900,
     [switch] $AllowFailed,
@@ -194,6 +195,9 @@ if ($UseDynamoJournalForDynamo) {
 }
 if ($AllowUnwarmedDynamoJournal) {
     $dynamoArgs += "-AllowUnwarmedDynamoJournal"
+}
+if ($RequireWarmedDynamoForDynamo) {
+    $dynamoArgs += "-RequireWarmedDynamo"
 }
 if ($DynamoValidateOnly) {
     $dynamoArgs += "-ValidateOnly"

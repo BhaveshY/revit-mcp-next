@@ -13,6 +13,7 @@ param(
     [switch] $LaunchRevit,
     [switch] $UseDynamoJournal,
     [switch] $AllowUnwarmedDynamoJournal,
+    [switch] $RequireWarmedDynamo,
     [string] $DynamoJournalPath = "",
     [switch] $PreflightOnly,
     [switch] $ValidateOnly,
@@ -517,6 +518,14 @@ function Assert-HostEvidence($Evidence, $Path) {
 
         throw "Dynamo evidence used in-process bridge handler '$handler'; expected configuredAddin. File: $Path"
     }
+
+    if ([string]::IsNullOrWhiteSpace([string] $Evidence.inProcessBridge.assemblyPath)) {
+        throw "Dynamo evidence did not record inProcessBridge.assemblyPath. File: $Path"
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string] $Evidence.inProcessBridge.assemblySha256)) {
+        throw "Dynamo evidence did not record inProcessBridge.assemblySha256. File: $Path"
+    }
 }
 
 function Read-And-ValidateEvidence($Path) {
@@ -578,6 +587,7 @@ if ($DryRun) {
         preflightReportPath = $preflightReportFull
         evidencePath = $evidenceFull
         timeoutSeconds = $TimeoutSeconds
+        requireWarmedDynamo = [bool] $RequireWarmedDynamo
         useDynamoJournal = [bool] $UseDynamoJournal
         dynamoJournalPath = if ($UseDynamoJournal) { $dynamoJournalFull } else { "" }
         dynamoJournalRequiresWarmedSettings = [bool] ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal)
@@ -629,6 +639,10 @@ if (-not [string]::IsNullOrWhiteSpace($modelFull) -and -not (Test-Path -LiteralP
 $shouldWritePreflightReport = -not $ValidateOnly
 if ($shouldWritePreflightReport) {
     Save-DynamoPreflightReport $preflight $preflightReportFull
+}
+
+if ($RequireWarmedDynamo -and [bool] $preflight.dynamoSettingsAppearsWarmed -ne $true) {
+    throw "Dynamo smoke requires an existing parseable DynamoSettings.xml but preflight reported '$($preflight.dynamoSettingsWarmedReason)' at '$($preflight.dynamoSettingsPath)'. Open Dynamo for Revit once in this test profile, answer Autodesk/Dynamo prompts manually, close Revit, then rerun."
 }
 
 if ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal -and [bool] $preflight.dynamoSettingsAppearsWarmed -ne $true) {
@@ -716,7 +730,11 @@ try {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while (-not (Test-Path -LiteralPath $evidenceFull -PathType Leaf)) {
         if ($TimeoutSeconds -le 0 -or (Get-Date) -gt $deadline) {
-            throw "Timed out waiting for Dynamo evidence: $evidenceFull"
+            $hint = "Timed out waiting for Dynamo evidence: $evidenceFull"
+            if ([bool] $preflight.dynamoSettingsAppearsWarmed -ne $true) {
+                $hint = "$hint`nDynamo preflight reported an unwarmed profile ($($preflight.dynamoSettingsWarmedReason)) at '$($preflight.dynamoSettingsPath)'. Open Dynamo for Revit once in this test profile and answer startup/privacy prompts manually before rerunning release evidence."
+            }
+            throw $hint
         }
 
         Start-Sleep -Seconds 2

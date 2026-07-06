@@ -58,6 +58,14 @@ npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -E
 ```
 
 Journal mode refuses to run on an unwarmed Dynamo profile by default. It does not change privacy settings, preseed consent, or click startup prompts.
+Use `-RequireWarmedDynamo` for unattended runs to fail fast when `DynamoSettings.xml` is missing or not parseable:
+
+```powershell
+npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit -UseDynamoJournal -RequireWarmedDynamo
+```
+
+`-AllowUnwarmedDynamoJournal` is only for supervised disposable-machine experiments. It does not make a blocked first-run prompt acceptable release evidence.
+If this node starts and then fails before the shared helper runs, it writes a failed `dynamo.json` to the configured evidence path so the wrapper can report the real setup error instead of waiting until timeout.
 
 For full hosted integration evidence, prefer:
 

@@ -382,6 +382,8 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         throw "Dynamo host smoke preflight-only wrote host-smoke evidence."
     }
 
+    $syntheticAssemblyPath = Join-Path $installRoot "addin\RevitMcpNext.Addin.dll"
+    $syntheticAssemblySha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     $syntheticDynamoEvidence = [ordered] @{
         schemaVersion = 1
         host = "dynamo"
@@ -396,6 +398,8 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         inProcessBridge = [ordered] @{
             addinHandlerActive = $true
             handler = "configuredAddin"
+            assemblyPath = $syntheticAssemblyPath
+            assemblySha256 = $syntheticAssemblySha256
         }
     }
     Set-Content -LiteralPath $dynamoEvidencePath -Value ($syntheticDynamoEvidence | ConvertTo-Json -Depth 8) -Encoding UTF8
@@ -464,8 +468,6 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     $failedDynamoEvidencePath = Join-Path $RunRoot "host-smoke\failed-dynamo.json"
     $fallbackPyRevitEvidencePath = Join-Path $RunRoot "host-smoke\fallback-pyrevit.json"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $passedPyRevitEvidencePath) | Out-Null
-    $syntheticAssemblyPath = Join-Path $installRoot "addin\RevitMcpNext.Addin.dll"
-    $syntheticAssemblySha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
     $passedPyRevit = [ordered] @{
         schemaVersion = 1
