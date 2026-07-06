@@ -225,6 +225,27 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   assert.equal(familyPlacement?.hints?.hostedFamilySymbolId, "9200");
   assert.equal(familyPlacement?.hints?.levelBasedFamilySymbolId, "9201");
 
+  const context = await bridge.getModelContext(
+    makeRequest(
+      "test",
+      "get_model_context",
+      "read",
+      { phaseLimit: 1, worksetLimit: 1, designOptionLimit: 1, revitLinkLimit: 1, includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(context.ok, true);
+  if (!context.ok) return;
+  assert.equal(context.data.projectInfo?.number, "P-001");
+  assert.equal(context.data.phases?.returnedCount, 1);
+  assert.equal(context.data.phases?.totalCount, 2);
+  assert.equal(context.data.phases?.truncated, true);
+  assert.equal(context.data.phases?.items[0]?.id, "201");
+  assert.equal(context.data.worksets?.available, true);
+  assert.equal(context.data.worksets?.items[0]?.name, "Shared Levels and Grids");
+  assert.equal(context.data.designOptions?.items[0]?.optionSetName, "Entry Layout");
+  assert.equal(context.data.revitLinks?.items[0]?.linkedDocumentTitle, "Site.rvt");
+
   const materials = await bridge.getMaterialQuantities(
     makeRequest(
       "test",

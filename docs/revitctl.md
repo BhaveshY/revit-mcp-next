@@ -26,6 +26,7 @@ It forwards the local pipe auth token to the add-in but does not print the token
 ```powershell
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" views --payload '{"filter":{"isTemplate":false},"limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" sheets --payload '{"includePlacedViews":true,"limit":10}' --pretty
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" model-context --payload '{"phaseLimit":10,"worksetLimit":10,"designOptionLimit":10,"revitLinkLimit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" warnings --payload '{"preset":"summary","limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" query --payload '{"filter":{"selectionOnly":true},"preset":"summary","limit":10}' --pretty
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" query --payload '{"filter":{"selectionOnly":true},"preset":"geometrySummary","limit":10}' --pretty

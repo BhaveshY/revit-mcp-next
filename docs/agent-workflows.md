@@ -11,10 +11,11 @@ Use this sequence when the user asks what is in the model, what is selected, or 
 3. `revit.get_current_view` for view type, scale, and crop state.
 4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; use `preset: "geometrySummary"` instead when the workflow needs compact element `location` and model-space `bounds` in millimeters. When more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
 5. `revit.get_selection` when the user references selected elements.
-6. `revit.analyze_model` for category, class, and level distribution.
-7. `revit.get_warnings` with `preset: "summary"` for compact model-health issues; switch to `preset: "elements"` only when warning element IDs are needed.
-8. `revit.get_material_quantities` for bounded material takeoff.
-9. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
+6. `revit.get_model_context` with low section limits when the audit depends on phases, worksets, design options, or linked models.
+7. `revit.analyze_model` for category, class, and level distribution.
+8. `revit.get_warnings` with `preset: "summary"` for compact model-health issues; switch to `preset: "elements"` only when warning element IDs are needed.
+9. `revit.get_material_quantities` for bounded material takeoff.
+10. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
 
 Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed. Leave `includeTotalCount` false unless the user needs an exact total for reporting; cursor-first reads avoid full model counts on large projects. Cursors are opaque and bound to the same tool arguments/session/document state; do not parse, increment, construct, or reuse a cursor after changing filters, fields, presets, limits, document guards, or count settings.
 

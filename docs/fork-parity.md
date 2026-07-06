@@ -16,6 +16,7 @@ This matrix compares `revit-mcp-next` with the local fork at `mcp-servers-for-re
 | Parameter discovery before edits | Better than the fork: `revit.describe_parameters` defaults to compact writable instance parameter metadata before `set_parameter`, with `namesOnly` and `full` presets for broader read-only/type/value discovery. |
 | Annotation type discovery | Better than the fork: `revit.catalog` supports `textNoteTypes`, `dimensionTypes`, and `tagTypes` for bounded annotation planning. |
 | `analyze_model_statistics` | Covered by `revit.analyze_model`. |
+| Model planning context | Better than the fork: `revit.get_model_context` returns compact project info plus phase, workset, design option, and Revit link IDs for filtered reads and guarded workflows. |
 | `get_material_quantities` | Covered by `revit.get_material_quantities` with normalized metric units. |
 | `export_room_data` | Covered by `revit.get_rooms` for compact, paginated room export/schedule data, with live smoke coverage in the Revit 2024 smoke workflow. |
 | `create_level` | Covered as guarded `create_level` preview/apply operation. |

@@ -21,6 +21,7 @@ const REQUIRED_TOOLS = [
   "revit.get_selection",
   "revit.analyze_model",
   "revit.get_model_readiness",
+  "revit.get_model_context",
   "revit.get_material_quantities",
   "revit.get_warnings",
   "revit.get_rooms",
@@ -272,6 +273,25 @@ async function main() {
       "revit.get_model_readiness did not include familyPlacement scenario."
     );
     console.log(`Model readiness OK: ${modelReadiness.readyCount} of ${modelReadiness.totalCount} scenario(s) ready`);
+
+    const modelContext = await callRequiredTool(client, "revit.get_model_context", {
+      ...documentGuard,
+      phaseLimit: 10,
+      worksetLimit: 10,
+      designOptionLimit: 10,
+      revitLinkLimit: 10,
+      includeTotalCount: true,
+    });
+    assert(modelContext.document?.fingerprint === documentFingerprint, "revit.get_model_context returned the wrong document fingerprint.");
+    assert(modelContext.projectInfo && typeof modelContext.projectInfo === "object", "revit.get_model_context did not return projectInfo.");
+    assert(Array.isArray(modelContext.phases?.items), "revit.get_model_context did not return phases.items.");
+    assert(Number.isInteger(modelContext.phases?.returnedCount), "revit.get_model_context did not return phases.returnedCount.");
+    assert(modelContext.worksets && typeof modelContext.worksets.available === "boolean", "revit.get_model_context did not return workset availability.");
+    assert(Array.isArray(modelContext.designOptions?.items), "revit.get_model_context did not return designOptions.items.");
+    assert(Array.isArray(modelContext.revitLinks?.items), "revit.get_model_context did not return revitLinks.items.");
+    console.log(
+      `Model context OK: ${modelContext.phases.returnedCount} phase(s), ${modelContext.worksets.returnedCount} workset(s), ${modelContext.designOptions.returnedCount} design option(s), ${modelContext.revitLinks.returnedCount} link(s)`
+    );
 
     const materialQuantities = await callRequiredTool(client, "revit.get_material_quantities", {
       ...documentGuard,

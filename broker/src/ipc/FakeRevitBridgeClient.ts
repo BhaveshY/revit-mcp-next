@@ -19,6 +19,8 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelContextRequest,
+  ModelContextResult,
   ModelReadinessRequest,
   ModelReadinessResult,
   ModelStatisticsRequest,
@@ -143,6 +145,7 @@ const capabilities = [
   "revit.get_selection",
   "revit.analyze_model",
   "revit.get_model_readiness",
+  "revit.get_model_context",
   "revit.get_material_quantities",
   "revit.get_warnings",
   "revit.get_rooms",
@@ -153,6 +156,77 @@ const capabilities = [
   "revit.apply_change_set",
   "revit.cancel_request",
 ];
+
+const fakeModelContext = {
+  projectInfo: {
+    id: "100",
+    uniqueId: "project-info-100",
+    number: "P-001",
+    name: "Sample Project",
+    clientName: "Example Client",
+    status: "Test",
+    issueDate: "2026-07-06",
+    buildingName: "Sample Building",
+    organizationName: "Revit MCP Next",
+  },
+  phases: [
+    {
+      id: "201",
+      name: "Existing",
+      sequence: 0,
+    },
+    {
+      id: "202",
+      name: "New Construction",
+      sequence: 1,
+    },
+  ],
+  worksets: [
+    {
+      id: "1",
+      uniqueId: "00000000-0000-0000-0000-000000000001",
+      name: "Shared Levels and Grids",
+      kind: "UserWorkset",
+      isOpen: true,
+      isEditable: true,
+      isVisibleByDefault: true,
+      isDefaultWorkset: true,
+      owner: "",
+    },
+  ],
+  designOptions: [
+    {
+      id: "301",
+      uniqueId: "design-option-301",
+      name: "Option A",
+      isPrimary: true,
+      isActive: true,
+      optionSetId: "300",
+      optionSetName: "Entry Layout",
+    },
+    {
+      id: "302",
+      uniqueId: "design-option-302",
+      name: "Option B",
+      isPrimary: false,
+      isActive: false,
+      optionSetId: "300",
+      optionSetName: "Entry Layout",
+    },
+  ],
+  revitLinks: [
+    {
+      id: "401",
+      uniqueId: "revit-link-401",
+      name: "Site.rvt",
+      typeId: "9401",
+      typeName: "Site.rvt",
+      isLoaded: true,
+      linkedDocumentTitle: "Site.rvt",
+      linkedDocumentPath: "C:\\Projects\\Site.rvt",
+    },
+  ],
+};
 
 const fakeQueryItems: QueryItem[] = [
   {
@@ -591,6 +665,35 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       totalCount: scenarios.length,
       source: "fake-bridge",
     });
+  }
+
+  async getModelContext(
+    request: BridgeRequest<ModelContextRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelContextResult>> {
+    maybeAbort(options);
+    const payload = request.payload;
+    const result: ModelContextResult = {
+      document: documentReference(),
+      source: "fake-bridge",
+    };
+    if (payload.includeProjectInfo !== false) result.projectInfo = fakeModelContext.projectInfo;
+    if (payload.includePhases !== false) {
+      result.phases = section(fakeModelContext.phases, Math.min(payload.phaseLimit ?? 50, 200), payload.includeTotalCount);
+    }
+    if (payload.includeWorksets !== false) {
+      result.worksets = {
+        ...section(fakeModelContext.worksets, Math.min(payload.worksetLimit ?? 50, 200), payload.includeTotalCount),
+        available: true,
+      };
+    }
+    if (payload.includeDesignOptions !== false) {
+      result.designOptions = section(fakeModelContext.designOptions, Math.min(payload.designOptionLimit ?? 50, 200), payload.includeTotalCount);
+    }
+    if (payload.includeRevitLinks !== false) {
+      result.revitLinks = section(fakeModelContext.revitLinks, Math.min(payload.revitLinkLimit ?? 50, 200), payload.includeTotalCount);
+    }
+    return ok(request, result);
   }
 
   async getMaterialQuantities(
@@ -1119,6 +1222,23 @@ function readinessScenario(
     ready,
     missing,
     ...(includeHints ? { nextAction, hints } : {}),
+  };
+}
+
+function section<T>(items: T[], limit: number, includeTotalCount?: boolean): {
+  items: T[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  truncated: boolean;
+} {
+  const page = items.slice(0, limit);
+  return {
+    items: page,
+    returnedCount: page.length,
+    totalCount: includeTotalCount ? items.length : undefined,
+    limit,
+    truncated: page.length < items.length,
   };
 }
 

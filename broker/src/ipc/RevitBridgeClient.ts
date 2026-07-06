@@ -14,6 +14,8 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelContextRequest,
+  ModelContextResult,
   ModelReadinessRequest,
   ModelReadinessResult,
   ModelStatisticsRequest,
@@ -77,6 +79,10 @@ export interface RevitBridgeClient {
     request: BridgeRequest<ModelReadinessRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<ModelReadinessResult>>;
+  getModelContext(
+    request: BridgeRequest<ModelContextRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelContextResult>>;
   getMaterialQuantities(
     request: BridgeRequest<MaterialQuantitiesRequest>,
     options?: BridgeCallOptions

@@ -20,6 +20,7 @@ const READ_OPERATIONS = new Set([
   "get_selection",
   "analyze_model",
   "get_model_readiness",
+  "get_model_context",
   "get_material_quantities",
   "get_warnings",
   "get_rooms",
@@ -247,6 +248,9 @@ function resolveCommandOperation(options: RevitCtlOptions): {
       return { operation: "get_selection", operationKind: "read", payload: payloadObject(options.payload) };
     case "readiness":
       return { operation: "get_model_readiness", operationKind: "read", payload: payloadObject(options.payload) };
+    case "model-context":
+    case "context":
+      return { operation: "get_model_context", operationKind: "read", payload: payloadObject(options.payload) };
     case "warnings":
       return { operation: "get_warnings", operationKind: "read", payload: payloadObject(options.payload) };
     case "query":
@@ -336,6 +340,8 @@ async function callBridge(
       return bridge.analyzeModel(request as Parameters<NamedPipeBridgeClient["analyzeModel"]>[0]);
     case "get_model_readiness":
       return bridge.getModelReadiness(request as Parameters<NamedPipeBridgeClient["getModelReadiness"]>[0]);
+    case "get_model_context":
+      return bridge.getModelContext(request as Parameters<NamedPipeBridgeClient["getModelContext"]>[0]);
     case "get_material_quantities":
       return bridge.getMaterialQuantities(request as Parameters<NamedPipeBridgeClient["getMaterialQuantities"]>[0]);
     case "get_warnings":
@@ -440,6 +446,7 @@ Usage:
   revitctl status [--json]
   revitctl doctor [--json]
   revitctl readiness [--payload <json-or-path>]
+  revitctl model-context [--payload <json-or-path>]
   revitctl warnings [--payload <json-or-path>]
   revitctl list-documents
   revitctl levels [--payload <json-or-path>]

@@ -144,6 +144,18 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     related: ["revit.catalog", "revit.preview_change_set"],
   },
   {
+    name: "revit.get_model_context",
+    title: "Get Revit Model Context",
+    category: "analysis",
+    description: "Return compact planning context: project info, phases, worksets, design options, and Revit links.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use before filtered reads or writes that depend on phase, workset, design option, or linked model context.",
+    compactUse: "Keep section limits low and disable sections that are not relevant to the workflow.",
+    related: ["revit.query", "revit.get_model_readiness", "revit.catalog"],
+  },
+  {
     name: "revit.get_material_quantities",
     title: "Get Material Quantities",
     category: "analysis",
@@ -439,7 +451,7 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
     async ({ workflow }) => {
       const workflows: Record<typeof workflow, string> = {
         audit:
-          "Audit workflow: call revit.status, revit.get_model_readiness with focused scenarios, revit.analyze_model with bounded bucketLimit, revit.get_warnings with preset=summary for model health, then revit.query with explicit fields for any category or class that needs detail. Use preset=geometrySummary for element location/bounds checks and consume data.units.location/bounds, currently mm.",
+          "Audit workflow: call revit.status, revit.get_model_context with low section limits for phase/workset/design-option/link IDs, revit.get_model_readiness with focused scenarios, revit.analyze_model with bounded bucketLimit, revit.get_warnings with preset=summary for model health, then revit.query with explicit fields for any category or class that needs detail. Use preset=geometrySummary for element location/bounds checks and consume data.units.location/bounds, currently mm.",
         "selection-update":
           "Selection update workflow: call revit.status, revit.get_selection with preset=summary, revit.describe_parameters with preset=writableEdit for target IDs, preview set_parameter/change_element_type, then apply only the matching ready preview.",
         "sheet-planning":

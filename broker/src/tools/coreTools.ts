@@ -248,6 +248,20 @@ const modelReadinessSchema = {
   includeHints: z.boolean().default(true).describe("Include compact candidate IDs and next actions when available."),
 };
 
+const modelContextSchema = {
+  ...documentGuardSchema,
+  includeProjectInfo: z.boolean().default(true),
+  includePhases: z.boolean().default(true),
+  includeWorksets: z.boolean().default(true),
+  includeDesignOptions: z.boolean().default(true),
+  includeRevitLinks: z.boolean().default(true),
+  phaseLimit: z.number().int().min(1).max(200).default(50),
+  worksetLimit: z.number().int().min(1).max(200).default(50),
+  designOptionLimit: z.number().int().min(1).max(200).default(50),
+  revitLinkLimit: z.number().int().min(1).max(200).default(50),
+  includeTotalCount: z.boolean().default(false),
+};
+
 const materialQuantitiesSchema = {
   ...documentGuardSchema,
   filter: queryFilterSchema.optional().describe("Optional model scope. Use selectionOnly or viewId for focused takeoffs."),
@@ -931,6 +945,52 @@ const modelReadinessResultSchema = z
   })
   .passthrough();
 
+const contextSectionSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
+  z
+    .object({
+      items: z.array(itemSchema),
+      returnedCount: z.number(),
+      totalCount: z.number().optional(),
+      limit: z.number(),
+      truncated: z.boolean(),
+      available: z.boolean().optional(),
+    })
+    .passthrough();
+
+const projectInfoSchema = z
+  .object({
+    id: z.string().optional(),
+    uniqueId: z.string().optional(),
+    number: z.string().optional(),
+    name: z.string().optional(),
+    clientName: z.string().optional(),
+    status: z.string().optional(),
+    issueDate: z.string().optional(),
+    address: z.string().optional(),
+    buildingName: z.string().optional(),
+    organizationName: z.string().optional(),
+    organizationDescription: z.string().optional(),
+    author: z.string().optional(),
+  })
+  .passthrough();
+
+const phaseSummarySchema = z.object({ id: z.string(), name: z.string(), sequence: z.number() }).passthrough();
+const worksetSummarySchema = z.object({ id: z.string(), name: z.string() }).passthrough();
+const designOptionSummarySchema = z.object({ id: z.string(), name: z.string() }).passthrough();
+const revitLinkSummarySchema = z.object({ id: z.string() }).passthrough();
+
+const modelContextResultSchema = z
+  .object({
+    document: documentReferenceSchema,
+    projectInfo: projectInfoSchema.optional(),
+    phases: contextSectionSchema(phaseSummarySchema).optional(),
+    worksets: contextSectionSchema(worksetSummarySchema).optional(),
+    designOptions: contextSectionSchema(designOptionSummarySchema).optional(),
+    revitLinks: contextSectionSchema(revitLinkSummarySchema).optional(),
+    source: z.string(),
+  })
+  .passthrough();
+
 const materialQuantityItemSchema = z
   .object({
     materialId: z.string(),
@@ -1080,6 +1140,7 @@ const outputSchemas = {
   scopedElements: toolOutputSchema(scopedElementListResultSchema),
   modelStatistics: toolOutputSchema(modelStatisticsResultSchema),
   modelReadiness: toolOutputSchema(modelReadinessResultSchema),
+  modelContext: toolOutputSchema(modelContextResultSchema),
   materialQuantities: toolOutputSchema(materialQuantitiesResultSchema),
   warnings: toolOutputSchema(warningsResultSchema),
   rooms: toolOutputSchema(roomsResultSchema),
@@ -1391,6 +1452,46 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       return asToolResult(
         response,
         (result) => `${result.readyCount} of ${result.totalCount} Revit agent workflow scenario(s) ready.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_model_context",
+    {
+      title: "Get Revit Model Context",
+      description:
+        "Return compact planning context for the active model: project info, phases, worksets, design options, and linked Revit models.",
+      inputSchema: modelContextSchema,
+      outputSchema: outputSchemas.modelContext,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const payload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        includeProjectInfo: args.includeProjectInfo ?? true,
+        includePhases: args.includePhases ?? true,
+        includeWorksets: args.includeWorksets ?? true,
+        includeDesignOptions: args.includeDesignOptions ?? true,
+        includeRevitLinks: args.includeRevitLinks ?? true,
+        phaseLimit: args.phaseLimit ?? 50,
+        worksetLimit: args.worksetLimit ?? 50,
+        designOptionLimit: args.designOptionLimit ?? 50,
+        revitLinkLimit: args.revitLinkLimit ?? 50,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const request = makeRequest(context.sessionId, "get_model_context", "read", payload, 30000);
+      const response = await context.bridge.getModelContext(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `Model context returned: ${result.phases?.returnedCount ?? 0} phase(s), ${result.worksets?.returnedCount ?? 0} workset(s), ${result.designOptions?.returnedCount ?? 0} design option(s), ${result.revitLinks?.returnedCount ?? 0} link(s).`
       );
     }
   );

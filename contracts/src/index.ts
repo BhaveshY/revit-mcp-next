@@ -473,6 +473,94 @@ export interface ModelStatisticsResult {
   source: string;
 }
 
+export interface ModelContextRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  includeProjectInfo?: boolean;
+  includePhases?: boolean;
+  includeWorksets?: boolean;
+  includeDesignOptions?: boolean;
+  includeRevitLinks?: boolean;
+  phaseLimit?: number;
+  worksetLimit?: number;
+  designOptionLimit?: number;
+  revitLinkLimit?: number;
+  includeTotalCount?: boolean;
+}
+
+export interface ProjectInfoSummary {
+  id?: ElementId;
+  uniqueId?: UniqueId;
+  number?: string;
+  name?: string;
+  clientName?: string;
+  status?: string;
+  issueDate?: string;
+  address?: string;
+  buildingName?: string;
+  organizationName?: string;
+  organizationDescription?: string;
+  author?: string;
+}
+
+export interface PhaseSummary {
+  id: ElementId;
+  name: string;
+  sequence: number;
+}
+
+export interface WorksetSummary {
+  id: string;
+  uniqueId?: string;
+  name: string;
+  kind?: string;
+  isOpen?: boolean;
+  isEditable?: boolean;
+  isVisibleByDefault?: boolean;
+  isDefaultWorkset?: boolean;
+  owner?: string;
+}
+
+export interface DesignOptionSummary {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  name: string;
+  isPrimary?: boolean;
+  isActive?: boolean;
+  optionSetId?: string;
+  optionSetName?: string;
+}
+
+export interface RevitLinkSummary {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  name?: string;
+  typeId?: ElementId;
+  typeName?: string;
+  isLoaded?: boolean;
+  linkedDocumentTitle?: string;
+  linkedDocumentPath?: string;
+}
+
+export interface ModelContextSection<TItem> {
+  items: TItem[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  truncated: boolean;
+  available?: boolean;
+}
+
+export interface ModelContextResult {
+  document: DocumentReference;
+  projectInfo?: ProjectInfoSummary;
+  phases?: ModelContextSection<PhaseSummary>;
+  worksets?: ModelContextSection<WorksetSummary>;
+  designOptions?: ModelContextSection<DesignOptionSummary>;
+  revitLinks?: ModelContextSection<RevitLinkSummary>;
+  source: string;
+}
+
 export interface MaterialQuantitiesRequest {
   documentFingerprint?: string;
   expectedGeneration?: number;

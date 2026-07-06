@@ -28,6 +28,7 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxCatalogLimit = 200;
         private const int MaxStatisticsBucketLimit = 200;
         private const int MaxStatisticsScanLimit = 100000;
+        private const int MaxModelContextLimit = 200;
         private const int MaxMaterialLimit = 200;
         private const int MaxMaterialScanLimit = 100000;
         private const int MaxWarningLimit = 200;
@@ -49,6 +50,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["get_selection"] = "read",
                 ["analyze_model"] = "read",
                 ["get_model_readiness"] = "read",
+                ["get_model_context"] = "read",
                 ["get_material_quantities"] = "read",
                 ["get_warnings"] = "read",
                 ["get_rooms"] = "read",
@@ -164,6 +166,8 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleAnalyzeModel(app, request, sw);
                         case "get_model_readiness":
                             return HandleGetModelReadiness(app, request, sw);
+                        case "get_model_context":
+                            return HandleGetModelContext(app, request, sw);
                         case "get_material_quantities":
                             return HandleGetMaterialQuantities(app, request, sw);
                         case "get_warnings":
@@ -731,6 +735,56 @@ namespace RevitMcpNext.Addin.Revit
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = 1,
                     TotalCount = 1
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetModelContext(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_model_context.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            bool includeProjectInfo = GetBool(payload, "includeProjectInfo", true);
+            bool includePhases = GetBool(payload, "includePhases", true);
+            bool includeWorksets = GetBool(payload, "includeWorksets", true);
+            bool includeDesignOptions = GetBool(payload, "includeDesignOptions", true);
+            bool includeRevitLinks = GetBool(payload, "includeRevitLinks", true);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            int phaseLimit = Math.Min(MaxModelContextLimit, Math.Max(1, GetInt(payload, "phaseLimit") ?? 50));
+            int worksetLimit = Math.Min(MaxModelContextLimit, Math.Max(1, GetInt(payload, "worksetLimit") ?? 50));
+            int designOptionLimit = Math.Min(MaxModelContextLimit, Math.Max(1, GetInt(payload, "designOptionLimit") ?? 50));
+            int revitLinkLimit = Math.Min(MaxModelContextLimit, Math.Max(1, GetInt(payload, "revitLinkLimit") ?? 50));
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["source"] = "revit-addin"
+            };
+
+            if (includeProjectInfo) data["projectInfo"] = BuildProjectInfoSummary(document.ProjectInformation);
+            if (includePhases) data["phases"] = BuildContextSection(BuildPhaseSummaries(document), phaseLimit, includeTotalCount);
+            if (includeWorksets) data["worksets"] = BuildWorksetSection(document, worksetLimit, includeTotalCount);
+            if (includeDesignOptions) data["designOptions"] = BuildContextSection(BuildDesignOptionSummaries(document), designOptionLimit, includeTotalCount);
+            if (includeRevitLinks) data["revitLinks"] = BuildContextSection(BuildRevitLinkSummaries(document), revitLinkLimit, includeTotalCount);
+            collectorSw.Stop();
+
+            return Success(
+                request,
+                data,
+                sw,
+                new List<BridgeWarning>(),
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds
                 },
                 generation: generation);
         }
@@ -5012,6 +5066,247 @@ namespace RevitMcpNext.Addin.Revit
             return identity;
         }
 
+        private static Dictionary<string, object> BuildProjectInfoSummary(ProjectInfo projectInfo)
+        {
+            if (projectInfo == null) return new Dictionary<string, object>();
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(projectInfo.Id),
+                ["uniqueId"] = projectInfo.UniqueId
+            };
+
+            AddIfNotBlank(summary, "number", projectInfo.Number);
+            AddIfNotBlank(summary, "name", projectInfo.Name);
+            AddIfNotBlank(summary, "clientName", projectInfo.ClientName);
+            AddIfNotBlank(summary, "status", projectInfo.Status);
+            AddIfNotBlank(summary, "issueDate", projectInfo.IssueDate);
+            AddIfNotBlank(summary, "address", projectInfo.Address);
+            AddIfNotBlank(summary, "buildingName", projectInfo.BuildingName);
+            AddIfNotBlank(summary, "organizationName", projectInfo.OrganizationName);
+            AddIfNotBlank(summary, "organizationDescription", projectInfo.OrganizationDescription);
+            AddIfNotBlank(summary, "author", projectInfo.Author);
+            return summary;
+        }
+
+        private static List<Dictionary<string, object>> BuildPhaseSummaries(Document document)
+        {
+            var phases = new List<Dictionary<string, object>>();
+            int sequence = 0;
+            foreach (Phase phase in document.Phases.Cast<Phase>())
+            {
+                phases.Add(new Dictionary<string, object>
+                {
+                    ["id"] = ToElementIdString(phase.Id),
+                    ["name"] = phase.Name,
+                    ["sequence"] = sequence++
+                });
+            }
+
+            return phases;
+        }
+
+        private static Dictionary<string, object> BuildWorksetSection(Document document, int limit, bool includeTotalCount)
+        {
+            if (!document.IsWorkshared)
+            {
+                var unavailable = BuildContextSection(new List<Dictionary<string, object>>(), limit, includeTotalCount);
+                unavailable["available"] = false;
+                return unavailable;
+            }
+
+            var worksets = new FilteredWorksetCollector(document)
+                .OfKind(WorksetKind.UserWorkset)
+                .ToWorksets()
+                .OrderBy(workset => workset.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(BuildWorksetSummary)
+                .ToList();
+            var section = BuildContextSection(worksets, limit, includeTotalCount);
+            section["available"] = true;
+            return section;
+        }
+
+        private static Dictionary<string, object> BuildWorksetSummary(Workset workset)
+        {
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToWorksetIdString(workset.Id),
+                ["uniqueId"] = workset.UniqueId.ToString("D"),
+                ["name"] = workset.Name,
+                ["kind"] = workset.Kind.ToString(),
+                ["isOpen"] = workset.IsOpen,
+                ["isEditable"] = workset.IsEditable,
+                ["isVisibleByDefault"] = workset.IsVisibleByDefault,
+                ["isDefaultWorkset"] = workset.IsDefaultWorkset
+            };
+            AddIfNotBlank(summary, "owner", workset.Owner);
+            return summary;
+        }
+
+        private static List<Dictionary<string, object>> BuildDesignOptionSummaries(Document document)
+        {
+            ElementId activeOptionId = null;
+            try
+            {
+                activeOptionId = DesignOption.GetActiveDesignOptionId(document);
+            }
+            catch
+            {
+                activeOptionId = null;
+            }
+
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(DesignOption))
+                .Cast<DesignOption>()
+                .OrderBy(option => GetDesignOptionSetName(option), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(option => SafeElementName(option), StringComparer.OrdinalIgnoreCase)
+                .Select(option => BuildDesignOptionSummary(option, activeOptionId))
+                .ToList();
+        }
+
+        private static Dictionary<string, object> BuildDesignOptionSummary(DesignOption option, ElementId activeOptionId)
+        {
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(option.Id),
+                ["uniqueId"] = option.UniqueId,
+                ["name"] = SafeElementName(option),
+                ["isPrimary"] = option.IsPrimary,
+                ["isActive"] = IsValidElementId(activeOptionId) && string.Equals(ToElementIdString(activeOptionId), ToElementIdString(option.Id), StringComparison.OrdinalIgnoreCase)
+            };
+
+            AddIfNotBlank(summary, "optionSetId", GetDesignOptionSetId(option));
+            AddIfNotBlank(summary, "optionSetName", GetDesignOptionSetName(option));
+            return summary;
+        }
+
+        private static string GetDesignOptionSetId(DesignOption option)
+        {
+            try
+            {
+                ElementId id = option.get_Parameter(BuiltInParameter.OPTION_SET_ID)?.AsElementId();
+                return IsValidElementId(id) ? ToElementIdString(id) : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string GetDesignOptionSetName(DesignOption option)
+        {
+            try
+            {
+                Parameter parameter = option.get_Parameter(BuiltInParameter.OPTION_SET_NAME);
+                return parameter?.AsString() ?? parameter?.AsValueString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static List<Dictionary<string, object>> BuildRevitLinkSummaries(Document document)
+        {
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(RevitLinkInstance))
+                .Cast<RevitLinkInstance>()
+                .OrderBy(link => SafeElementName(link), StringComparer.OrdinalIgnoreCase)
+                .Select(link => BuildRevitLinkSummary(document, link))
+                .ToList();
+        }
+
+        private static Dictionary<string, object> BuildRevitLinkSummary(Document document, RevitLinkInstance link)
+        {
+            ElementId typeId = link.GetTypeId();
+            RevitLinkType linkType = document.GetElement(typeId) as RevitLinkType;
+            Document linkedDocument = null;
+            try
+            {
+                linkedDocument = link.GetLinkDocument();
+            }
+            catch
+            {
+                linkedDocument = null;
+            }
+
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(link.Id),
+                ["uniqueId"] = link.UniqueId,
+                ["name"] = SafeElementName(link)
+            };
+
+            if (IsValidElementId(typeId)) summary["typeId"] = ToElementIdString(typeId);
+            if (linkType != null)
+            {
+                AddIfNotBlank(summary, "typeName", SafeElementName(linkType));
+                summary["isLoaded"] = IsRevitLinkLoaded(document, linkType);
+                AddIfNotBlank(summary, "loadStatus", GetRevitLinkStatus(linkType));
+            }
+            else
+            {
+                summary["isLoaded"] = linkedDocument != null;
+            }
+
+            if (linkedDocument != null)
+            {
+                AddIfNotBlank(summary, "linkedDocumentTitle", linkedDocument.Title);
+                AddIfNotBlank(summary, "linkedDocumentPath", linkedDocument.PathName);
+            }
+
+            return summary;
+        }
+
+        private static bool IsRevitLinkLoaded(Document document, RevitLinkType linkType)
+        {
+            try
+            {
+                return RevitLinkType.IsLoaded(document, linkType.Id);
+            }
+            catch
+            {
+                try
+                {
+                    return linkType.GetLinkedFileStatus() == LinkedFileStatus.Loaded;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        private static string GetRevitLinkStatus(RevitLinkType linkType)
+        {
+            try
+            {
+                return linkType.GetLinkedFileStatus().ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static Dictionary<string, object> BuildContextSection(List<Dictionary<string, object>> items, int limit, bool includeTotalCount)
+        {
+            List<Dictionary<string, object>> page = items.Take(limit).ToList();
+            var section = new Dictionary<string, object>
+            {
+                ["items"] = page.ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = page.Count < items.Count
+            };
+            if (includeTotalCount) section["totalCount"] = items.Count;
+            return section;
+        }
+
+        private static void AddIfNotBlank(Dictionary<string, object> target, string key, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) target[key] = value;
+        }
+
         private static Dictionary<string, object> BuildModelReadiness(UIApplication app, Document document, long generation, Dictionary<string, object> payload)
         {
             Level[] levels = new FilteredElementCollector(document)
@@ -5282,6 +5577,7 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.get_selection",
                     "revit.analyze_model",
                     "revit.get_model_readiness",
+                    "revit.get_model_context",
                     "revit.get_material_quantities",
                     "revit.get_warnings",
                     "revit.get_rooms",

@@ -66,6 +66,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.get_selection",
       "revit.analyze_model",
       "revit.get_model_readiness",
+      "revit.get_model_context",
       "revit.get_material_quantities",
       "revit.get_warnings",
       "revit.get_rooms",
@@ -194,6 +195,41 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(readiness.structuredContent?.data?.totalCount, 2);
     assert.equal(readiness.structuredContent?.data?.scenarios?.[0]?.name, "familyPlacement");
     assert.equal(readiness.structuredContent?.data?.scenarios?.[0]?.hints?.hostedFamilySymbolId, "9200");
+
+    const modelContextTool = tools.tools.find((tool) => tool.name === "revit.get_model_context");
+    assert.ok(modelContextTool?.inputSchema, "revit.get_model_context should declare inputSchema");
+    assert.equal(modelContextTool.annotations?.readOnlyHint, true);
+    const modelContextInputSchema = JSON.stringify(modelContextTool.inputSchema);
+    assert.match(modelContextInputSchema, /phaseLimit/);
+    assert.match(modelContextInputSchema, /includeWorksets/);
+    assert.match(modelContextInputSchema, /includeRevitLinks/);
+    const modelContextOutputSchema = JSON.stringify(modelContextTool.outputSchema);
+    assert.match(modelContextOutputSchema, /projectInfo/);
+    assert.match(modelContextOutputSchema, /designOptions/);
+    assert.match(modelContextOutputSchema, /revitLinks/);
+    const modelContext = (await client.callTool({
+      name: "revit.get_model_context",
+      arguments: { phaseLimit: 1, designOptionLimit: 1, revitLinkLimit: 1, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          projectInfo?: { number?: string };
+          phases?: { returnedCount?: number; totalCount?: number; truncated?: boolean; items?: Array<{ id?: string; name?: string }> };
+          worksets?: { available?: boolean; items?: Array<{ name?: string }> };
+          designOptions?: { items?: Array<{ optionSetName?: string }> };
+          revitLinks?: { items?: Array<{ linkedDocumentTitle?: string }> };
+        };
+      };
+    };
+    assert.equal(modelContext.isError, undefined);
+    assert.equal(modelContext.structuredContent?.data?.projectInfo?.number, "P-001");
+    assert.equal(modelContext.structuredContent?.data?.phases?.returnedCount, 1);
+    assert.equal(modelContext.structuredContent?.data?.phases?.totalCount, 2);
+    assert.equal(modelContext.structuredContent?.data?.phases?.truncated, true);
+    assert.equal(modelContext.structuredContent?.data?.worksets?.available, true);
+    assert.equal(modelContext.structuredContent?.data?.designOptions?.items?.[0]?.optionSetName, "Entry Layout");
+    assert.equal(modelContext.structuredContent?.data?.revitLinks?.items?.[0]?.linkedDocumentTitle, "Site.rvt");
 
     const materialQuantities = (await client.callTool({
       name: "revit.get_material_quantities",
