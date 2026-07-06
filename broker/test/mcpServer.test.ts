@@ -59,6 +59,7 @@ test("broker exposes annotated tools with output schemas and callable structured
     for (const expected of [
       "revit.get_current_view",
       "revit.list_documents",
+      "revit.create_project_from_template",
       "revit.get_levels",
       "revit.get_views",
       "revit.get_sheets",
@@ -86,6 +87,31 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.ok(currentViewTool?.inputSchema, "revit.get_current_view should declare inputSchema");
     assert.equal(currentViewTool.annotations?.readOnlyHint, true);
     assert.match(JSON.stringify(currentViewTool.inputSchema), /includeCropBox/);
+
+    const createProjectTool = tools.tools.find((tool) => tool.name === "revit.create_project_from_template");
+    assert.ok(createProjectTool?.inputSchema, "revit.create_project_from_template should declare inputSchema");
+    assert.equal(createProjectTool.annotations?.readOnlyHint, false);
+    assert.equal(createProjectTool.annotations?.destructiveHint, true);
+    assert.match(JSON.stringify(createProjectTool.inputSchema), /templatePath/);
+    assert.match(JSON.stringify(createProjectTool.outputSchema), /outputPath/);
+    assert.match(JSON.stringify(createProjectTool.outputSchema), /activated/);
+
+    const createdProject = (await client.callTool({
+      name: "revit.create_project_from_template",
+      arguments: {
+        templatePath: "C:\\ProgramData\\Autodesk\\RVT 2024\\Templates\\English\\DefaultMetric.rte",
+        outputPath: "C:\\tmp\\revit-mcp-next-fixtures\\smoke.rvt",
+        confirm: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { outputPath?: string; activated?: boolean; document?: { path?: string; isActive?: boolean } } };
+    };
+    assert.equal(createdProject.isError, undefined);
+    assert.equal(createdProject.structuredContent?.data?.outputPath, "C:\\tmp\\revit-mcp-next-fixtures\\smoke.rvt");
+    assert.equal(createdProject.structuredContent?.data?.activated, true);
+    assert.equal(createdProject.structuredContent?.data?.document?.path, "C:\\tmp\\revit-mcp-next-fixtures\\smoke.rvt");
+    assert.equal(createdProject.structuredContent?.data?.document?.isActive, true);
 
     const currentView = (await client.callTool({
       name: "revit.get_current_view",

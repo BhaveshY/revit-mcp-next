@@ -11,6 +11,9 @@ param(
     [string] $PreflightReportPath = "",
     [int] $TimeoutSeconds = 900,
     [switch] $LaunchRevit,
+    [switch] $UseDynamoJournal,
+    [switch] $AllowUnwarmedDynamoJournal,
+    [string] $DynamoJournalPath = "",
     [switch] $PreflightOnly,
     [switch] $ValidateOnly,
     [switch] $AllowFailed,
@@ -191,10 +194,13 @@ function Get-DynamoMajorMinorVersion($Version) {
 }
 
 function Resolve-DynamoSettingsPath($RequestedPath, $DynamoVersion) {
+    $majorMinor = Get-DynamoMajorMinorVersion $DynamoVersion
     if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
         return [ordered] @{
             path = Get-FullPath $RequestedPath
             source = "explicit"
+            expectedVersion = $majorMinor
+            confidence = "explicit"
         }
     }
 
@@ -202,11 +208,12 @@ function Resolve-DynamoSettingsPath($RequestedPath, $DynamoVersion) {
         return [ordered] @{
             path = ""
             source = ""
+            expectedVersion = $majorMinor
+            confidence = "none"
         }
     }
 
     $dynamoRevitRoot = Join-Path $env:APPDATA "Dynamo\Dynamo Revit"
-    $majorMinor = Get-DynamoMajorMinorVersion $DynamoVersion
 
     if (Test-Path -LiteralPath $dynamoRevitRoot -PathType Container) {
         $existingSettings = @(Get-ChildItem -LiteralPath $dynamoRevitRoot -Directory -ErrorAction SilentlyContinue |
@@ -225,13 +232,17 @@ function Resolve-DynamoSettingsPath($RequestedPath, $DynamoVersion) {
             if ($matching) {
                 return [ordered] @{
                     path = $matching.FullName
-                    source = "appdata"
+                    source = "appdata-exact-version"
+                    expectedVersion = $majorMinor
+                    confidence = "version-match"
                 }
             }
 
             return [ordered] @{
                 path = Get-FullPath (Join-Path $dynamoRevitRoot "$majorMinor\DynamoSettings.xml")
                 source = "expected-from-dynamo-version"
+                expectedVersion = $majorMinor
+                confidence = "expected-path"
             }
         }
 
@@ -239,7 +250,9 @@ function Resolve-DynamoSettingsPath($RequestedPath, $DynamoVersion) {
         if ($latest) {
             return [ordered] @{
                 path = $latest.FullName
-                source = "appdata"
+                source = "appdata-latest-fallback"
+                expectedVersion = ""
+                confidence = "latest-fallback"
             }
         }
     }
@@ -248,12 +261,16 @@ function Resolve-DynamoSettingsPath($RequestedPath, $DynamoVersion) {
         return [ordered] @{
             path = Get-FullPath (Join-Path $dynamoRevitRoot "$majorMinor\DynamoSettings.xml")
             source = "expected-from-dynamo-version"
+            expectedVersion = $majorMinor
+            confidence = "expected-path"
         }
     }
 
     return [ordered] @{
         path = ""
         source = ""
+        expectedVersion = ""
+        confidence = "none"
     }
 }
 
@@ -265,6 +282,8 @@ function Get-DynamoSettingsReport($RequestedPath, $DynamoVersion) {
             path = ""
             source = ""
             version = ""
+            expectedVersion = [string] $selected.expectedVersion
+            confidence = [string] $selected.confidence
             exists = $false
             parseableXml = $false
             appearsWarmed = $false
@@ -299,6 +318,8 @@ function Get-DynamoSettingsReport($RequestedPath, $DynamoVersion) {
         path = $selectedPath
         source = [string] $selected.source
         version = Split-Path -Leaf (Split-Path -Parent $selectedPath)
+        expectedVersion = [string] $selected.expectedVersion
+        confidence = [string] $selected.confidence
         exists = [bool] $exists
         parseableXml = [bool] $parseableXml
         appearsWarmed = [bool] ($exists -and $parseableXml)
@@ -341,6 +362,9 @@ function New-DynamoPreflightReport($RevitExecutablePath, $InstallRootFull, $Grap
         dynamoVersionSource = $dynamoVersionSource
         dynamoSettingsPath = [string] $settingsInfo.path
         dynamoSettingsSource = [string] $settingsInfo.source
+        dynamoSettingsVersion = [string] $settingsInfo.version
+        dynamoSettingsExpectedVersion = [string] $settingsInfo.expectedVersion
+        dynamoSettingsConfidence = [string] $settingsInfo.confidence
         dynamoSettingsExists = [bool] $settingsInfo.exists
         dynamoSettingsParseableXml = [bool] $settingsInfo.parseableXml
         dynamoSettingsAppearsWarmed = [bool] $settingsInfo.appearsWarmed
@@ -389,6 +413,49 @@ function Save-DynamoPreflightReport($Report, $Path) {
 
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     Set-Content -LiteralPath $Path -Value ($Report | ConvertTo-Json -Depth 12) -Encoding UTF8
+}
+
+function ConvertTo-JournalString($Value) {
+    return ([string] $Value).Replace('"', '""')
+}
+
+function Get-DefaultDynamoJournalPath($EvidenceFull) {
+    $parent = Split-Path -Parent $EvidenceFull
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        $parent = (Get-Location).Path
+    }
+
+    return Join-Path $parent "dynamo-host-smoke.journal.txt"
+}
+
+function New-DynamoJournalFile($Path, $GraphFull) {
+    $parent = Split-Path -Parent $Path
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        $parent = (Get-Location).Path
+    }
+
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+    $graphJournal = ConvertTo-JournalString $GraphFull
+    $content = @(
+        "' Revit MCP Next Dynamo host-smoke journal.",
+        "' This journal only opens/runs the packaged Dynamo graph after Dynamo has already been manually warmed.",
+        "Dim Jrn",
+        "Set Jrn = CrsJournalScript",
+        "Jrn.Data  _",
+        "        ""dynShowUI""  , ""True""",
+        "Jrn.Data  _",
+        "        ""dynAutomation""  , ""False""",
+        "Jrn.Data  _",
+        "        ""dynForceManualRun""  , ""False""",
+        "Jrn.Data  _",
+        "        ""dynPath""  , ""$graphJournal""",
+        "Jrn.Data  _",
+        "        ""dynPathExecute""  , ""True""",
+        "Jrn.Command ""Ribbon""  , ""Dynamo starten , ID_VISUAL_PROGRAMMING_DYNAMO"""
+    )
+
+    Set-Content -LiteralPath $Path -Value $content -Encoding ASCII
 }
 
 function Get-JsonArray($Value) {
@@ -466,6 +533,7 @@ $installRootFull = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 } else {
     Get-FullPath $InstallRoot
 }
+$authConfigFull = Get-FullPath (Join-Path $installRootFull "config\auth.env")
 
 if ([string]::IsNullOrWhiteSpace($GraphPath)) {
     $GraphPath = Join-Path $installRootFull "integrations\dynamo\revit_mcp_next_host_smoke.dyn"
@@ -484,6 +552,10 @@ if ([string]::IsNullOrWhiteSpace($PreflightReportPath)) {
 }
 $preflightReportFull = Get-FullPath $PreflightReportPath
 $preflight = New-DynamoPreflightReport $revitExe $installRootFull $graphFull $evidenceFull $modelFull $preflightReportFull
+if ([string]::IsNullOrWhiteSpace($DynamoJournalPath)) {
+    $DynamoJournalPath = Get-DefaultDynamoJournalPath $evidenceFull
+}
+$dynamoJournalFull = Get-FullPath $DynamoJournalPath
 
 $instructions = @(
     "Open Revit $RevitYear with the disposable model.",
@@ -506,7 +578,13 @@ if ($DryRun) {
         preflightReportPath = $preflightReportFull
         evidencePath = $evidenceFull
         timeoutSeconds = $TimeoutSeconds
+        useDynamoJournal = [bool] $UseDynamoJournal
+        dynamoJournalPath = if ($UseDynamoJournal) { $dynamoJournalFull } else { "" }
+        dynamoJournalRequiresWarmedSettings = [bool] ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal)
+        dynamoJournalAllowed = [bool] (-not $UseDynamoJournal -or $AllowUnwarmedDynamoJournal -or [bool] $preflight.dynamoSettingsAppearsWarmed)
         environment = [ordered] @{
+            REVIT_MCP_NEXT_INSTALL_ROOT = $installRootFull
+            REVIT_MCP_NEXT_AUTH_CONFIG = $authConfigFull
             REVIT_MCP_NEXT_DYNAMO_EVIDENCE = $evidenceFull
             REVIT_MCP_NEXT_DYNAMO_MODEL = $modelFull
         }
@@ -553,6 +631,10 @@ if ($shouldWritePreflightReport) {
     Save-DynamoPreflightReport $preflight $preflightReportFull
 }
 
+if ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal -and [bool] $preflight.dynamoSettingsAppearsWarmed -ne $true) {
+    throw "Dynamo journal launch requires an existing parseable DynamoSettings.xml so Autodesk/Dynamo privacy and startup prompts are handled manually before automation. Run Dynamo once in this test profile, answer prompts manually, then rerun. Pass -AllowUnwarmedDynamoJournal only for explicitly supervised local experiments."
+}
+
 if ($ValidateOnly) {
     if (-not (Test-Path -LiteralPath $evidenceFull -PathType Leaf)) {
         throw "Dynamo evidence was not found: $evidenceFull"
@@ -586,7 +668,11 @@ if (Test-Path -LiteralPath $evidenceFull -PathType Leaf) {
 
 $oldEvidence = $env:REVIT_MCP_NEXT_DYNAMO_EVIDENCE
 $oldModel = $env:REVIT_MCP_NEXT_DYNAMO_MODEL
+$oldInstallRoot = $env:REVIT_MCP_NEXT_INSTALL_ROOT
+$oldAuthConfig = $env:REVIT_MCP_NEXT_AUTH_CONFIG
 try {
+    $env:REVIT_MCP_NEXT_INSTALL_ROOT = $installRootFull
+    $env:REVIT_MCP_NEXT_AUTH_CONFIG = $authConfigFull
     $env:REVIT_MCP_NEXT_DYNAMO_EVIDENCE = $evidenceFull
     if (-not [string]::IsNullOrWhiteSpace($modelFull)) {
         $env:REVIT_MCP_NEXT_DYNAMO_MODEL = $modelFull
@@ -600,17 +686,32 @@ try {
     if ($LaunchRevit) {
         $launchArgs = @()
         if (-not [string]::IsNullOrWhiteSpace($modelFull)) {
-            $launchArgs += $modelFull
+            $launchArgs += "`"$modelFull`""
         }
 
-        Write-Step "Launching Revit so it inherits Dynamo smoke environment variables."
+        if ($UseDynamoJournal) {
+            New-DynamoJournalFile $dynamoJournalFull $graphFull
+            $launchArgs += "/J"
+            $launchArgs += "`"$dynamoJournalFull`""
+        }
+
+        if ($UseDynamoJournal) {
+            Write-Step "Launching Revit with a warmed-profile Dynamo journal so it inherits smoke environment variables and runs the graph."
+            Write-Step "Dynamo journal: $dynamoJournalFull"
+        } else {
+            Write-Step "Launching Revit so it inherits Dynamo smoke environment variables."
+        }
         Start-Process -FilePath $revitExe -ArgumentList $launchArgs | Out-Null
     }
 
     Write-Step "Dynamo host smoke is waiting for evidence."
     Write-Step "Graph: $graphFull"
     Write-Step "Evidence path: $evidenceFull"
-    Write-Step "Open Dynamo for Revit, run the graph once, then keep this script open until validation completes."
+    if ($UseDynamoJournal) {
+        Write-Step "Waiting for the Dynamo journal to open and run the packaged graph. If Dynamo shows privacy or startup prompts, handle them manually and rerun."
+    } else {
+        Write-Step "Open Dynamo for Revit, run the graph once, then keep this script open until validation completes."
+    }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while (-not (Test-Path -LiteralPath $evidenceFull -PathType Leaf)) {
@@ -625,6 +726,8 @@ try {
 } finally {
     $env:REVIT_MCP_NEXT_DYNAMO_EVIDENCE = $oldEvidence
     $env:REVIT_MCP_NEXT_DYNAMO_MODEL = $oldModel
+    $env:REVIT_MCP_NEXT_INSTALL_ROOT = $oldInstallRoot
+    $env:REVIT_MCP_NEXT_AUTH_CONFIG = $oldAuthConfig
 }
 
 $result = [ordered] @{
@@ -634,6 +737,7 @@ $result = [ordered] @{
     modelPath = $modelFull
     installRoot = $installRootFull
     preflightReportPath = if ($shouldWritePreflightReport) { $preflightReportFull } else { "" }
+    dynamoJournalPath = if ($UseDynamoJournal) { $dynamoJournalFull } else { "" }
     preflight = $preflight
 }
 

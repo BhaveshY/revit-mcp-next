@@ -101,6 +101,7 @@ function New-SyntheticHostIntegrationEvidence(
 
     $pyRevitEvidencePath = Join-Path $Root "pyrevit.json"
     $dynamoEvidencePath = Join-Path $Root "dynamo.json"
+    $dynamoPreflightPath = Join-Path $Root "dynamo-preflight.json"
     $dynamoStatus = if ($Failed) { "failed" } else { "passed" }
     $dynamoPreviewReady = if ($Failed) { $false } else { $true }
 
@@ -156,6 +157,38 @@ function New-SyntheticHostIntegrationEvidence(
         evidencePath = $dynamoEvidencePath
     } | ConvertTo-Json -Depth 8) -Encoding UTF8
 
+    Set-Content -LiteralPath $dynamoPreflightPath -Value ([ordered] @{
+        schemaVersion = 1
+        status = "preflight"
+        createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        revitYear = 2024
+        revitPath = "C:\Program Files\Autodesk\Revit 2024\Revit.exe"
+        dynamoVersion = "2.19.4"
+        dynamoVersionSource = "synthetic"
+        dynamoSettingsPath = "C:\Users\Synthetic\AppData\Roaming\Dynamo\Dynamo Revit\2.19\DynamoSettings.xml"
+        dynamoSettingsSource = "appdata-exact-version"
+        dynamoSettingsVersion = "2.19"
+        dynamoSettingsExpectedVersion = "2.19"
+        dynamoSettingsConfidence = "version-match"
+        dynamoSettingsExists = $true
+        dynamoSettingsParseableXml = $true
+        dynamoSettingsAppearsWarmed = $true
+        dynamoSettingsWarmedReason = "existing-parseable-settings-file"
+        dynamoSettingsLastWriteTimeUtc = (Get-Date).ToUniversalTime().ToString("o")
+        graphPath = "C:\synthetic\integrations\dynamo\revit_mcp_next_host_smoke.dyn"
+        graphExists = $true
+        installRoot = "C:\synthetic\RevitMcpNext"
+        installRootExists = $true
+        evidencePath = $dynamoEvidencePath
+        modelPath = "C:\synthetic\Synthetic Evidence Contract.rvt"
+        modelExists = $true
+        preflightReportPath = $dynamoPreflightPath
+        privacySettingsChanged = $false
+        privacyPromptAutomation = $false
+        uiPromptAutomation = $false
+        note = "Synthetic preflight for release evidence contract."
+    } | ConvertTo-Json -Depth 8) -Encoding UTF8
+
     Set-Content -LiteralPath (Join-Path $Root "host-integrations-summary.json") -Value ([ordered] @{
         schemaVersion = 1
         status = if ($Failed) { "failed" } else { "passed" }
@@ -190,6 +223,23 @@ function New-SyntheticHostIntegrationEvidence(
                 }
                 createdElementIds = if ($Failed) { @() } else { @("9002") }
             }
+        }
+        dynamoPreflight = [ordered] @{
+            status = "preflight"
+            evidencePath = "dynamo-preflight.json"
+            revitYear = 2024
+            dynamoVersion = "2.19.4"
+            dynamoSettingsSource = "appdata-exact-version"
+            dynamoSettingsVersion = "2.19"
+            dynamoSettingsConfidence = "version-match"
+            dynamoSettingsAppearsWarmed = $true
+            graphPath = "C:\synthetic\integrations\dynamo\revit_mcp_next_host_smoke.dyn"
+            graphExists = $true
+            installRoot = "C:\synthetic\RevitMcpNext"
+            installRootExists = $true
+            privacySettingsChanged = $false
+            privacyPromptAutomation = $false
+            uiPromptAutomation = $false
         }
     } | ConvertTo-Json -Depth 8) -Encoding UTF8
 }
@@ -451,6 +501,7 @@ try {
     Invoke-RepoScript (Join-Path $logsRoot "host-integrations-evidence.log") (Join-Path $repoRoot "scripts\collect-host-integration-evidence.ps1") @(
         "-PyRevitEvidencePath", (Join-Path $hostIntegrationRawRoot "pyrevit.json"),
         "-DynamoEvidencePath", (Join-Path $hostIntegrationRawRoot "dynamo.json"),
+        "-DynamoPreflightReportPath", (Join-Path $hostIntegrationRawRoot "dynamo-preflight.json"),
         "-OutputRoot", $hostIntegrationRoot
     )
 
@@ -465,6 +516,10 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $ambiguousHostIntegrationRoot "b") | Out-Null
     Copy-Item -LiteralPath (Join-Path $hostIntegrationRoot "host-integrations-summary.json") -Destination (Join-Path $ambiguousHostIntegrationRoot "a\host-integrations-summary.json") -Force
     Copy-Item -LiteralPath (Join-Path $hostIntegrationRoot "host-integrations-summary.json") -Destination (Join-Path $ambiguousHostIntegrationRoot "b\host-integrations-summary.json") -Force
+
+    $summaryOnlyHostIntegrationRoot = Join-Path $runRoot "host-integrations-summary-only"
+    New-Item -ItemType Directory -Force -Path $summaryOnlyHostIntegrationRoot | Out-Null
+    Copy-Item -LiteralPath (Join-Path $hostIntegrationRoot "host-integrations-summary.json") -Destination (Join-Path $summaryOnlyHostIntegrationRoot "host-integrations-summary.json") -Force
 
     $leakyAdditionalEvidenceRoot = Join-Path $runRoot "leaky-additional-evidence"
     New-Item -ItemType Directory -Force -Path $leakyAdditionalEvidenceRoot | Out-Null
@@ -554,6 +609,15 @@ try {
         "-SupportBundlePath", $supportZip.FullName,
         "-HostedIntegrationEvidencePath", $ambiguousHostIntegrationRoot
     ) "*multiple host-integrations-summary.json*files*" "Ambiguous hosted integration summary gate"
+
+    Assert-ScriptFailsLike $evidenceScript @(
+        "-PackageRoot", $packageRoot,
+        "-OutputRoot", (Join-Path $runRoot "fail-host-integrations-summary-only"),
+        "-SigningSkipReason", "No signing certificate configured in hosted evidence contract.",
+        "-LiveSmokeEvidencePath", $liveSmokeRoot,
+        "-SupportBundlePath", $supportZip.FullName,
+        "-HostedIntegrationEvidencePath", $summaryOnlyHostIntegrationRoot
+    ) "*raw hosted evidence*not found*" "Summary-only hosted integration evidence gate"
 
     Assert-ScriptFailsLike $evidenceScript @(
         "-PackageRoot", $packageRoot,
@@ -673,6 +737,12 @@ try {
     if ($evidenceManifest.hostedIntegrations.summary.packageIdentity.hosts.dynamo.assemblySha256 -ne $packagedAddinSha256) {
         throw "Dynamo hosted integration package identity was not recorded."
     }
+    if ($evidenceManifest.hostedIntegrations.summary.dynamoPreflight.status -ne "preflight") {
+        throw "Dynamo preflight summary was not recorded."
+    }
+    if ($evidenceManifest.hostedIntegrations.summary.dynamoPreflight.privacyPromptAutomation -ne $false -or $evidenceManifest.hostedIntegrations.summary.dynamoPreflight.uiPromptAutomation -ne $false) {
+        throw "Dynamo preflight prompt automation policy was not recorded."
+    }
     if ($evidenceManifest.validation.validateRepoLog.present -ne $true) {
         throw "validate-repo log was not recorded."
     }
@@ -687,6 +757,9 @@ try {
     Assert-InventoryContains $evidenceManifest.contents "package/CHECKSUMS.sha256"
     Assert-InventoryContains $evidenceManifest.contents "package/package-zip.sha256"
     Assert-InventoryContains $evidenceManifest.contents "host-integrations/host-integrations-summary.json"
+    Assert-InventoryContains $evidenceManifest.contents "host-integrations/pyrevit.json"
+    Assert-InventoryContains $evidenceManifest.contents "host-integrations/dynamo.json"
+    Assert-InventoryContains $evidenceManifest.contents "host-integrations/dynamo-preflight.json"
     Assert-InventoryContains $evidenceManifest.contents "release-evidence-summary.md"
 
     $readinessScript = Join-Path $repoRoot "scripts\check-release-readiness.ps1"

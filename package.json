@@ -29,6 +29,7 @@
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "package:windows:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -DryRun",
     "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1",
+    "fixture:revit-project": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-revit-project-from-template.ps1",
     "dev-cert:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-dev-signing-certificate.ps1",
     "revit:trust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-revit-addin-trust.ps1",
     "pyrevit:hosts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-pyrevit-hosts-cache.ps1",

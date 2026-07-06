@@ -51,6 +51,14 @@ Use the packaged wrapper to launch Revit with those environment variables, wait 
 npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit
 ```
 
+After Dynamo has been opened once in the target test profile and `DynamoSettings.xml` exists, the wrapper can run the packaged graph through a temporary Revit journal:
+
+```powershell
+npm run smoke:dynamo-host -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -EvidencePath artifacts\host-integrations\raw\dynamo.json -LaunchRevit -UseDynamoJournal
+```
+
+Journal mode refuses to run on an unwarmed Dynamo profile by default. It does not change privacy settings, preseed consent, or click startup prompts.
+
 For full hosted integration evidence, prefer:
 
 ```powershell

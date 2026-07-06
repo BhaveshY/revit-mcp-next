@@ -9,6 +9,8 @@ import type {
   ChangeApplyResult,
   ChangePreviewResult,
   ChangeSetRequest,
+  CreateProjectFromTemplateRequest,
+  CreateProjectFromTemplateResult,
   CurrentViewRequest,
   CurrentViewResult,
   LevelSummary,
@@ -47,6 +49,10 @@ export interface RevitBridgeClient {
     request: BridgeRequest<Record<string, never>>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitDocumentSummary[]>>;
+  createProjectFromTemplate(
+    request: BridgeRequest<CreateProjectFromTemplateRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CreateProjectFromTemplateResult>>;
   getLevels(
     request: BridgeRequest<{ documentFingerprint?: string }>,
     options?: BridgeCallOptions

@@ -410,6 +410,10 @@ function Test-HostedIntegrations($Manifest, $Inventory) {
     if (-not $captured) { return }
 
     Test-SectionFiles $Inventory "hostedIntegrations.files" $Manifest.hostedIntegrations.storedAs $Manifest.hostedIntegrations.files "Hosted integration evidence"
+    foreach ($relativePath in @("pyrevit.json", "dynamo.json", "dynamo-preflight.json")) {
+        $storedPath = if (Test-Blank $Manifest.hostedIntegrations.storedAs) { $relativePath } else { "$($Manifest.hostedIntegrations.storedAs)/$relativePath" }
+        Require-InventoryPath $Inventory $storedPath "hostedIntegrations.raw.$relativePath" "Hosted integration evidence is missing required raw file $storedPath."
+    }
 
     if ($Manifest.hostedIntegrations.summary.status -eq "passed") {
         Pass "hostedIntegrations.summary.status" "Hosted integration summary passed."
@@ -430,6 +434,22 @@ function Test-HostedIntegrations($Manifest, $Inventory) {
         } else {
             Fail "hostedIntegrations.$hostName.writeCoverage" "$hostName hosted evidence lacks preview/apply write coverage."
         }
+    }
+
+    $preflight = $Manifest.hostedIntegrations.summary.dynamoPreflight
+    if ($preflight -and $preflight.status -eq "preflight") {
+        Pass "hostedIntegrations.dynamoPreflight.status" "Dynamo preflight evidence is captured."
+    } else {
+        Fail "hostedIntegrations.dynamoPreflight.status" "Dynamo preflight evidence is missing from the hosted integration summary."
+    }
+
+    if ($preflight -and
+        [bool] $preflight.privacySettingsChanged -eq $false -and
+        [bool] $preflight.privacyPromptAutomation -eq $false -and
+        [bool] $preflight.uiPromptAutomation -eq $false) {
+        Pass "hostedIntegrations.dynamoPreflight.promptPolicy" "Dynamo preflight records no privacy-setting changes or UI prompt automation."
+    } else {
+        Fail "hostedIntegrations.dynamoPreflight.promptPolicy" "Dynamo preflight must record privacySettingsChanged=false, privacyPromptAutomation=false, and uiPromptAutomation=false."
     }
 
     $packageIdentity = $Manifest.hostedIntegrations.summary.packageIdentity

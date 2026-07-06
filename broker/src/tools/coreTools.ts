@@ -17,6 +17,8 @@ interface CoreToolContext {
 const boundedString = z.string().min(1).max(128);
 const boundedId = z.string().min(1).max(64);
 const boundedLocalPath = z.string().min(1).max(1024);
+const revitTemplatePath = boundedLocalPath.regex(/\.rte$/i, "templatePath must end with .rte");
+const revitProjectPath = boundedLocalPath.regex(/\.rvt$/i, "outputPath must end with .rvt");
 const sha256Schema = z
   .string()
   .regex(/^(sha256:)?[a-fA-F0-9]{64}$/)
@@ -251,6 +253,13 @@ const modelReadinessSchema = {
     .optional()
     .describe("Optional subset of readiness scenarios to return. Omit for the common agent workflow set."),
   includeHints: z.boolean().default(true).describe("Include compact candidate IDs and next actions when available."),
+};
+
+const createProjectFromTemplateSchema = {
+  templatePath: revitTemplatePath.describe("Local Revit template path (.rte) to open through the Revit API."),
+  outputPath: revitProjectPath.describe("Local disposable Revit project path (.rvt) to save."),
+  overwrite: z.boolean().default(false).describe("Overwrite outputPath if it already exists. Defaults to false."),
+  confirm: z.literal(true).describe("Required explicit confirmation because this creates or overwrites a local RVT file."),
 };
 
 const modelContextSchema = {
@@ -887,6 +896,17 @@ const statusDataSchema = z
   })
   .passthrough();
 
+const createProjectFromTemplateResultSchema = z
+  .object({
+    templatePath: z.string(),
+    outputPath: z.string(),
+    overwritten: z.boolean(),
+    activated: z.boolean(),
+    document: documentSummarySchema,
+    source: z.literal("revit-api"),
+  })
+  .passthrough();
+
 const levelSummarySchema = z
   .object({
     id: z.string(),
@@ -1153,6 +1173,7 @@ const outputSchemas = {
     .strict(),
   status: toolOutputSchema(statusDataSchema),
   documents: toolOutputSchema(z.array(documentSummarySchema)),
+  createProjectFromTemplate: toolOutputSchema(createProjectFromTemplateResultSchema),
   levels: toolOutputSchema(z.array(levelSummarySchema)),
   currentView: toolOutputSchema(currentViewDataSchema),
   views: toolOutputSchema(viewsResultSchema),
@@ -1217,6 +1238,28 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const request = makeRequest(context.sessionId, "list_documents", "read", {}, 10000);
       const response = await context.bridge.listDocuments(request, { signal: extra.signal });
       return asToolResult(response, (docs) => `${docs.length} Revit document(s) open.`);
+    }
+  );
+
+  server.registerTool(
+    "revit.create_project_from_template",
+    {
+      title: "Create Revit Project From Template",
+      description:
+        "Create and save a disposable Revit project from a local .rte template through the Revit API. Use for fixture setup before live smoke evidence.",
+      inputSchema: createProjectFromTemplateSchema,
+      outputSchema: outputSchemas.createProjectFromTemplate,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(context.sessionId, "create_project_from_template", "write", args, 120000);
+      const response = await context.bridge.createProjectFromTemplate(request, { signal: extra.signal });
+      return asToolResult(response, (result) => `Created disposable Revit project: ${result.outputPath}`);
     }
   );
 

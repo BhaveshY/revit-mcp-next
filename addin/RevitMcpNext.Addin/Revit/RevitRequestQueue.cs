@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.Revit.UI;
+using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Contracts;
 
 namespace RevitMcpNext.Addin.Revit
@@ -21,7 +22,7 @@ namespace RevitMcpNext.Addin.Revit
         {
             var item = new WorkItem(envelope, cancellationToken);
             _queue.Enqueue(item);
-            _externalEvent?.Raise();
+            RaiseExternalEvent();
 
             return item.Completion.Task;
         }
@@ -42,7 +43,22 @@ namespace RevitMcpNext.Addin.Revit
 
         public void Raise()
         {
-            _externalEvent?.Raise();
+            RaiseExternalEvent();
+        }
+
+        private void RaiseExternalEvent()
+        {
+            if (_externalEvent == null)
+            {
+                DiagnosticsLogger.Info("Revit MCP request queued before ExternalEvent was attached.");
+                return;
+            }
+
+            ExternalEventRequest result = _externalEvent.Raise();
+            if (result != ExternalEventRequest.Accepted && result != ExternalEventRequest.Pending)
+            {
+                DiagnosticsLogger.Info("Revit MCP ExternalEvent raise returned " + result + ". Revit may be busy or blocked by a modal dialog.");
+            }
         }
 
         public void CancelAll(string code, string message)

@@ -42,6 +42,18 @@ test("revitctl parses compact command payloads and auth token config", () => {
   assert.equal(rawCall.operation, "experimental_probe");
   assert.equal(rawCall.operationKind, "write");
   assert.deepEqual(rawCall.payload, { value: 1 });
+
+  const createProject = parseArgs([
+    "create-project",
+    "--payload",
+    '{"templatePath":"C:\\\\Templates\\\\DefaultMetric.rte","outputPath":"C:\\\\tmp\\\\fixture.rvt"}',
+    "--confirm",
+  ]);
+  assert.equal(createProject.command, "create-project");
+  assert.deepEqual(createProject.payload, {
+    templatePath: "C:\\Templates\\DefaultMetric.rte",
+    outputPath: "C:\\tmp\\fixture.rvt",
+  });
 });
 
 test("revitctl calls the named pipe bridge with auth from config", async () => {
@@ -164,6 +176,53 @@ test("revitctl routes write-control commands through guarded bridge operations",
       () =>
         runRevitCtl(
           parseArgs(["call", "apply_change_set", "--pipe", "unused-revitctl-test-pipe", "--payload", JSON.stringify(applyPayload)])
+        ),
+      /requires --confirm/
+    );
+
+    const createProjectPayload = {
+      templatePath: "C:\\Templates\\DefaultMetric.rte",
+      outputPath: "C:\\tmp\\revit-mcp-next-fixtures\\smoke.rvt",
+    };
+    await assert.rejects(
+      () =>
+        runRevitCtl(
+          parseArgs([
+            "create-project",
+            "--pipe",
+            "unused-revitctl-test-pipe",
+            "--payload",
+            JSON.stringify(createProjectPayload),
+          ])
+        ),
+      /requires --confirm/
+    );
+
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.operation, "create_project_from_template");
+        assert.equal(request.operationKind, "write");
+        assert.deepEqual(request.payload, { ...createProjectPayload, confirm: true });
+      },
+      async (pipeName) => {
+        const result = await runRevitCtl(
+          parseArgs(["create-project", "--pipe", pipeName, "--payload", JSON.stringify(createProjectPayload), "--confirm"])
+        );
+        assert.equal(result.exitCode, 0);
+      }
+    );
+
+    await assert.rejects(
+      () =>
+        runRevitCtl(
+          parseArgs([
+            "call",
+            "create_project_from_template",
+            "--pipe",
+            "unused-revitctl-test-pipe",
+            "--payload",
+            JSON.stringify(createProjectPayload),
+          ])
         ),
       /requires --confirm/
     );

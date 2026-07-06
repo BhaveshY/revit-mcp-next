@@ -15,6 +15,8 @@ param(
     [string] $DynamoSettingsPath = "",
     [string] $DynamoPreflightReportPath = "",
     [switch] $LaunchRevitForDynamo,
+    [switch] $UseDynamoJournalForDynamo,
+    [switch] $AllowUnwarmedDynamoJournal,
     [switch] $DynamoValidateOnly,
     [int] $DynamoTimeoutSeconds = 900,
     [switch] $AllowFailed,
@@ -187,6 +189,12 @@ if (-not [string]::IsNullOrWhiteSpace($DynamoSettingsPath)) {
 if ($LaunchRevitForDynamo) {
     $dynamoArgs += "-LaunchRevit"
 }
+if ($UseDynamoJournalForDynamo) {
+    $dynamoArgs += "-UseDynamoJournal"
+}
+if ($AllowUnwarmedDynamoJournal) {
+    $dynamoArgs += "-AllowUnwarmedDynamoJournal"
+}
 if ($DynamoValidateOnly) {
     $dynamoArgs += "-ValidateOnly"
 }
@@ -200,6 +208,7 @@ if ($DryRun) {
 $composeArgs = @(
     "-PyRevitEvidencePath", $pyRevitEvidenceFull,
     "-DynamoEvidencePath", $dynamoEvidenceFull,
+    "-DynamoPreflightReportPath", $dynamoPreflightReportFull,
     "-OutputRoot", $outputRootFull
 )
 

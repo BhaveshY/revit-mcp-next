@@ -35,6 +35,11 @@ namespace RevitMcpNext.Addin.Ipc
 
             if (string.IsNullOrWhiteSpace(configured))
             {
+                configured = ReadTokenConfig(GetAssemblyRelativeAuthConfigPath());
+            }
+
+            if (string.IsNullOrWhiteSpace(configured))
+            {
                 configured = ReadTokenConfig(GetDefaultAuthConfigPath());
             }
 
@@ -70,6 +75,23 @@ namespace RevitMcpNext.Addin.Ipc
             }
 
             return diff == 0;
+        }
+
+        private static string GetAssemblyRelativeAuthConfigPath()
+        {
+            try
+            {
+                string assemblyPath = typeof(PipeAuthOptions).Assembly.Location;
+                string addinDirectory = string.IsNullOrWhiteSpace(assemblyPath) ? null : Path.GetDirectoryName(assemblyPath);
+                string installRoot = string.IsNullOrWhiteSpace(addinDirectory) ? null : Path.GetDirectoryName(addinDirectory);
+                return string.IsNullOrWhiteSpace(installRoot)
+                    ? null
+                    : Path.Combine(installRoot, "config", "auth.env");
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string GetDefaultAuthConfigPath()

@@ -47,6 +47,18 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     related: ["revit.status"],
   },
   {
+    name: "revit.create_project_from_template",
+    title: "Create Project From Template",
+    category: "write",
+    description: "Create and save a disposable RVT project from a local RTE template through the Revit API.",
+    readOnly: false,
+    destructive: true,
+    idempotent: false,
+    whenToUse: "Use for fixture setup when live smoke needs a real .rvt created from an installed template.",
+    compactUse: "Pass local .rte templatePath, disposable .rvt outputPath, overwrite=false unless replacing a known fixture, and confirm=true.",
+    related: ["revit.status", "revit.list_documents", "revit.get_model_readiness"],
+  },
+  {
     name: "revit.get_levels",
     title: "Get Revit Levels",
     category: "read",

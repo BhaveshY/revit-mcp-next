@@ -1,6 +1,7 @@
 param(
     [string] $PyRevitEvidencePath = "",
     [string] $DynamoEvidencePath = "",
+    [string] $DynamoPreflightReportPath = "",
     [string] $OutputRoot = "",
     [switch] $Json
 )
@@ -120,6 +121,59 @@ function Assert-HostEvidence($Evidence, $ExpectedHost, $Path) {
     }
 }
 
+function Assert-DynamoPreflightEvidence($Preflight, $Path) {
+    if ($Preflight.schemaVersion -ne 1) {
+        throw "Dynamo preflight has unexpected schemaVersion: $($Preflight.schemaVersion). File: $Path"
+    }
+
+    if ([string] $Preflight.status -ne "preflight") {
+        throw "Dynamo preflight has unexpected status '$($Preflight.status)'. File: $Path"
+    }
+
+    if ([bool] $Preflight.privacyPromptAutomation -ne $false) {
+        throw "Dynamo preflight must record privacyPromptAutomation=false. File: $Path"
+    }
+
+    if ([bool] $Preflight.uiPromptAutomation -ne $false) {
+        throw "Dynamo preflight must record uiPromptAutomation=false. File: $Path"
+    }
+
+    if ([bool] $Preflight.privacySettingsChanged -ne $false) {
+        throw "Dynamo preflight must record privacySettingsChanged=false. File: $Path"
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string] $Preflight.graphPath)) {
+        throw "Dynamo preflight did not record graphPath. File: $Path"
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string] $Preflight.installRoot)) {
+        throw "Dynamo preflight did not record installRoot. File: $Path"
+    }
+
+    return [ordered] @{
+        status = [string] $Preflight.status
+        evidencePath = "dynamo-preflight.json"
+        revitYear = $Preflight.revitYear
+        dynamoVersion = [string] $Preflight.dynamoVersion
+        dynamoVersionSource = [string] $Preflight.dynamoVersionSource
+        dynamoSettingsPath = [string] $Preflight.dynamoSettingsPath
+        dynamoSettingsSource = [string] $Preflight.dynamoSettingsSource
+        dynamoSettingsVersion = [string] $Preflight.dynamoSettingsVersion
+        dynamoSettingsConfidence = [string] $Preflight.dynamoSettingsConfidence
+        dynamoSettingsAppearsWarmed = [bool] $Preflight.dynamoSettingsAppearsWarmed
+        graphPath = [string] $Preflight.graphPath
+        graphExists = [bool] $Preflight.graphExists
+        installRoot = [string] $Preflight.installRoot
+        installRootExists = [bool] $Preflight.installRootExists
+        evidencePathPlanned = [string] $Preflight.evidencePath
+        modelPath = [string] $Preflight.modelPath
+        modelExists = $Preflight.modelExists
+        privacySettingsChanged = [bool] $Preflight.privacySettingsChanged
+        privacyPromptAutomation = [bool] $Preflight.privacyPromptAutomation
+        uiPromptAutomation = [bool] $Preflight.uiPromptAutomation
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -132,17 +186,30 @@ New-Directory $outputRootFull
 
 $pyRevitSource = Resolve-RequiredFile $PyRevitEvidencePath "pyRevit host-smoke evidence"
 $dynamoSource = Resolve-RequiredFile $DynamoEvidencePath "Dynamo host-smoke evidence"
+if ([string]::IsNullOrWhiteSpace($DynamoPreflightReportPath)) {
+    $dynamoParent = Split-Path -Parent $dynamoSource
+    if ([string]::IsNullOrWhiteSpace($dynamoParent)) {
+        $dynamoParent = (Get-Location).Path
+    }
+
+    $DynamoPreflightReportPath = Join-Path $dynamoParent "dynamo-preflight.json"
+}
+$dynamoPreflightSource = Resolve-RequiredFile $DynamoPreflightReportPath "Dynamo preflight evidence"
 
 $pyRevitEvidence = Read-JsonFile $pyRevitSource
 $dynamoEvidence = Read-JsonFile $dynamoSource
+$dynamoPreflight = Read-JsonFile $dynamoPreflightSource
 
 $pyRevitSummary = Assert-HostEvidence $pyRevitEvidence "pyrevit" $pyRevitSource
 $dynamoSummary = Assert-HostEvidence $dynamoEvidence "dynamo" $dynamoSource
+$dynamoPreflightSummary = Assert-DynamoPreflightEvidence $dynamoPreflight $dynamoPreflightSource
 
 $pyRevitDest = Join-Path $outputRootFull "pyrevit.json"
 $dynamoDest = Join-Path $outputRootFull "dynamo.json"
+$dynamoPreflightDest = Join-Path $outputRootFull "dynamo-preflight.json"
 Copy-Item -LiteralPath $pyRevitSource -Destination $pyRevitDest -Force
 Copy-Item -LiteralPath $dynamoSource -Destination $dynamoDest -Force
+Copy-Item -LiteralPath $dynamoPreflightSource -Destination $dynamoPreflightDest -Force
 
 $summary = [ordered] @{
     schemaVersion = 1
@@ -152,6 +219,7 @@ $summary = [ordered] @{
         pyrevit = $pyRevitSummary
         dynamo = $dynamoSummary
     }
+    dynamoPreflight = $dynamoPreflightSummary
 }
 
 $summaryPath = Join-Path $outputRootFull "host-integrations-summary.json"
@@ -163,6 +231,7 @@ $result = [ordered] @{
     summaryPath = $summaryPath
     pyRevitEvidencePath = $pyRevitDest
     dynamoEvidencePath = $dynamoDest
+    dynamoPreflightReportPath = $dynamoPreflightDest
 }
 
 if ($Json) {

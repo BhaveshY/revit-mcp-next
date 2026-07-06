@@ -244,6 +244,14 @@ function resolveCommandOperation(options: RevitCtlOptions): {
     case "list-documents":
     case "docs":
       return { operation: "list_documents", operationKind: "read", payload: {} };
+    case "create-project":
+    case "create-project-from-template": {
+      const payload = payloadObject(options.payload);
+      if (!options.confirm && payload.confirm !== true) {
+        throw new RevitCtlUsageError("revitctl create-project requires --confirm or payload.confirm=true.");
+      }
+      return { operation: "create_project_from_template", operationKind: "write", payload: options.confirm ? { ...payload, confirm: true } : payload };
+    }
     case "levels":
       return { operation: "get_levels", operationKind: "read", payload: payloadObject(options.payload) };
     case "views":
@@ -286,10 +294,17 @@ function resolveCommandOperation(options: RevitCtlOptions): {
       if (operation === "apply_change_set" && !options.confirm && payload.confirm !== true) {
         throw new RevitCtlUsageError("revitctl call apply_change_set requires --confirm or payload.confirm=true.");
       }
+      if (operation === "create_project_from_template" && !options.confirm && payload.confirm !== true) {
+        throw new RevitCtlUsageError("revitctl call create_project_from_template requires --confirm or payload.confirm=true.");
+      }
+      const confirmedPayload =
+        options.confirm && (operation === "apply_change_set" || operation === "create_project_from_template")
+          ? { ...payload, confirm: true }
+          : payload;
       return {
         operation,
         operationKind: options.operationKind ?? inferOperationKind(operation),
-        payload: operation === "apply_change_set" && options.confirm ? { ...payload, confirm: true } : payload,
+        payload: confirmedPayload,
       };
     }
     default:
@@ -332,6 +347,8 @@ async function callBridge(
       return bridge.status(request as Parameters<NamedPipeBridgeClient["status"]>[0]);
     case "list_documents":
       return bridge.listDocuments(request as Parameters<NamedPipeBridgeClient["listDocuments"]>[0]);
+    case "create_project_from_template":
+      return bridge.createProjectFromTemplate(request as unknown as Parameters<NamedPipeBridgeClient["createProjectFromTemplate"]>[0]);
     case "get_levels":
       return bridge.getLevels(request as Parameters<NamedPipeBridgeClient["getLevels"]>[0]);
     case "get_views":
@@ -376,6 +393,7 @@ async function callBridge(
 function inferOperationKind(operation: string): OperationKind {
   if (operation === "preview_change_set") return "preview";
   if (operation === "apply_change_set") return "write";
+  if (operation === "create_project_from_template") return "write";
   if (operation === "cancel_request") return "debug";
   if (READ_OPERATIONS.has(operation)) return "read";
   return "debug";
@@ -457,6 +475,7 @@ Usage:
   revitctl model-context [--payload <json-or-path>]
   revitctl warnings [--payload <json-or-path>]
   revitctl list-documents
+  revitctl create-project --payload <json-or-path> --confirm
   revitctl levels [--payload <json-or-path>]
   revitctl views [--payload <json-or-path>]
   revitctl sheets [--payload <json-or-path>]

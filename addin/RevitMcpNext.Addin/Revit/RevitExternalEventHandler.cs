@@ -43,6 +43,7 @@ namespace RevitMcpNext.Addin.Revit
             {
                 ["status"] = "read",
                 ["list_documents"] = "read",
+                ["create_project_from_template"] = "write",
                 ["get_levels"] = "read",
                 ["get_views"] = "read",
                 ["get_sheets"] = "read",
@@ -151,6 +152,8 @@ namespace RevitMcpNext.Addin.Revit
                             return Success(request, BuildStatus(app), sw, generation: GetActiveDocumentGeneration(app));
                         case "list_documents":
                             return Success(request, BuildDocumentList(app), sw, generation: GetActiveDocumentGeneration(app));
+                        case "create_project_from_template":
+                            return HandleCreateProjectFromTemplate(app, request, sw);
                         case "get_levels":
                             return HandleGetLevels(app, request, sw);
                         case "get_views":
@@ -1303,6 +1306,136 @@ namespace RevitMcpNext.Addin.Revit
                 ReturnedCount = changes.Count,
                 TotalCount = changes.Count
             }, generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleCreateProjectFromTemplate(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            if (!GetBool(payload, "confirm", false))
+            {
+                return Failure(request, "CONFIRMATION_REQUIRED", "revit.create_project_from_template requires confirm=true because it creates or overwrites a local RVT file.", sw);
+            }
+
+            string templatePathRaw = GetString(payload, "templatePath");
+            string outputPathRaw = GetString(payload, "outputPath");
+            if (string.IsNullOrWhiteSpace(templatePathRaw))
+            {
+                return Failure(request, "TEMPLATE_PATH_REQUIRED", "templatePath is required and must point to a local .rte file.", sw);
+            }
+            if (string.IsNullOrWhiteSpace(outputPathRaw))
+            {
+                return Failure(request, "OUTPUT_PATH_REQUIRED", "outputPath is required and must point to a disposable .rvt file.", sw);
+            }
+
+            string templatePath;
+            string outputPath;
+            try
+            {
+                templatePath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(templatePathRaw.Trim()));
+                outputPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(outputPathRaw.Trim()));
+            }
+            catch (Exception ex)
+            {
+                return Failure(request, "INVALID_MODEL_PATH", "templatePath and outputPath must be valid local paths. " + ex.Message, sw);
+            }
+
+            if (!string.Equals(Path.GetExtension(templatePath), ".rte", StringComparison.OrdinalIgnoreCase))
+            {
+                return Failure(request, "TEMPLATE_EXTENSION_REQUIRED", "templatePath must point to a Revit template file (.rte): " + templatePath, sw);
+            }
+            if (!string.Equals(Path.GetExtension(outputPath), ".rvt", StringComparison.OrdinalIgnoreCase))
+            {
+                return Failure(request, "OUTPUT_EXTENSION_REQUIRED", "outputPath must point to a Revit project file (.rvt): " + outputPath, sw);
+            }
+            if (!File.Exists(templatePath))
+            {
+                return Failure(request, "TEMPLATE_NOT_FOUND", "Revit template file was not found: " + templatePath, sw);
+            }
+
+            string outputDirectory = Path.GetDirectoryName(outputPath);
+            if (string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                return Failure(request, "OUTPUT_DIRECTORY_REQUIRED", "outputPath must include a parent directory: " + outputPath, sw);
+            }
+
+            bool overwrite = GetBool(payload, "overwrite", false);
+            bool outputExists = File.Exists(outputPath);
+            if (outputExists && !overwrite)
+            {
+                return Failure(request, "OUTPUT_ALREADY_EXISTS", "Output RVT already exists. Pass overwrite=true only for a known disposable fixture: " + outputPath, sw);
+            }
+
+            Document createdDocument = null;
+            try
+            {
+                Directory.CreateDirectory(outputDirectory);
+                createdDocument = app.Application.NewProjectDocument(templatePath);
+                if (createdDocument == null)
+                {
+                    return Failure(request, "PROJECT_CREATE_FAILED", "Revit did not create a project document from template: " + templatePath, sw);
+                }
+
+                var saveAsOptions = new SaveAsOptions
+                {
+                    OverwriteExistingFile = overwrite
+                };
+                createdDocument.SaveAs(outputPath, saveAsOptions);
+
+                Document resultDocument = ActivateCreatedProject(app, createdDocument, outputPath);
+                createdDocument = resultDocument;
+                Document activeDocument = app.ActiveUIDocument?.Document;
+                bool activated = ReferenceEquals(resultDocument, activeDocument);
+                long generation = _generations.GetGeneration(resultDocument);
+                var data = new Dictionary<string, object>
+                {
+                    ["templatePath"] = templatePath,
+                    ["outputPath"] = outputPath,
+                    ["overwritten"] = outputExists,
+                    ["activated"] = activated,
+                    ["document"] = BuildDocumentSummary(resultDocument, activeDocument),
+                    ["source"] = "revit-api"
+                };
+
+                return Success(request, data, sw, generation: generation);
+            }
+            catch
+            {
+                if (createdDocument != null && string.IsNullOrWhiteSpace(createdDocument.PathName))
+                {
+                    try
+                    {
+                        createdDocument.Close(false);
+                    }
+                    catch
+                    {
+                        // Preserve the original Revit API failure.
+                    }
+                }
+
+                throw;
+            }
+        }
+
+        private static Document ActivateCreatedProject(UIApplication app, Document createdDocument, string outputPath)
+        {
+            Document activeDocument = app.ActiveUIDocument?.Document;
+            if (ReferenceEquals(createdDocument, activeDocument))
+            {
+                return createdDocument;
+            }
+
+            if (createdDocument != null)
+            {
+                createdDocument.Close(false);
+            }
+
+            UIDocument activatedDocument = app.OpenAndActivateDocument(outputPath);
+            if (activatedDocument?.Document == null)
+            {
+                throw new InvalidOperationException("Revit created the project but did not activate it in the UI: " + outputPath);
+            }
+
+            return activatedDocument.Document;
         }
 
         private BridgeResponseEnvelope HandleApplyChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
@@ -2841,8 +2974,8 @@ namespace RevitMcpNext.Addin.Revit
             Reference reference = new Reference(element);
             IndependentTag tag = IndependentTag.Create(
                 document,
-                view.Id,
                 tagType.Id,
+                view.Id,
                 reference,
                 GetBool(operation, "hasLeader", false),
                 orientation,
@@ -4239,8 +4372,8 @@ namespace RevitMcpNext.Addin.Revit
 
                     IndependentTag tag = IndependentTag.Create(
                         document,
-                        view.Id,
                         tagType.Id,
+                        view.Id,
                         new Reference(element),
                         hasLeader,
                         orientation,
@@ -6063,6 +6196,7 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     "revit.status",
                     "revit.list_documents",
+                    "revit.create_project_from_template",
                     "revit.get_levels",
                     "revit.get_views",
                     "revit.get_sheets",

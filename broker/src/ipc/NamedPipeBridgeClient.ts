@@ -10,6 +10,8 @@ import type {
   ChangeApplyResult,
   ChangePreviewResult,
   ChangeSetRequest,
+  CreateProjectFromTemplateRequest,
+  CreateProjectFromTemplateResult,
   CurrentViewRequest,
   CurrentViewResult,
   LevelSummary,
@@ -71,6 +73,13 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<Record<string, never>>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitDocumentSummary[]>> {
+    return this.send(request, options);
+  }
+
+  createProjectFromTemplate(
+    request: BridgeRequest<CreateProjectFromTemplateRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CreateProjectFromTemplateResult>> {
     return this.send(request, options);
   }
 
@@ -222,6 +231,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       let payloadBytes = 0;
       let expectedLength: number | null = null;
       let settled = false;
+      let phase = "connecting to Revit add-in pipe";
 
       const finish = (response: BridgeResponse<T>) => {
         if (settled) return;
@@ -244,10 +254,20 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       options?.signal?.addEventListener("abort", abortHandler, { once: true });
 
       const timer = setTimeout(() => {
-        finish(errorResponse<T>(request, "BRIDGE_TIMEOUT", `Timed out after ${timeoutMs}ms connecting to Revit add-in.`));
+        finish(
+          errorResponse<T>(
+            request,
+            "BRIDGE_TIMEOUT",
+            `Timed out after ${timeoutMs}ms while ${phase}.`,
+            phase.includes("response")
+              ? "Bring Revit to the foreground and close any modal dialogs, then retry. If this happened during smoke, inspect the Revit journal for TaskDialog entries."
+              : "Open Revit, load the add-in, and run revit.status again."
+          )
+        );
       }, timeoutMs);
 
       socket.once("connect", () => {
+        phase = "writing bridge request";
         const body = Buffer.from(JSON.stringify(this.prepareRequest(request)), "utf8");
         if (body.byteLength > MAX_BRIDGE_FRAME_BYTES) {
           finish(
@@ -262,11 +282,14 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
         const header = Buffer.allocUnsafe(4);
         header.writeUInt32BE(body.byteLength, 0);
-        socket.write(Buffer.concat([header, body]));
+        socket.write(Buffer.concat([header, body]), () => {
+          phase = "waiting for Revit ExternalEvent response";
+        });
       });
 
       socket.on("data", (chunk) => {
         if (settled) return;
+        phase = "reading bridge response";
 
         let offset = 0;
         while (offset < chunk.byteLength && !settled) {

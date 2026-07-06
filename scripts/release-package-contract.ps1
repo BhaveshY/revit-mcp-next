@@ -296,6 +296,12 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ([string] $dynamoState.environment.REVIT_MCP_NEXT_DYNAMO_EVIDENCE -ne [System.IO.Path]::GetFullPath($dynamoEvidencePath)) {
         throw "Dynamo host smoke dry run did not plan the evidence environment variable."
     }
+    if ([string] $dynamoState.environment.REVIT_MCP_NEXT_INSTALL_ROOT -ne [System.IO.Path]::GetFullPath($InstallRoot)) {
+        throw "Dynamo host smoke dry run did not pin REVIT_MCP_NEXT_INSTALL_ROOT."
+    }
+    if ([string] $dynamoState.environment.REVIT_MCP_NEXT_AUTH_CONFIG -ne [System.IO.Path]::GetFullPath((Join-Path $InstallRoot "config\auth.env"))) {
+        throw "Dynamo host smoke dry run did not pin REVIT_MCP_NEXT_AUTH_CONFIG."
+    }
     if ([string] $dynamoState.preflightReportPath -ne [System.IO.Path]::GetFullPath($dynamoPreflightReportPath)) {
         throw "Dynamo host smoke dry run used unexpected preflight report path: $($dynamoState.preflightReportPath)"
     }
@@ -305,6 +311,9 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ([string] $dynamoState.preflight.dynamoSettingsPath -ne [System.IO.Path]::GetFullPath($dynamoSettingsPath)) {
         throw "Dynamo host smoke dry run used unexpected Dynamo settings path: $($dynamoState.preflight.dynamoSettingsPath)"
     }
+    if ([string] $dynamoState.preflight.dynamoSettingsSource -ne "explicit" -or [string] $dynamoState.preflight.dynamoSettingsConfidence -ne "explicit") {
+        throw "Dynamo host smoke dry run did not record explicit Dynamo settings source/confidence."
+    }
     if ($dynamoState.preflight.dynamoSettingsAppearsWarmed -ne $true) {
         throw "Dynamo host smoke dry run did not report the synthetic Dynamo settings profile as warmed."
     }
@@ -313,6 +322,34 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     }
     if (Test-Path -LiteralPath $dynamoPreflightReportPath -PathType Leaf) {
         throw "Dynamo host smoke dry run wrote the preflight report."
+    }
+
+    $dynamoJournalPath = Join-Path $RunRoot "host-smoke\dynamo-host-smoke.journal.txt"
+    $dynamoJournalOutput = Invoke-RepoScriptCapture $dynamoSmokeScript @(
+        "-DryRun",
+        "-Json",
+        "-InstallRoot", $InstallRoot,
+        "-EvidencePath", $dynamoEvidencePath,
+        "-ModelPath", $modelPath,
+        "-LaunchRevit",
+        "-UseDynamoJournal",
+        "-RevitPath", (Join-Path $RunRoot "tools\Revit.exe"),
+        "-DynamoSettingsPath", $dynamoSettingsPath,
+        "-PreflightReportPath", $dynamoPreflightReportPath,
+        "-DynamoJournalPath", $dynamoJournalPath
+    )
+    $dynamoJournalState = $dynamoJournalOutput | ConvertFrom-Json
+    if ($dynamoJournalState.useDynamoJournal -ne $true) {
+        throw "Dynamo host smoke journal dry run did not record journal mode."
+    }
+    if ([string] $dynamoJournalState.dynamoJournalPath -ne [System.IO.Path]::GetFullPath($dynamoJournalPath)) {
+        throw "Dynamo host smoke journal dry run used unexpected journal path: $($dynamoJournalState.dynamoJournalPath)"
+    }
+    if ($dynamoJournalState.dynamoJournalRequiresWarmedSettings -ne $true -or $dynamoJournalState.dynamoJournalAllowed -ne $true) {
+        throw "Dynamo host smoke journal dry run did not require and allow warmed settings."
+    }
+    if (Test-Path -LiteralPath $dynamoJournalPath -PathType Leaf) {
+        throw "Dynamo host smoke journal dry run wrote the journal file."
     }
 
     $preflightOnlyReportPath = Join-Path $RunRoot "host-smoke\dynamo-preflight-only.json"
@@ -391,11 +428,15 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
         "-PyRevitPath", (Join-Path $RunRoot "tools\pyrevit.exe"),
         "-LaunchRevitForDynamo",
         "-DynamoRevitPath", (Join-Path $RunRoot "tools\Revit.exe"),
-        "-DynamoSettingsPath", $dynamoSettingsPath
+        "-DynamoSettingsPath", $dynamoSettingsPath,
+        "-UseDynamoJournalForDynamo"
     )
     $aggregateState = $aggregateOutput | ConvertFrom-Json
     if ($aggregateState.status -ne "planned") {
         throw "Aggregate hosted integration smoke dry run did not report planned status."
+    }
+    if (-not ($aggregateState.dynamoArgs -contains "-UseDynamoJournal")) {
+        throw "Aggregate hosted integration smoke dry run did not pass Dynamo journal mode."
     }
     if ([string] $aggregateState.summaryPath -ne [System.IO.Path]::GetFullPath((Join-Path $aggregateOutputRoot "host-integrations-summary.json"))) {
         throw "Aggregate hosted integration smoke dry run used unexpected summary path."
@@ -517,17 +558,205 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     ) "*expected configuredAddin*" "pyRevit host smoke direct-fallback gate"
 }
 
+function Assert-RevitProjectFixtureCreatorDryRun($PackageRoot, $InstallRoot, $RunRoot) {
+    $fixtureScript = Join-Path $PackageRoot "scripts\create-revit-project-from-template.ps1"
+    $fixtureRoot = Join-Path $RunRoot "fixture-creator"
+    $templatePath = Join-Path $fixtureRoot "DefaultMetric.rte"
+    $outputPath = Join-Path $fixtureRoot "fixture.rvt"
+    $revitExePath = Join-Path $fixtureRoot "Revit.exe"
+    New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+    Set-Content -LiteralPath $templatePath -Value "synthetic template" -Encoding ASCII
+    Set-Content -LiteralPath $revitExePath -Value "synthetic revit exe" -Encoding ASCII
+
+    $fixtureOutput = Invoke-RepoScriptCapture $fixtureScript @(
+        "-DryRun",
+        "-Json",
+        "-NoLaunch",
+        "-BridgeReadyTimeoutSeconds", "0",
+        "-InstallRoot", $InstallRoot,
+        "-TemplatePath", $templatePath,
+        "-OutputPath", $outputPath,
+        "-RevitExePath", $revitExePath
+    )
+    $fixtureState = $fixtureOutput | ConvertFrom-Json
+    if ($fixtureState.status -ne "planned") {
+        throw "Revit project fixture creator dry run did not report planned status."
+    }
+    if ([string] $fixtureState.outputPath -ne [System.IO.Path]::GetFullPath($outputPath)) {
+        throw "Revit project fixture creator dry run used unexpected output path."
+    }
+    if ([string] $fixtureState.revitCtlPath -ne [System.IO.Path]::GetFullPath((Join-Path $InstallRoot "revitctl.cmd"))) {
+        throw "Revit project fixture creator dry run did not use installed revitctl."
+    }
+}
+
+function Assert-RevitProjectFixtureCreatorStubbedRuntime($PackageRoot, $RunRoot) {
+    $fixtureScript = Join-Path $PackageRoot "scripts\create-revit-project-from-template.ps1"
+    $fixtureRoot = Join-Path $RunRoot "fixture-creator-stubbed"
+    $installRoot = Join-Path $fixtureRoot "install"
+    $configRoot = Join-Path $installRoot "config"
+    $templatePath = Join-Path $fixtureRoot "DefaultMetric.rte"
+    $revitExePath = Join-Path $fixtureRoot "Revit.exe"
+    $revitCtlPath = Join-Path $installRoot "revitctl.cmd"
+    $revitCtlStubPath = Join-Path $installRoot "revitctl-stub.ps1"
+    New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $configRoot "auth.env") -Value "REVIT_MCP_NEXT_AUTH_TOKEN=fixture-stub-token" -Encoding ASCII
+    Set-Content -LiteralPath $templatePath -Value "synthetic template" -Encoding ASCII
+    Set-Content -LiteralPath $revitExePath -Value "synthetic revit exe" -Encoding ASCII
+    Set-Content -LiteralPath $revitCtlPath -Value @"
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0revitctl-stub.ps1" %*
+exit /b %ERRORLEVEL%
+"@ -Encoding ASCII
+    Set-Content -LiteralPath $revitCtlStubPath -Value @'
+param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]] $RemainingArgs
+)
+$ErrorActionPreference = "Stop"
+$payloadIndex = [Array]::IndexOf($RemainingArgs, "--payload")
+if ($payloadIndex -lt 0 -or $payloadIndex + 1 -ge $RemainingArgs.Count) {
+    throw "Stub expected --payload <path>."
+}
+$payload = Get-Content -LiteralPath $RemainingArgs[$payloadIndex + 1] -Raw | ConvertFrom-Json
+$mode = if ([string]::IsNullOrWhiteSpace($env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE)) { "ok" } else { $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE }
+if ($mode -eq "ok") {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $payload.outputPath) | Out-Null
+    Set-Content -LiteralPath $payload.outputPath -Value "synthetic rvt" -Encoding ASCII
+    [ordered] @{
+        ok = $true
+        data = [ordered] @{
+            templatePath = $payload.templatePath
+            outputPath = $payload.outputPath
+            overwritten = [bool] $payload.overwrite
+            activated = $true
+            source = "revit-api"
+        }
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}
+if ($mode -eq "inactive") {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $payload.outputPath) | Out-Null
+    Set-Content -LiteralPath $payload.outputPath -Value "synthetic rvt" -Encoding ASCII
+    [ordered] @{
+        ok = $true
+        data = [ordered] @{
+            templatePath = $payload.templatePath
+            outputPath = $payload.outputPath
+            overwritten = [bool] $payload.overwrite
+            activated = $false
+            source = "revit-api"
+        }
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}
+if ($mode -eq "missing-output") {
+    [ordered] @{
+        ok = $true
+        data = [ordered] @{
+            templatePath = $payload.templatePath
+            outputPath = $payload.outputPath
+            overwritten = [bool] $payload.overwrite
+            activated = $true
+            source = "revit-api"
+        }
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}
+[ordered] @{
+    ok = $false
+    error = [ordered] @{
+        code = "STUB_FAILED"
+        message = "Synthetic failure from revitctl stub."
+    }
+} | ConvertTo-Json -Depth 8
+exit 0
+'@ -Encoding UTF8
+
+    $previousStubMode = $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE
+    try {
+        $okOutput = Join-Path $fixtureRoot "fixture-ok.rvt"
+        $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE = "ok"
+        $okText = Invoke-RepoScriptCapture $fixtureScript @(
+            "-Json",
+            "-NoLaunch",
+            "-BridgeReadyTimeoutSeconds", "0",
+            "-InstallRoot", $installRoot,
+            "-TemplatePath", $templatePath,
+            "-OutputPath", $okOutput,
+            "-RevitExePath", $revitExePath
+        )
+        $okState = $okText | ConvertFrom-Json
+        if ($okState.status -ne "passed") {
+            throw "Revit project fixture creator stubbed run did not report passed status."
+        }
+        Assert-FileExists $okOutput "stubbed fixture creator output"
+
+        Assert-ScriptFailsLike $fixtureScript @(
+            "-Json",
+            "-NoLaunch",
+            "-BridgeReadyTimeoutSeconds", "0",
+            "-InstallRoot", $installRoot,
+            "-TemplatePath", $templatePath,
+            "-OutputPath", $okOutput,
+            "-RevitExePath", $revitExePath
+        ) "*Output RVT already exists*" "Revit project fixture creator overwrite guard"
+
+        $inactiveOutput = Join-Path $fixtureRoot "fixture-inactive.rvt"
+        $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE = "inactive"
+        Assert-ScriptFailsLike $fixtureScript @(
+            "-Json",
+            "-NoLaunch",
+            "-BridgeReadyTimeoutSeconds", "0",
+            "-ActivationWaitSeconds", "0",
+            "-InstallRoot", $installRoot,
+            "-TemplatePath", $templatePath,
+            "-OutputPath", $inactiveOutput,
+            "-RevitExePath", $revitExePath
+        ) "*did not activate it in the UI*" "Revit project fixture creator activation gate"
+
+        $failedOutput = Join-Path $fixtureRoot "fixture-failed.rvt"
+        $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE = "failed"
+        Assert-ScriptFailsLike $fixtureScript @(
+            "-Json",
+            "-NoLaunch",
+            "-BridgeReadyTimeoutSeconds", "0",
+            "-InstallRoot", $installRoot,
+            "-TemplatePath", $templatePath,
+            "-OutputPath", $failedOutput,
+            "-RevitExePath", $revitExePath
+        ) "*returned a failed response*" "Revit project fixture creator failed bridge gate"
+
+        $missingOutput = Join-Path $fixtureRoot "fixture-missing.rvt"
+        $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE = "missing-output"
+        Assert-ScriptFailsLike $fixtureScript @(
+            "-Json",
+            "-NoLaunch",
+            "-BridgeReadyTimeoutSeconds", "0",
+            "-InstallRoot", $installRoot,
+            "-TemplatePath", $templatePath,
+            "-OutputPath", $missingOutput,
+            "-RevitExePath", $revitExePath
+        ) "*output RVT was not found*" "Revit project fixture creator missing-output gate"
+    } finally {
+        $env:REVIT_MCP_NEXT_FIXTURE_STUB_MODE = $previousStubMode
+    }
+}
+
 function Assert-PackagedNpmAliases($PackageRoot) {
     $package = Read-JsonFile (Join-Path $PackageRoot "package.json")
-    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "evidence:check", "revitctl")) {
+    foreach ($alias in @("doctor:clients", "smoke:pyrevit-host", "smoke:dynamo-host", "smoke:host-integrations", "evidence:host-integrations", "evidence:check", "fixture:revit-project", "revitctl")) {
         if (-not $package.scripts.PSObject.Properties[$alias]) {
             throw "Packaged package.json is missing npm alias: $alias"
         }
     }
+    if ([string] $package.scripts."fixture:revit-project" -ne "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-revit-project-from-template.ps1") {
+        throw "Packaged package.json has unexpected fixture:revit-project command."
+    }
 }
 
 function Assert-RevitCtlHelpText($Text, $Label) {
-    foreach ($expected in @("revitctl preview", "revitctl apply", "revitctl cancel", "revitctl call", "--operation-kind")) {
+    foreach ($expected in @("revitctl preview", "revitctl apply", "revitctl cancel", "revitctl create-project", "revitctl call", "--operation-kind")) {
         if (-not $Text.Contains($expected)) {
             throw "$Label help output did not include '$expected'."
         }
@@ -711,6 +940,7 @@ try {
     Assert-CmdRevitCtlHelp $installedRevitCtl "installed"
     Assert-FileExists (Join-Path $packageRoot "scripts\print-mcp-config.ps1") "packaged MCP config printer"
     Assert-FileExists (Join-Path $packageRoot "scripts\doctor-clients.ps1") "packaged client doctor"
+    Assert-FileExists (Join-Path $packageRoot "scripts\create-revit-project-from-template.ps1") "packaged Revit project fixture creator"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-revit-addin-trust.ps1") "packaged Revit trust helper"
     Assert-FileExists (Join-Path $packageRoot "scripts\ensure-pyrevit-hosts-cache.ps1") "packaged pyRevit hosts cache helper"
     Assert-FileExists (Join-Path $packageRoot "scripts\run-pyrevit-host-smoke.ps1") "packaged pyRevit host-smoke runner"
@@ -719,6 +949,8 @@ try {
     Assert-FileExists (Join-Path $packageRoot "scripts\collect-host-integration-evidence.ps1") "packaged hosted integration evidence composer"
     Assert-PackagedNpmAliases $packageRoot
     Assert-HostedSmokeWrapperDryRuns $packageRoot $installRoot $runRoot
+    Assert-RevitProjectFixtureCreatorDryRun $packageRoot $installRoot $runRoot
+    Assert-RevitProjectFixtureCreatorStubbedRuntime $packageRoot $runRoot
 
     $addinManifestPath = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext.addin"
     Assert-FileExists $addinManifestPath "installed Revit add-in manifest"
@@ -743,7 +975,7 @@ try {
     if ([string]::IsNullOrWhiteSpace([string] $clientDiscovery.revitctlPath) -or -not (Test-Path -LiteralPath ([string] $clientDiscovery.revitctlPath) -PathType Leaf)) {
         throw "Client discovery did not record an installed revitctl launcher path."
     }
-    foreach ($expectedTool in @("revit.get_views", "revit.get_sheets", "revit.describe_parameters", "revit.get_model_readiness", "revit.get_model_context", "revit.get_warnings", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request")) {
+    foreach ($expectedTool in @("revit.get_views", "revit.get_sheets", "revit.create_project_from_template", "revit.describe_parameters", "revit.get_model_readiness", "revit.get_model_context", "revit.get_warnings", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request")) {
         if (@($clientDiscovery.tools) -notcontains $expectedTool) {
             throw "Client discovery did not advertise expected tool: $expectedTool"
         }

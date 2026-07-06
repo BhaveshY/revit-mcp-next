@@ -35,6 +35,7 @@ function validateAddinOperationKindGuard() {
   const expected = {
     status: "read",
     list_documents: "read",
+    create_project_from_template: "write",
     get_levels: "read",
     get_views: "read",
     get_sheets: "read",

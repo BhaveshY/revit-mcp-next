@@ -21,7 +21,8 @@ param(
     [string]$ElementTagFamilySha256 = "",
     [string]$ElementTagTypeId = "",
     [string]$ElementTagTypeNameContains = "",
-    [switch]$StatusOnly
+    [switch]$StatusOnly,
+    [int]$BridgeTimeoutMs = 120000
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,16 +65,33 @@ if ($MoveYMm -eq 0) {
     Fail-Friendly "-MoveYMm must be non-zero because Revit rejects zero-length moves."
 }
 
+if ($BridgeTimeoutMs -lt 1000 -or $BridgeTimeoutMs -gt 600000) {
+    Fail-Friendly "-BridgeTimeoutMs must be between 1000 and 600000."
+}
+
 if ([string]::IsNullOrWhiteSpace($TransactionPrefix)) {
     Fail-Friendly "-TransactionPrefix cannot be empty."
 }
 
 if ([string]::IsNullOrWhiteSpace($LauncherPath)) {
-    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        Fail-Friendly "LOCALAPPDATA is not set. Pass -LauncherPath explicitly."
+    $launcherCandidates = New-Object System.Collections.Generic.List[string]
+    if ($ExpectedRevitYear -gt 0 -and -not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $launcherCandidates.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\$ExpectedRevitYear\RevitMcpNext\launch-revit-mcp-next.cmd")) | Out-Null
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $launcherCandidates.Add((Join-Path $env:LOCALAPPDATA "RevitMcpNext\launch-revit-mcp-next.cmd")) | Out-Null
     }
 
-    $LauncherPath = Join-Path $env:LOCALAPPDATA "RevitMcpNext\launch-revit-mcp-next.cmd"
+    foreach ($candidate in $launcherCandidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $LauncherPath = $candidate
+            break
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($LauncherPath)) {
+        Fail-Friendly "Could not infer the MCP launcher. Pass -LauncherPath explicitly or run installer\install-windows.ps1 first."
+    }
 }
 
 if (-not (Test-Path -LiteralPath $LauncherPath)) {
@@ -154,8 +172,14 @@ if (-not [string]::IsNullOrWhiteSpace($DocumentFingerprint)) {
 }
 
 Write-Host "Running live Revit smoke through node..."
-& $nodeCommand.Source @nodeArgs
-$exitCode = $LASTEXITCODE
+$oldBridgeTimeout = $env:REVIT_MCP_NEXT_TIMEOUT_MS
+try {
+    $env:REVIT_MCP_NEXT_TIMEOUT_MS = [string] $BridgeTimeoutMs
+    & $nodeCommand.Source @nodeArgs
+    $exitCode = $LASTEXITCODE
+} finally {
+    $env:REVIT_MCP_NEXT_TIMEOUT_MS = $oldBridgeTimeout
+}
 
 if ($exitCode -ne 0) {
     [Console]::Error.WriteLine("Live Revit smoke failed with exit code $exitCode. Confirm Revit is running, the add-in is loaded, and an active project document is open.")

@@ -11,6 +11,27 @@ const DEFAULT_WALL_LENGTH_MM = 4000;
 const DEFAULT_MOVE_Y_MM = 250;
 const DEFAULT_WALL_HEIGHT_MM = 3000;
 const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
+const RETRYABLE_BUSY_ERROR_CODES = new Set(["REVIT_EXTERNAL_EVENT_TIMEOUT", "BRIDGE_TIMEOUT"]);
+const RETRYABLE_TOOLS = new Set([
+  "revit.status",
+  "revit.get_levels",
+  "revit.get_views",
+  "revit.get_sheets",
+  "revit.get_current_view",
+  "revit.get_current_view_elements",
+  "revit.get_selection",
+  "revit.analyze_model",
+  "revit.get_model_readiness",
+  "revit.get_model_context",
+  "revit.get_material_quantities",
+  "revit.get_warnings",
+  "revit.get_rooms",
+  "revit.catalog",
+  "revit.query",
+  "revit.describe_parameters",
+  "revit.cancel_request",
+]);
+const retryEvidence = [];
 const REQUIRED_TOOLS = [
   "revit.status",
   "revit.get_levels",
@@ -67,6 +88,9 @@ async function main() {
   console.log(`Wall height: ${options.wallHeightMm} mm`);
   console.log(`Move Y: ${options.moveYMm} mm`);
   console.log(`Transaction prefix: ${options.transactionPrefix}`);
+  if (process.env.REVIT_MCP_NEXT_TIMEOUT_MS) {
+    console.log(`Bridge timeout: ${process.env.REVIT_MCP_NEXT_TIMEOUT_MS} ms`);
+  }
   console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
   console.log(`Require room tag: ${options.requireRoomTag ? "yes" : "no"}`);
   console.log(`Require element tag: ${options.requireElementTag ? "yes" : "no"}`);
@@ -114,6 +138,7 @@ async function main() {
     completedAtUtc: null,
     launcherPath,
     mode: options.statusOnly ? "status-only" : "full",
+    bridgeTimeoutMs: Number(process.env.REVIT_MCP_NEXT_TIMEOUT_MS || 0) || null,
     expectedRevitYear: options.expectedRevitYear ?? null,
     revit: null,
     addinAssembly: null,
@@ -122,6 +147,7 @@ async function main() {
     coveredTools: [],
     coveredOperations: [],
     skippedOperations: [],
+    retryAttempts: retryEvidence,
     operationKindGuard: null,
     tagPreflight: null,
     requiredCoverage: {
@@ -735,6 +761,7 @@ async function main() {
       transactionPrefix: options.transactionPrefix,
       runId,
       preferredElementId: wallId,
+      preferredViewId: placement.view?.id,
       levelElevationMm: placementLevelElevationMm,
       tagTypeSelector: elementTagSelector,
     });
@@ -1476,9 +1503,31 @@ async function verifyRequiredTools(client) {
 }
 
 async function callRequiredTool(client, name, args) {
-  const result = await client.callTool({ name, arguments: args });
-  if (result.isError) {
-    throw new Error(formatToolFailure(name, result));
+  const maxAttempts = RETRYABLE_TOOLS.has(name) ? 3 : 1;
+  let result;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    result = await client.callTool({ name, arguments: args });
+    if (!result.isError) {
+      break;
+    }
+
+    const code = result.structuredContent?.data?.error?.code;
+    if (attempt >= maxAttempts || !RETRYABLE_BUSY_ERROR_CODES.has(code)) {
+      throw new Error(formatToolFailure(name, result));
+    }
+
+    const delayMs = 2500 * attempt;
+    console.log(`${name} hit ${code}; retrying in ${delayMs} ms (${attempt + 1}/${maxAttempts})`);
+    retryEvidence.push(
+      compactObject({
+        tool: name,
+        errorCode: code,
+        attempt,
+        nextAttempt: attempt + 1,
+        delayMs,
+      })
+    );
+    await sleep(delayMs);
   }
 
   const data = result.structuredContent?.data;
@@ -1487,6 +1536,10 @@ async function callRequiredTool(client, name, args) {
   }
 
   return data;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function catalog(client, args) {
@@ -2291,7 +2344,7 @@ async function tryTagRoom(
 
 async function tryTagElement(
   client,
-  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredElementId, levelElevationMm, tagTypeSelector }
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, preferredElementId, preferredViewId, levelElevationMm, tagTypeSelector }
 ) {
   let tagTypes = await catalog(client, {
     kind: "tagTypes",
@@ -2351,7 +2404,7 @@ async function tryTagElement(
 
   let generation = expectedGeneration;
   let lastBlockedReason = "";
-  for (const view of views) {
+  for (const view of prioritizeById(views, preferredViewId)) {
     const query = await callRequiredTool(client, "revit.query", {
       documentFingerprint,
       filter: { viewId: String(view.id), categories: ["OST_Walls"] },
@@ -2440,13 +2493,32 @@ async function listAnnotationViews(client, documentFingerprint, acceptedTypes) {
 
 function choosePlacementLevel(levels, planBackedViews) {
   const levelsById = new Map((Array.isArray(levels) ? levels : []).map((level) => [String(level?.id ?? ""), level]));
-  for (const view of Array.isArray(planBackedViews) ? planBackedViews : []) {
+  const views = (Array.isArray(planBackedViews) ? planBackedViews : []).slice().sort((left, right) => {
+    return annotationViewPriority(left) - annotationViewPriority(right);
+  });
+  for (const view of views) {
     const associatedLevelId = String(view?.associatedLevelId ?? "");
     if (!associatedLevelId) continue;
     const level = levelsById.get(associatedLevelId);
     if (level?.id) return { level, view };
   }
   return undefined;
+}
+
+function annotationViewPriority(view) {
+  switch (viewTypeOf(view)) {
+    case "FloorPlan":
+    case "EngineeringPlan":
+      return 0;
+    case "CeilingPlan":
+      return 1;
+    case "Section":
+      return 2;
+    case "DraftingView":
+      return 3;
+    default:
+      return 4;
+  }
 }
 
 async function preflightRequiredTagCoverage(

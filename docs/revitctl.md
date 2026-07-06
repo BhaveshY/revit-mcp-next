@@ -35,6 +35,12 @@ cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" parameters --payload '{"filter
 cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" catalog --payload '{"kind":"familySymbols","preset":"placement","limit":10}' --pretty
 ```
 
+To create a disposable project from an installed template for smoke fixtures:
+
+```powershell
+cmd /c "%LOCALAPPDATA%\RevitMcpNext\revitctl.cmd" create-project --payload '{"templatePath":"C:\\ProgramData\\Autodesk\\RVT 2024\\Templates\\English\\DefaultMetric.rte","outputPath":"C:\\tmp\\revit-mcp-next-template-fixture.rvt","overwrite":true}' --confirm --pretty
+```
+
 ## Write-Control Commands
 
 ```powershell
@@ -68,6 +74,6 @@ Use `--install-root`, `--discovery`, `--auth-config`, `--pipe`, and `--timeout-m
 ## Boundaries
 
 - Do not use `revitctl` from pyRevit or Dynamo. Revit-hosted Python should use `integrations/python/revit_mcp_next_inprocess.py`.
-- Do not bypass preview/apply for writes. `revitctl apply` requires `--confirm` or `confirm: true`.
+- Do not bypass preview/apply for normal model edits. `revitctl create-project` is only for disposable fixture setup; `revitctl apply` requires `--confirm` or `confirm: true`.
 - Use `revitctl cancel` only for queued or cancellable bridge work; it is a support/debug command and may return a clean no-op when nothing matches.
 - Treat `revitctl` as an internal/support interface. Agent-facing automation should still use MCP because MCP exposes typed tools, descriptions, annotations, and output schemas.

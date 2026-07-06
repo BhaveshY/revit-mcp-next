@@ -484,6 +484,102 @@ function Get-RequiredHostSummary($Summary, $HostName, $SummaryPath) {
     return $hostSummary
 }
 
+function Resolve-HostedIntegrationSiblingFile($SummaryPath, $RelativePath, $Label) {
+    if ([string]::IsNullOrWhiteSpace([string] $RelativePath)) {
+        throw "$Label path is missing from hosted integration summary. Summary: $SummaryPath"
+    }
+
+    if ([System.IO.Path]::IsPathRooted([string] $RelativePath)) {
+        throw "$Label path must be relative to host-integrations-summary.json. Summary: $SummaryPath Path: $RelativePath"
+    }
+
+    $summaryRoot = Split-Path -Parent $SummaryPath
+    $candidate = Join-Path $summaryRoot (([string] $RelativePath) -replace "/", "\")
+    $resolved = Resolve-RequiredFile $candidate "$Label referenced by hosted integration summary was not found."
+    Assert-PathChild $summaryRoot $resolved $Label
+    return $resolved
+}
+
+function Assert-HostedRawEvidence($RawEvidence, $ExpectedHost, $ExpectedHostSummary, $Path) {
+    if ($RawEvidence.schemaVersion -ne 1) {
+        throw "$ExpectedHost raw hosted evidence has unexpected schemaVersion: $($RawEvidence.schemaVersion). File: $Path"
+    }
+
+    if ([string] $RawEvidence.host -ne $ExpectedHost) {
+        throw "$ExpectedHost raw hosted evidence has unexpected host '$($RawEvidence.host)'. File: $Path"
+    }
+
+    if ([string] $RawEvidence.status -ne "passed") {
+        throw "$ExpectedHost raw hosted evidence did not pass. Status: $($RawEvidence.status). File: $Path"
+    }
+
+    if ([bool] $RawEvidence.previewReady -ne $true -or [bool] $RawEvidence.applyWrites -ne $true) {
+        throw "$ExpectedHost raw hosted evidence must record previewReady=true and applyWrites=true. File: $Path"
+    }
+
+    $coveredOperations = Get-StringArray $RawEvidence.coveredOperations
+    if (-not ($coveredOperations -contains "create_level")) {
+        throw "$ExpectedHost raw hosted evidence did not cover create_level. File: $Path"
+    }
+
+    if ((Get-StringArray $RawEvidence.createdElementIds).Count -lt 1) {
+        throw "$ExpectedHost raw hosted evidence did not record createdElementIds. File: $Path"
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string] $RawEvidence.activeDocument.fingerprint)) {
+        throw "$ExpectedHost raw hosted evidence did not record activeDocument.fingerprint. File: $Path"
+    }
+
+    if ($null -eq $RawEvidence.inProcessBridge -or [bool] $RawEvidence.inProcessBridge.addinHandlerActive -ne $true) {
+        throw "$ExpectedHost raw hosted evidence did not prove configured add-in in-process bridge usage. File: $Path"
+    }
+
+    $rawSha = ([string] $RawEvidence.inProcessBridge.assemblySha256).Trim().ToLowerInvariant()
+    $summarySha = ([string] $ExpectedHostSummary.inProcessBridge.assemblySha256).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($rawSha) -or -not [string]::Equals($rawSha, $summarySha, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$ExpectedHost raw hosted evidence add-in SHA-256 does not match the hosted integration summary. File: $Path"
+    }
+}
+
+function Assert-DynamoPreflightRawEvidence($Preflight, $Path) {
+    if ($Preflight.schemaVersion -ne 1) {
+        throw "Dynamo preflight evidence has unexpected schemaVersion: $($Preflight.schemaVersion). File: $Path"
+    }
+
+    if ([string] $Preflight.status -ne "preflight") {
+        throw "Dynamo preflight evidence has unexpected status '$($Preflight.status)'. File: $Path"
+    }
+
+    if ([bool] $Preflight.privacySettingsChanged -ne $false -or [bool] $Preflight.privacyPromptAutomation -ne $false -or [bool] $Preflight.uiPromptAutomation -ne $false) {
+        throw "Dynamo preflight evidence must prove privacySettingsChanged=false, privacyPromptAutomation=false, and uiPromptAutomation=false. File: $Path"
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string] $Preflight.graphPath) -or [string]::IsNullOrWhiteSpace([string] $Preflight.installRoot)) {
+        throw "Dynamo preflight evidence must record graphPath and installRoot. File: $Path"
+    }
+}
+
+function Assert-HostedIntegrationRawEvidenceFiles($SummaryPath, $Summary, $PyRevitHostSummary, $DynamoHostSummary) {
+    $pyRevitPath = Resolve-HostedIntegrationSiblingFile $SummaryPath $PyRevitHostSummary.evidencePath "pyRevit raw hosted evidence"
+    $dynamoPath = Resolve-HostedIntegrationSiblingFile $SummaryPath $DynamoHostSummary.evidencePath "Dynamo raw hosted evidence"
+    if ($null -eq $Summary.dynamoPreflight) {
+        throw "Hosted pyRevit/Dynamo integration summary is missing dynamoPreflight. Summary: $SummaryPath"
+    }
+
+    $dynamoPreflightPath = Resolve-HostedIntegrationSiblingFile $SummaryPath $Summary.dynamoPreflight.evidencePath "Dynamo preflight evidence"
+
+    Assert-HostedRawEvidence (Read-JsonFile $pyRevitPath) "pyrevit" $PyRevitHostSummary $pyRevitPath
+    Assert-HostedRawEvidence (Read-JsonFile $dynamoPath) "dynamo" $DynamoHostSummary $dynamoPath
+    Assert-DynamoPreflightRawEvidence (Read-JsonFile $dynamoPreflightPath) $dynamoPreflightPath
+
+    return [ordered] @{
+        pyrevit = $pyRevitPath
+        dynamo = $dynamoPath
+        dynamoPreflight = $dynamoPreflightPath
+        bundleRoot = Split-Path -Parent $SummaryPath
+    }
+}
+
 function Get-PackageContentEntry($ReleaseManifest, $RelativePath) {
     $normalizedRelativePath = $RelativePath -replace "\\", "/"
     foreach ($entry in @($ReleaseManifest.contents)) {
@@ -583,10 +679,12 @@ function Read-PassedHostedIntegrationSummary($EvidencePath) {
 
     $pyRevit = Get-RequiredHostSummary $summary "pyrevit" $summaryPath
     $dynamo = Get-RequiredHostSummary $summary "dynamo" $summaryPath
+    $rawEvidence = Assert-HostedIntegrationRawEvidenceFiles $summaryPath $summary $pyRevit $dynamo
 
     return [ordered] @{
         path = $summaryPath
         data = $summary
+        rawEvidence = $rawEvidence
         hosts = [ordered] @{
             pyrevit = $pyRevit
             dynamo = $dynamo
@@ -732,7 +830,8 @@ if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
     $hostedIntegrationSummary = Read-PassedHostedIntegrationSummary $HostedIntegrationEvidencePath
     $hostedIntegrationPackageIdentity = Assert-HostedIntegrationPackageIdentity $hostedIntegrationSummary $packagedAddinIdentity
     $hostedIntegrationRoot = Join-Path $stageRoot "host-integrations"
-    $copiedHostedIntegration = Copy-EvidencePath $HostedIntegrationEvidencePath $hostedIntegrationRoot "Hosted pyRevit/Dynamo integration smoke evidence"
+    $hostedIntegrationBundleRoot = [string] $hostedIntegrationSummary.rawEvidence.bundleRoot
+    $copiedHostedIntegration = Copy-EvidencePath $hostedIntegrationBundleRoot $hostedIntegrationRoot "Hosted pyRevit/Dynamo integration smoke evidence"
     $hostedIntegrationSection = [ordered] @{
         status = "captured"
         sourcePath = (Resolve-RequiredEvidencePath $HostedIntegrationEvidencePath "Hosted pyRevit/Dynamo integration smoke evidence")
@@ -744,6 +843,12 @@ if (-not [string]::IsNullOrWhiteSpace($HostedIntegrationEvidencePath)) {
             hosts = [ordered] @{
                 pyrevit = $hostedIntegrationSummary.hosts.pyrevit
                 dynamo = $hostedIntegrationSummary.hosts.dynamo
+            }
+            dynamoPreflight = $hostedIntegrationSummary.data.dynamoPreflight
+            rawEvidence = [ordered] @{
+                pyrevitSourcePath = [string] $hostedIntegrationSummary.rawEvidence.pyrevit
+                dynamoSourcePath = [string] $hostedIntegrationSummary.rawEvidence.dynamo
+                dynamoPreflightSourcePath = [string] $hostedIntegrationSummary.rawEvidence.dynamoPreflight
             }
             packageIdentity = $hostedIntegrationPackageIdentity
         }

@@ -603,6 +603,7 @@ $clientDiscoveryContent = [ordered] @{
     tools = @(
         "revit.status",
         "revit.list_documents",
+        "revit.create_project_from_template",
         "revit.get_levels",
         "revit.get_views",
         "revit.get_sheets",

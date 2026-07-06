@@ -158,6 +158,22 @@ export interface RevitStatus {
   warnings: BridgeWarning[];
 }
 
+export interface CreateProjectFromTemplateRequest {
+  templatePath: string;
+  outputPath: string;
+  overwrite?: boolean;
+  confirm: boolean;
+}
+
+export interface CreateProjectFromTemplateResult {
+  templatePath: string;
+  outputPath: string;
+  overwritten: boolean;
+  activated: boolean;
+  document: RevitDocumentSummary;
+  source: "revit-api";
+}
+
 export interface LevelSummary {
   id: ElementId;
   uniqueId?: UniqueId;

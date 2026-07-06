@@ -14,6 +14,8 @@ import type {
   ChangePreviewItem,
   ChangePreviewResult,
   ChangeSetRequest,
+  CreateProjectFromTemplateRequest,
+  CreateProjectFromTemplateResult,
   CurrentViewRequest,
   CurrentViewResult,
   LevelSummary,
@@ -137,6 +139,7 @@ const fakeSheets: SheetSummary[] = [
 const capabilities = [
   "revit.status",
   "revit.list_documents",
+  "revit.create_project_from_template",
   "revit.get_levels",
   "revit.get_views",
   "revit.get_sheets",
@@ -511,6 +514,35 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<RevitDocumentSummary[]>> {
     maybeAbort(options);
     return ok(request, [activeDocument]);
+  }
+
+  async createProjectFromTemplate(
+    request: BridgeRequest<CreateProjectFromTemplateRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CreateProjectFromTemplateResult>> {
+    maybeAbort(options);
+    if (request.payload.confirm !== true) {
+      return fail(request, "CONFIRMATION_REQUIRED", "revit.create_project_from_template requires confirm=true.");
+    }
+
+    const outputPath = request.payload.outputPath;
+    const document: RevitDocumentSummary = {
+      ...activeDocument,
+      title: outputPath.split(/[\\/]/).pop() ?? "Disposable.rvt",
+      path: outputPath,
+      fingerprint: `doc-fixture-${createHash("sha256").update(outputPath).digest("hex").slice(0, 16)}`,
+      isActive: true,
+      generation: activeDocument.generation + 1,
+    };
+
+    return ok(request, {
+      templatePath: request.payload.templatePath,
+      outputPath,
+      overwritten: request.payload.overwrite === true,
+      activated: true,
+      document,
+      source: "revit-api",
+    });
   }
 
   async getLevels(
@@ -1847,5 +1879,21 @@ function ok<T>(request: BridgeRequest, data: T): BridgeResponse<T> {
       elapsedMs: 1,
     },
     generation: 7,
+  };
+}
+
+function fail<T>(request: BridgeRequest, code: string, message: string): BridgeResponse<T> {
+  return {
+    ok: false,
+    requestId: request.requestId,
+    error: {
+      code,
+      message,
+      recoverable: true,
+    },
+    warnings: [],
+    metrics: {
+      elapsedMs: 1,
+    },
   };
 }

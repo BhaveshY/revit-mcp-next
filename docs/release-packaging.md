@@ -214,6 +214,22 @@ npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -
 
 The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. Pass a real disposable `.rvt` project file to `-ModelPath`; templates (`.rte`) must be opened from Revit and saved as `.rvt` first because the local release smoke runner copies the source model before launch. `smoke-summary.json.requiredCoverage` records that requirement, `tagSelectors` records requested tag type selectors when supplied, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
 
+On a disposable Revit 2024 test machine, start with a copied Autodesk sample before building a fixture from templates:
+
+```powershell
+Copy-Item -LiteralPath "C:\Program Files\Autodesk\Revit 2024\Samples\Snowdon Towers Sample Architectural.rvt" -Destination C:\tmp\revit-mcp-next-tag-fixture.rvt -Force
+npm run smoke:release-local -- -ModelPath C:\tmp\revit-mcp-next-tag-fixture.rvt -RequireTypeChange -RequireTags
+```
+
+If you need to create a real `.rvt` from an installed `.rte`, install/start the package, then use the Revit API-backed fixture helper instead of copying or renaming the template:
+
+```powershell
+npm run fixture:revit-project -- `
+  -TemplatePath "C:\ProgramData\Autodesk\RVT 2024\Templates\English\DefaultMetric.rte" `
+  -OutputPath C:\tmp\revit-mcp-next-template-fixture.rvt `
+  -Overwrite
+```
+
 Build hosted pyRevit/Dynamo summary evidence from raw host-smoke JSON before passing `-HostedIntegrationEvidencePath`.
 
 Preferred release-candidate path:
@@ -227,7 +243,7 @@ npm run smoke:host-integrations -- `
   -LaunchRevitForDynamo
 ```
 
-This command writes `raw\pyrevit.json`, writes a read-only Dynamo preflight report to `raw\dynamo-preflight.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, and leaves host-smoke logs under `logs`.
+This command writes `raw\pyrevit.json`, writes a read-only Dynamo preflight report to `raw\dynamo-preflight.json`, waits for `raw\dynamo.json`, composes `host-integrations-summary.json`, copies all three raw evidence files into the composed evidence root, and leaves host-smoke logs under `logs`.
 
 For pyRevit CLI runs, use the packaged runner. It stages a temporary
 `RevitMcpNext.addin` into pyRevit's unattended runner with `--import`, pins
@@ -246,7 +262,7 @@ npm run smoke:pyrevit-host -- `
   -SeedHostsCache
 ```
 
-For Dynamo, run the packaged graph inside Dynamo for Revit so the evidence is produced by the installed package. Do not use headless `DynamoCLI.exe` as release evidence; it does not provide RevitServices. The wrapper below launches Revit with the required environment variables, waits for `dynamo.json`, and validates the result after you run the graph:
+For Dynamo, run the packaged graph inside Dynamo for Revit so the evidence is produced by the installed package. Do not use headless `DynamoCLI.exe` as release evidence; it does not provide RevitServices. The wrapper below launches Revit with `REVIT_MCP_NEXT_INSTALL_ROOT`, `REVIT_MCP_NEXT_AUTH_CONFIG`, and the Dynamo evidence environment variables pinned to the installed package, waits for `dynamo.json`, and validates the result after you run the graph:
 
 ```powershell
 npm run smoke:dynamo-host -- `
@@ -256,7 +272,9 @@ npm run smoke:dynamo-host -- `
   -LaunchRevit
 ```
 
-The wrapper also prints and, during collection, records a bounded Dynamo preflight report next to the evidence as `dynamo-preflight.json`. It includes the Revit year, Dynamo version/settings path when discoverable, graph path, install root, evidence path, model path, and whether an existing `DynamoSettings.xml` appears warmed. The report is read-only: it does not alter privacy settings, simulate consent, or automate UI prompts. To collect only that report:
+After the Dynamo profile has already been warmed manually once, add `-UseDynamoJournal` to have the wrapper write a temporary Revit journal with `dynPath` and `dynPathExecute=true`, launch Revit, and run the packaged graph automatically. This mode requires an existing parseable `DynamoSettings.xml` by default, so Autodesk/Dynamo privacy or startup prompts are still handled manually, not by automation.
+
+The wrapper also prints and, during collection, records a bounded Dynamo preflight report next to the evidence as `dynamo-preflight.json`. It includes the Revit year, Dynamo version/settings path when discoverable, settings-source confidence, graph path, install root, evidence path, model path, and whether an existing `DynamoSettings.xml` appears warmed. The report is read-only: it does not alter privacy settings, simulate consent, or automate UI prompts. Release evidence requires this preflight file alongside `pyrevit.json`, `dynamo.json`, and `host-integrations-summary.json`. To collect only that report:
 
 ```powershell
 npm run smoke:dynamo-host -- `
@@ -275,6 +293,7 @@ Open and run this graph in Dynamo for Revit:
 npm run evidence:host-integrations -- `
   -PyRevitEvidencePath artifacts\host-integrations\raw\pyrevit.json `
   -DynamoEvidencePath artifacts\host-integrations\raw\dynamo.json `
+  -DynamoPreflightReportPath artifacts\host-integrations\raw\dynamo-preflight.json `
   -OutputRoot artifacts\host-integrations
 ```
 

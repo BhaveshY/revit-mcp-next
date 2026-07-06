@@ -44,7 +44,7 @@ Revit 2024-only production-candidate slice, not yet a signed production release:
 - `scripts/print-mcp-config.ps1`: token-safe Claude Code, Claude Desktop, and Codex config snippets from the installed client discovery file.
 - `scripts/doctor-clients.ps1`: token-safe client config doctor for generated Claude/Codex snippets, installed config files, launcher quoting, stale roots, and MCP startup/tool-list checks.
 - `scripts/collect-support-bundle.ps1`: redacted support bundle for doctor output, logs, install metadata, and file hashes.
-- `scripts/collect-host-integration-evidence.ps1`: validates raw pyRevit/Dynamo host-smoke JSON and writes release-ready `host-integrations-summary.json`.
+- `scripts/collect-host-integration-evidence.ps1`: validates raw pyRevit/Dynamo host-smoke JSON plus Dynamo preflight evidence, copies all three raw files, and writes release-ready `host-integrations-summary.json`.
 - `scripts/collect-release-evidence.ps1`: release evidence bundle that ties one package, checksums, signing status, validation logs, support diagnostics, live-smoke evidence, and hosted pyRevit/Dynamo evidence or skip reasons together.
 - `integrations/python`: stdlib MCP client for external Python plus in-process helpers for pyRevit and Dynamo; packaged installs stage them under the chosen install root and the examples search common `%APPDATA%` and `%LOCALAPPDATA%` locations.
 - `integrations/pyrevit` and `integrations/dynamo`: in-process status, preview/apply, and host-smoke evidence examples for Revit-hosted automation without deadlocking on an external event.
@@ -73,6 +73,8 @@ npm run test:evidence:release:windows
 
 `npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It checks `revit.cancel_request` no-op behavior, creates test geometry, a room, optional family placement when the model has suitable symbols, optional or required room/element tags when the model has loaded or locally loaded tag families and suitable views, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
 `npm run smoke:release-local` is the one-command disposable-machine path: it builds, installs to a stable per-year root under `%APPDATA%\Autodesk\Revit\Addins`, copies a sample or supplied disposable `.rvt` project, launches Revit when needed, waits for `revit.status` readiness, runs doctor/live smoke, closes and relaunches its own Revit process for a second status-only no-prompt probe, collects support output, and attempts release evidence collection. Do not pass `.rte` templates to `-ModelPath`; open the template in Revit and save a disposable `.rvt` first. Evidence and package work directories default to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
+
+To create a disposable project from an installed `.rte` without copying/renaming the template, install/start the package and run `npm run fixture:revit-project -- -TemplatePath C:\path\template.rte -OutputPath C:\tmp\fixture.rvt -Overwrite`. This uses `revit.create_project_from_template` through the Revit API and leaves the saved `.rvt` open for smoke testing.
 
 Unsigned local add-in builds can pause Revit on the security prompt `Security - Unsigned Add-in` / `Sicherheit - Zusatzmodul ohne Signatur`. The application manifest now uses `<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>`, but the durable no-prompt path is trusted Authenticode signing. `npm run smoke:release-local` creates/trusts a disposable CurrentUser dev certificate, signs the package, and verifies trusted signatures before launch. For an unsigned external preview, label the package as unsigned and include checksums plus smoke/evidence artifacts; only claim a signed release when signature verification evidence exists for that exact build. See [external-preview.md](docs/external-preview.md) for the concise sharing checklist.
 
@@ -187,10 +189,18 @@ The aggregate runner creates the raw evidence files and composes the summary in 
 npm run smoke:host-integrations -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\host-integrations -SeedPyRevitHosts -LaunchRevitForDynamo
 ```
 
-After collecting the raw host JSON files, build the summary with:
+After the Dynamo profile has already been warmed manually once, the Dynamo runner can launch Revit with a journal that opens and runs the packaged graph:
 
 ```powershell
-npm run evidence:host-integrations -- -PyRevitEvidencePath artifacts\host-integrations\raw\pyrevit.json -DynamoEvidencePath artifacts\host-integrations\raw\dynamo.json -OutputRoot artifacts\host-integrations
+npm run smoke:host-integrations -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\host-integrations -SeedPyRevitHosts -LaunchRevitForDynamo -UseDynamoJournalForDynamo
+```
+
+Journal mode refuses to run when `DynamoSettings.xml` is missing or not parseable, unless `-AllowUnwarmedDynamoJournal` is passed for an explicitly supervised local experiment. It does not change Dynamo privacy settings or click startup prompts.
+
+After collecting the raw host JSON files and Dynamo preflight report, build the summary with:
+
+```powershell
+npm run evidence:host-integrations -- -PyRevitEvidencePath artifacts\host-integrations\raw\pyrevit.json -DynamoEvidencePath artifacts\host-integrations\raw\dynamo.json -DynamoPreflightReportPath artifacts\host-integrations\raw\dynamo-preflight.json -OutputRoot artifacts\host-integrations
 ```
 
 Examples:
@@ -215,6 +225,7 @@ After install, examples can import the helpers from the package install root. Th
 
 - `revit.status`
 - `revit.list_documents`
+- `revit.create_project_from_template`
 - `revit.get_levels`
 - `revit.get_views`
 - `revit.get_sheets`
@@ -234,7 +245,7 @@ After install, examples can import the helpers from the package install root. Th
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
-Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_model_context` for phase/workset/design-option/link planning IDs, `revit.get_material_quantities` for normalized material takeoffs, `revit.get_warnings` for compact model-health warning lists, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. For element placement work, use `preset: "geometrySummary"` on `revit.query` or scoped element reads to return compact `location` and model-space `bounds` in millimeters without dumping parameters. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects. MCP cursors are opaque continuation tokens: do not parse, increment, shorten, construct, or reuse them after changing any argument. For the next page, repeat the same tool call with the same arguments and only add `cursor` from `structuredContent.data.cursor`. `revit.describe_parameters` defaults to `preset: "writableEdit"` for compact writable instance parameter metadata; use `preset: "namesOnly"` for broader name discovery without values or `preset: "full"` for legacy read-only/type/value detail.
+Read tools are intentionally compact and paginated where results can grow. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_model_context` for phase/workset/design-option/link planning IDs, `revit.get_material_quantities` for normalized material takeoffs, `revit.get_warnings` for compact model-health warning lists, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. `revit.create_project_from_template` is a direct fixture/setup write tool, not a preview/apply model edit; it requires `confirm: true` and creates a disposable `.rvt` from a local `.rte`. For element placement work, use `preset: "geometrySummary"` on `revit.query` or scoped element reads to return compact `location` and model-space `bounds` in millimeters without dumping parameters. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects. MCP cursors are opaque continuation tokens: do not parse, increment, shorten, construct, or reuse them after changing any argument. For the next page, repeat the same tool call with the same arguments and only add `cursor` from `structuredContent.data.cursor`. `revit.describe_parameters` defaults to `preset: "writableEdit"` for compact writable instance parameter metadata; use `preset: "namesOnly"` for broader name discovery without values or `preset: "full"` for legacy read-only/type/value detail.
 
 All tools return a strict MCP `structuredContent` envelope: `data`, `warnings`, `metrics`, and optional `generation`. On success, `structuredContent.data` is the typed tool payload; on bridge failure it is `{ "error": ... }`. Core read tools advertise typed output schemas through `tools/list`, including page fields such as `returnedCount`, `truncated`, `cursor`, `items`, `fields`, and `units`. Write-control tools advertise typed preview/apply/cancel output schemas with preview tokens, change-set hash/generation/expiry metadata, risk level, itemized change rows, applied counts, and cancellation status.
 
@@ -278,7 +289,7 @@ Remaining blockers:
 
 - Optional signed release artifacts if a release certificate is available. Unsigned preview packages are acceptable when clearly labeled, with checksums and smoke/evidence artifacts attached.
 - Release-candidate live Revit smoke evidence on a self-hosted Revit runner, including installer, broker/add-in pipe auth, read tools, room read/write support, curated `tag_room`/`tag_element` coverage when required, and preview/apply flows.
-- Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json`.
+- Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json` and backed by bundled raw `pyrevit.json`, `dynamo.json`, and `dynamo-preflight.json`.
 - Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, live-smoke output, and hosted integration output for that build.
 - More real-model write-operation and failure-mode evidence before calling the mutation surface production-complete.
 - Multi-version Revit compatibility validation beyond the current Revit 2024 target. Revit 2025/2026 remain intentionally out of scope until year-specific add-in artifacts are built, packaged, installed, and smoked.

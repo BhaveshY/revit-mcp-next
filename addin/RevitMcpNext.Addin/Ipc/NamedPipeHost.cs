@@ -107,8 +107,18 @@ namespace RevitMcpNext.Addin.Ipc
                 {
                     using (var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                     {
-                        requestTimeout.CancelAfter(Math.Max(1, request.TimeoutMs));
+                        requestTimeout.CancelAfter(ComputeServerQueueTimeoutMs(request.TimeoutMs));
                         response = await _requestQueue.EnqueueAsync(request, requestTimeout.Token).ConfigureAwait(false);
+                        if (requestTimeout.IsCancellationRequested &&
+                            response?.Error != null &&
+                            string.Equals(response.Error.Code, "REQUEST_CANCELLED", StringComparison.Ordinal))
+                        {
+                            response = Failure(
+                                request,
+                                "REVIT_EXTERNAL_EVENT_TIMEOUT",
+                                "The named pipe accepted the request, but Revit did not process the ExternalEvent before the bridge timeout. Revit may be busy or blocked by a modal dialog.",
+                                "Bring Revit to the foreground and close any modal dialogs, then retry. If this happened during smoke, inspect the Revit journal for TaskDialog entries.");
+                        }
                     }
                 }
             }
@@ -124,6 +134,13 @@ namespace RevitMcpNext.Addin.Ipc
 
             string responseJson = SerializeResponse(response);
             await FramedPipeTransport.WriteFrameAsync(stream, responseJson, cancellationToken).ConfigureAwait(false);
+        }
+
+        private static int ComputeServerQueueTimeoutMs(int clientTimeoutMs)
+        {
+            int normalizedTimeout = Math.Max(1, clientTimeoutMs);
+            int margin = Math.Min(1000, Math.Max(250, normalizedTimeout / 10));
+            return Math.Max(1, normalizedTimeout - margin);
         }
 
         private NamedPipeServerStream CreateServerStream()
