@@ -120,6 +120,8 @@ Collect a redacted support bundle:
 npm run support:bundle
 ```
 
+The support bundle includes redacted install metadata, doctor output, add-in logs, file hashes, and bounded `revitctl status` / `doctor` / compact `read-bundle` diagnostics so bridge/load failures can be reviewed without asking the user to rerun each command manually.
+
 Collect release evidence for a staged package:
 
 ```powershell

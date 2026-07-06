@@ -3,7 +3,8 @@ param(
     [int[]] $RevitYears = @(2024),
     [string] $InstallRoot = "$env:LOCALAPPDATA\RevitMcpNext",
     [string] $OutputRoot = "",
-    [int64] $MaxLogBytes = 5242880
+    [int64] $MaxLogBytes = 5242880,
+    [int] $RevitCtlTimeoutMs = 5000
 )
 
 $ErrorActionPreference = "Stop"
@@ -172,6 +173,33 @@ function Invoke-Doctor($Year, $Destination) {
     Write-RedactedTextFile $Destination $text
 }
 
+function Invoke-RevitCtlDiagnostic($Label, [string[]] $Arguments, $Destination) {
+    $revitCtl = Join-Path $InstallRoot "revitctl.cmd"
+    if (-not (Test-Path -LiteralPath $revitCtl -PathType Leaf)) {
+        Write-RedactedTextFile $Destination "revitctl.cmd was not found at $revitCtl."
+        return
+    }
+
+    if ($DryRun) {
+        Write-Step "Would run revitctl $Label"
+        return
+    }
+
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $revitCtl @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    $text = "[revitctl command] revitctl $($Arguments -join ' ')`r`n"
+    $text += ($output | Out-String)
+    $text += "`r`n[revitctl exitCode] $exitCode`r`n"
+    Write-RedactedTextFile $Destination $text
+}
+
 function Get-CommandSummary($CommandName) {
     $command = Get-Command $CommandName -ErrorAction SilentlyContinue
     if (-not $command) {
@@ -261,6 +289,13 @@ foreach ($year in $RevitYears) {
     Invoke-Doctor $year (Join-Path $stageRoot "diagnostics\doctor-$year.txt")
 }
 
+$readBundlePayload = '{"include":{"modelContext":true,"warnings":true},"currentViewElements":{"limit":5},"selection":{"limit":5},"continueOnError":true,"includeSectionMetrics":true}'
+$readBundlePayloadPath = Join-Path $stageRoot "diagnostics\revitctl-read-bundle-payload.json"
+Write-RedactedTextFile $readBundlePayloadPath $readBundlePayload
+Invoke-RevitCtlDiagnostic "status" @("status", "--pretty", "--timeout-ms", "$RevitCtlTimeoutMs") (Join-Path $stageRoot "diagnostics\revitctl-status.txt")
+Invoke-RevitCtlDiagnostic "doctor" @("doctor", "--pretty", "--timeout-ms", "$RevitCtlTimeoutMs") (Join-Path $stageRoot "diagnostics\revitctl-doctor.txt")
+Invoke-RevitCtlDiagnostic "read-bundle" @("read-bundle", "--payload", $readBundlePayloadPath, "--pretty", "--timeout-ms", "$RevitCtlTimeoutMs") (Join-Path $stageRoot "diagnostics\revitctl-read-bundle.txt")
+
 $configFiles = @(
     @{ Source = (Join-Path $InstallRoot "launch-revit-mcp-next.cmd"); Destination = "config\launch-revit-mcp-next.cmd" },
     @{ Source = (Join-Path $InstallRoot "revitctl.cmd"); Destination = "config\revitctl.cmd" },
@@ -335,6 +370,7 @@ $bundleManifest = [ordered] @{
     redaction = "Text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, and local profile paths. Environment variables are not collected."
     hostIdentityRedacted = $true
     maxLogBytes = $MaxLogBytes
+    revitCtlTimeoutMs = $RevitCtlTimeoutMs
     installRoot = $InstallRoot
     revitYears = $RevitYears
 }

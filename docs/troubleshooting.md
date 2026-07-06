@@ -26,7 +26,7 @@ Collect a redacted support bundle:
 npm run support:bundle
 ```
 
-The bundle includes doctor output, add-in logs, launcher and install metadata, the redacted local auth config, file hashes, and basic tool versions. It does not collect environment variables. Text files are redacted for the installer auth token, common secret names, JWT-shaped tokens, private keys, and local profile paths.
+The bundle includes doctor output, bounded `revitctl status` / `doctor` / compact `read-bundle` diagnostics, add-in logs, launcher and install metadata, the redacted local auth config, file hashes, and basic tool versions. It does not collect environment variables. Text files are redacted for the installer auth token, common secret names, JWT-shaped tokens, private keys, and local profile paths. A nonzero `revitctl` exit code in the bundle is expected when Revit is closed or the bridge is unavailable; keep that file because it shows which layer failed.
 
 Pipe auth config:
 

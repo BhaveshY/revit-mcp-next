@@ -901,6 +901,55 @@ function Assert-SupportBundleRedactsHostIdentity($SupportRoot) {
     }
 }
 
+function Assert-SupportBundleIncludesRevitCtlDiagnostics($SupportRoot) {
+    $expectedDiagnostics = @(
+        @{ Name = "revitctl-status.txt"; Command = "revitctl status" },
+        @{ Name = "revitctl-doctor.txt"; Command = "revitctl doctor" },
+        @{ Name = "revitctl-read-bundle.txt"; Command = "revitctl read-bundle" }
+    )
+
+    foreach ($diagnostic in $expectedDiagnostics) {
+        $file = Get-ChildItem -LiteralPath $SupportRoot -Recurse -Filter $diagnostic.Name -File |
+            Sort-Object FullName |
+            Select-Object -First 1
+        if (-not $file) {
+            throw "Support bundle did not include $($diagnostic.Name)."
+        }
+
+        $text = Get-Content -LiteralPath $file.FullName -Raw
+        if (-not $text.Contains("[revitctl command] $($diagnostic.Command)")) {
+            throw "Support bundle $($diagnostic.Name) did not record its revitctl command."
+        }
+        if (-not $text.Contains("[revitctl exitCode]")) {
+            throw "Support bundle $($diagnostic.Name) did not record the revitctl exit code."
+        }
+    }
+
+    $payloadFile = Get-ChildItem -LiteralPath $SupportRoot -Recurse -Filter "revitctl-read-bundle-payload.json" -File |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if (-not $payloadFile) {
+        throw "Support bundle did not include revitctl-read-bundle-payload.json."
+    }
+
+    $payload = Read-JsonFile $payloadFile.FullName
+    if ($payload.includeSectionMetrics -ne $true) {
+        throw "Support bundle revitctl read-bundle payload did not request section metrics."
+    }
+
+    $bundleManifest = Get-ChildItem -LiteralPath $SupportRoot -Recurse -Filter "support-bundle-manifest.json" -File |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if (-not $bundleManifest) {
+        throw "Support bundle did not include support-bundle-manifest.json."
+    }
+
+    $manifest = Read-JsonFile $bundleManifest.FullName
+    if ([int] $manifest.revitCtlTimeoutMs -le 0) {
+        throw "Support bundle manifest did not record a positive revitctl timeout."
+    }
+}
+
 function Assert-TamperedPackageFails($PackageRoot, $RunRoot, $InstallerScript) {
     $tamperRoot = Join-Path $RunRoot "tmp"
     $tamperedPackage = Join-Path $tamperRoot "p"
@@ -1140,6 +1189,7 @@ try {
     Assert-NoRawTokenInSupportBundle $supportRoot $authToken
     Assert-NoLocalPathsInSupportBundle $supportRoot
     Assert-SupportBundleRedactsHostIdentity $supportRoot
+    Assert-SupportBundleIncludesRevitCtlDiagnostics $supportRoot
 
     Assert-TamperedPackageFails $packageRoot $runRoot $installerScript
     Write-Step "Release package contract passed."

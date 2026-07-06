@@ -167,7 +167,7 @@ Support bundle:
 npm run support:bundle
 ```
 
-The support bundle is written under `artifacts\support`. It collects doctor output, add-in logs, launcher/config metadata, the redacted auth config, install receipts, file hashes, and environment basics. It does not collect environment variables. Text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, the install root, and local profile paths; machine name and user domain are recorded as redacted placeholders.
+The support bundle is written under `artifacts\support`. It collects doctor output, bounded `revitctl status` / `doctor` / compact `read-bundle` diagnostics, add-in logs, launcher/config metadata, the redacted auth config, install receipts, file hashes, and environment basics. It does not collect environment variables. Text files are redacted for the installer auth token, common secret key names, JWT-shaped tokens, private keys, the install root, and local profile paths; machine name and user domain are recorded as redacted placeholders. Nonzero `revitctl` exit codes are retained in the bundle because `BRIDGE_UNAVAILABLE` is useful evidence when Revit is closed or the add-in did not load.
 
 ## Release Evidence Capture
 
