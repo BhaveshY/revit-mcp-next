@@ -30,6 +30,10 @@ import type {
   RevitStatus,
   RoomsRequest,
   RoomsResult,
+  ScheduleFieldsRequest,
+  ScheduleFieldsResult,
+  SchedulesRequest,
+  SchedulesResult,
   ScopedElementListRequest,
   ScopedElementListResult,
   SheetsRequest,
@@ -65,6 +69,14 @@ export interface RevitBridgeClient {
     request: BridgeRequest<SheetsRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<SheetsResult>>;
+  getSchedules(
+    request: BridgeRequest<SchedulesRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<SchedulesResult>>;
+  getScheduleFields(
+    request: BridgeRequest<ScheduleFieldsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScheduleFieldsResult>>;
   getCurrentView(
     request: BridgeRequest<CurrentViewRequest>,
     options?: BridgeCallOptions

@@ -156,6 +156,16 @@ test("revitctl routes compact support read aliases as read operations", async ()
       operation: "get_rooms",
       payload: { preset: "schedule", limit: 6 },
     },
+    {
+      argv: ["schedules", "--payload", '{"includeFields":true,"limit":4}'],
+      operation: "get_schedules",
+      payload: { includeFields: true, limit: 4 },
+    },
+    {
+      argv: ["schedule-fields", "--payload", '{"scheduleId":"1401","nameContains":"Mark"}'],
+      operation: "get_schedule_fields",
+      payload: { scheduleId: "1401", nameContains: "Mark" },
+    },
   ] as const;
 
   for (const item of cases) {

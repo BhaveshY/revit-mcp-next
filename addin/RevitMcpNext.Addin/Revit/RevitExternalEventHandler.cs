@@ -23,6 +23,8 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxQueryLimit = 500;
         private const int MaxViewLimit = 500;
         private const int MaxSheetLimit = 500;
+        private const int MaxScheduleLimit = 500;
+        private const int MaxScheduleFieldLimit = 500;
         private const int MaxParameterElementLimit = 100;
         private const int MaxParameterLimit = 200;
         private const int MaxCatalogLimit = 200;
@@ -47,6 +49,8 @@ namespace RevitMcpNext.Addin.Revit
                 ["get_levels"] = "read",
                 ["get_views"] = "read",
                 ["get_sheets"] = "read",
+                ["get_schedules"] = "read",
+                ["get_schedule_fields"] = "read",
                 ["get_current_view"] = "read",
                 ["get_current_view_elements"] = "read",
                 ["get_selection"] = "read",
@@ -160,6 +164,10 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleGetViews(app, request, sw);
                         case "get_sheets":
                             return HandleGetSheets(app, request, sw);
+                        case "get_schedules":
+                            return HandleGetSchedules(app, request, sw);
+                        case "get_schedule_fields":
+                            return HandleGetScheduleFields(app, request, sw);
                         case "get_current_view":
                             return HandleGetCurrentView(app, request, sw);
                         case "get_current_view_elements":
@@ -383,6 +391,175 @@ namespace RevitMcpNext.Addin.Revit
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
                     ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetSchedules(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_schedules.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
+            int limit = Math.Min(MaxScheduleLimit, Math.Max(1, GetInt(payload, "limit") ?? 50));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includeFields = GetBool(payload, "includeFields", false);
+            string preset = GetString(payload, "preset");
+            string[] fields = NormalizeScheduleFields(GetStringList(payload, "fields"), preset, includeFields, warnings);
+
+            List<ViewSchedule> materialized = new FilteredElementCollector(document)
+                .OfClass(typeof(ViewSchedule))
+                .Cast<ViewSchedule>()
+                .Where(schedule => MatchesScheduleFilter(document, schedule, filter))
+                .OrderBy(schedule => SafeElementName(schedule), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(schedule => GetElementIdValue(schedule.Id))
+                .ToList();
+
+            int totalCount = materialized.Count;
+            List<ViewSchedule> page = materialized.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["items"] = page.Select(schedule => BuildScheduleItem(document, schedule, fields, includeFields)).ToArray(),
+                ["returnedCount"] = page.Count,
+                ["limit"] = limit,
+                ["truncated"] = offset + page.Count < totalCount,
+                ["fields"] = fields,
+                ["scope"] = "schedules",
+                ["source"] = "revit-addin"
+            };
+
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (offset + page.Count < totalCount) data["cursor"] = (offset + page.Count).ToString(CultureInfo.InvariantCulture);
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = page.Count,
+                    TotalCount = includeTotalCount ? totalCount : (int?)null
+                },
+                generation: generation);
+        }
+
+        private BridgeResponseEnvelope HandleGetScheduleFields(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_schedule_fields.", sw);
+            }
+
+            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (generationFailure != null) return generationFailure;
+
+            var warnings = new List<BridgeWarning>();
+            var collectorSw = Stopwatch.StartNew();
+            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
+            string scheduleId = GetString(payload, "scheduleId");
+            string category = GetString(payload, "category");
+            string nameContains = GetString(payload, "nameContains");
+            int limit = Math.Min(MaxScheduleFieldLimit, Math.Max(1, GetInt(payload, "limit") ?? 100));
+            int offset = ParseCursor(GetString(payload, "cursor"), warnings);
+            bool includeTotalCount = GetBool(payload, "includeTotalCount", false);
+            bool includeExistingFields = GetBool(payload, "includeExistingFields", true);
+            bool includeAvailableFields = GetBool(payload, "includeAvailableFields", true);
+
+            ViewSchedule schedule = null;
+            ElementId categoryId = ElementId.InvalidElementId;
+            if (!string.IsNullOrWhiteSpace(scheduleId))
+            {
+                schedule = ResolveElement(document, scheduleId) as ViewSchedule;
+                if (schedule == null)
+                {
+                    return Failure(request, "SCHEDULE_NOT_FOUND", "Schedule " + scheduleId + " was not found.", sw);
+                }
+
+                categoryId = GetScheduleCategoryId(schedule);
+            }
+            else if (!string.IsNullOrWhiteSpace(category))
+            {
+                string categoryError = TryResolveScheduleCategoryId(category, out categoryId);
+                if (!string.IsNullOrWhiteSpace(categoryError))
+                {
+                    return Failure(request, "SCHEDULE_CATEGORY_INVALID", categoryError, sw);
+                }
+            }
+            else
+            {
+                return Failure(request, "SCHEDULE_TARGET_REQUIRED", "Pass scheduleId for an existing schedule or category for new schedule field planning.", sw);
+            }
+
+            List<Dictionary<string, object>> existingFields = schedule != null && includeExistingFields
+                ? GetExistingScheduleFields(schedule)
+                : new List<Dictionary<string, object>>();
+            List<Dictionary<string, object>> availableFields = includeAvailableFields
+                ? GetSchedulableFieldSummaries(document, schedule, categoryId)
+                : new List<Dictionary<string, object>>();
+
+            if (!string.IsNullOrWhiteSpace(nameContains))
+            {
+                existingFields = existingFields
+                    .Where(field => ContainsIgnoreCase(GetString(field, "name"), nameContains) || ContainsIgnoreCase(GetString(field, "heading"), nameContains))
+                    .ToList();
+                availableFields = availableFields
+                    .Where(field => ContainsIgnoreCase(GetString(field, "name"), nameContains))
+                    .ToList();
+            }
+
+            List<Dictionary<string, object>> pagedAvailable = availableFields.Skip(offset).Take(limit).ToList();
+            collectorSw.Stop();
+
+            int totalCount = includeAvailableFields ? availableFields.Count : existingFields.Count;
+            int returnedCount = includeAvailableFields ? pagedAvailable.Count : existingFields.Count;
+            var data = new Dictionary<string, object>
+            {
+                ["document"] = BuildDocumentReference(document, generation),
+                ["returnedCount"] = returnedCount,
+                ["limit"] = limit,
+                ["truncated"] = includeAvailableFields && offset + pagedAvailable.Count < availableFields.Count,
+                ["scope"] = schedule == null ? "category:" + category : "schedule:" + ToElementIdString(schedule.Id),
+                ["source"] = "revit-addin"
+            };
+
+            if (schedule != null) data["schedule"] = BuildScheduleSummary(document, schedule, includeFields: includeExistingFields);
+            if (IsScheduleCategoryId(categoryId)) data["category"] = BuildScheduleCategorySummary(document, categoryId);
+            if (includeExistingFields) data["existingFields"] = existingFields.ToArray();
+            if (includeAvailableFields) data["availableFields"] = pagedAvailable.ToArray();
+            if (includeTotalCount) data["totalCount"] = totalCount;
+            if (includeAvailableFields && offset + pagedAvailable.Count < availableFields.Count)
+            {
+                data["cursor"] = (offset + pagedAvailable.Count).ToString(CultureInfo.InvariantCulture);
+            }
+
+            return Success(
+                request,
+                data,
+                sw,
+                warnings,
+                new BridgeMetrics
+                {
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
+                    ReturnedCount = returnedCount,
                     TotalCount = includeTotalCount ? totalCount : (int?)null
                 },
                 generation: generation);
@@ -1254,6 +1431,9 @@ namespace RevitMcpNext.Addin.Revit
                     string.Equals(operationType, "place_family_instance", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_sheet", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "place_view_on_sheet", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "create_schedule", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "add_schedule_field", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "place_schedule_on_sheet", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_text_note", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "load_family", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "tag_room", StringComparison.OrdinalIgnoreCase) ||
@@ -1615,6 +1795,12 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewCreateSheet(document, operation, index, validationContext);
                 case "place_view_on_sheet":
                     return PreviewPlaceViewOnSheet(document, operation, index);
+                case "create_schedule":
+                    return PreviewCreateSchedule(document, operation, index);
+                case "add_schedule_field":
+                    return PreviewAddScheduleField(document, operation, index);
+                case "place_schedule_on_sheet":
+                    return PreviewPlaceScheduleOnSheet(document, operation, index);
                 case "create_text_note":
                     return PreviewCreateTextNote(document, operation, index);
                 case "load_family":
@@ -1663,6 +1849,12 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyCreateSheet(document, operation, index);
                 case "place_view_on_sheet":
                     return ApplyPlaceViewOnSheet(document, operation, index);
+                case "create_schedule":
+                    return ApplyCreateSchedule(document, operation, index);
+                case "add_schedule_field":
+                    return ApplyAddScheduleField(document, operation, index);
+                case "place_schedule_on_sheet":
+                    return ApplyPlaceScheduleOnSheet(document, operation, index);
                 case "create_text_note":
                     return ApplyCreateTextNote(document, operation, index);
                 case "load_family":
@@ -2366,6 +2558,196 @@ namespace RevitMcpNext.Addin.Revit
                 target: ElementTarget(viewport, null),
                 before: null,
                 after: ViewportSnapshot(document, viewport));
+        }
+
+        private static Dictionary<string, object> PreviewCreateSchedule(Document document, Dictionary<string, object> operation, int index)
+        {
+            string category = GetString(operation, "category");
+            if (string.IsNullOrWhiteSpace(category)) return BlockedChange(operation, index, "create_schedule requires category.");
+
+            string categoryError = TryResolveScheduleCategoryId(category, out ElementId categoryId);
+            if (!string.IsNullOrWhiteSpace(categoryError)) return BlockedChange(operation, index, categoryError);
+
+            string name = NormalizeOptionalText(GetString(operation, "name"));
+            if (!string.IsNullOrWhiteSpace(name) && ViewNameExists(document, name))
+            {
+                return BlockedChange(operation, index, "A Revit view or schedule named '" + name + "' already exists.");
+            }
+
+            List<Dictionary<string, object>> fieldSpecs = GetDictionaryList(operation, "fields");
+            if (fieldSpecs.Count > 32) return BlockedChange(operation, index, "create_schedule supports at most 32 initial fields.");
+
+            string probeError = ProbeCreateSchedule(document, categoryId, fieldSpecs, out List<Dictionary<string, object>> fieldSummaries);
+            if (!string.IsNullOrWhiteSpace(probeError)) return BlockedChange(operation, index, probeError);
+
+            var after = new Dictionary<string, object>
+            {
+                ["category"] = BuildScheduleCategorySummary(document, categoryId),
+                ["fieldCount"] = fieldSummaries.Count,
+                ["fields"] = fieldSummaries.ToArray()
+            };
+            if (!string.IsNullOrWhiteSpace(name)) after["name"] = name;
+            if (operation.ContainsKey("isItemized")) after["isItemized"] = GetBool(operation, "isItemized", true);
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["document"] = document.Title,
+                    ["category"] = category,
+                    ["categoryId"] = ToElementIdString(categoryId)
+                },
+                before: null,
+                after: after);
+        }
+
+        private static Dictionary<string, object> ApplyCreateSchedule(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewCreateSchedule(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "create_schedule preview failed.");
+            }
+
+            string category = GetString(operation, "category");
+            string categoryError = TryResolveScheduleCategoryId(category, out ElementId categoryId);
+            if (!string.IsNullOrWhiteSpace(categoryError)) throw new InvalidOperationException(categoryError);
+
+            ViewSchedule schedule = ViewSchedule.CreateSchedule(document, categoryId);
+            if (schedule == null)
+            {
+                throw new InvalidOperationException("Revit did not create a schedule for category " + category + ".");
+            }
+
+            string name = NormalizeOptionalText(GetString(operation, "name"));
+            if (!string.IsNullOrWhiteSpace(name)) schedule.Name = name;
+            if (operation.ContainsKey("isItemized")) schedule.Definition.IsItemized = GetBool(operation, "isItemized", true);
+
+            foreach (Dictionary<string, object> fieldSpec in GetDictionaryList(operation, "fields"))
+            {
+                AddScheduleFieldFromSpec(document, schedule, fieldSpec);
+            }
+
+            document.Regenerate();
+            return Change(operation, index, "applied",
+                target: ElementTarget(schedule, null),
+                before: null,
+                after: BuildScheduleSummary(document, schedule, includeFields: true));
+        }
+
+        private static Dictionary<string, object> PreviewAddScheduleField(Document document, Dictionary<string, object> operation, int index)
+        {
+            string scheduleId = GetString(operation, "scheduleId");
+            if (string.IsNullOrWhiteSpace(scheduleId)) return BlockedChange(operation, index, "add_schedule_field requires scheduleId.");
+
+            ViewSchedule schedule = ResolveElement(document, scheduleId) as ViewSchedule;
+            if (schedule == null) return BlockedChange(operation, index, "Schedule " + scheduleId + " was not found.");
+
+            Dictionary<string, object> fieldSpec = new Dictionary<string, object>(operation, StringComparer.OrdinalIgnoreCase);
+            string fieldError = TryResolveSchedulableField(document, schedule, fieldSpec, out SchedulableField schedulableField, out string fieldName);
+            if (!string.IsNullOrWhiteSpace(fieldError)) return BlockedChange(operation, index, fieldError);
+
+            if (ScheduleHasFieldNamed(schedule, fieldName))
+            {
+                return BlockedChange(operation, index, "Schedule " + scheduleId + " already contains field '" + fieldName + "'.");
+            }
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["schedule"] = BuildScheduleSummary(document, schedule, includeFields: false),
+                    ["fieldName"] = fieldName,
+                    ["fieldId"] = SchedulableFieldIdString(schedulableField)
+                },
+                before: BuildScheduleSummary(document, schedule, includeFields: true),
+                after: BuildSchedulableFieldSummary(document, schedulableField, schedule));
+        }
+
+        private static Dictionary<string, object> ApplyAddScheduleField(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewAddScheduleField(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "add_schedule_field preview failed.");
+            }
+
+            ViewSchedule schedule = ResolveElement(document, GetString(operation, "scheduleId")) as ViewSchedule;
+            ScheduleField field = AddScheduleFieldFromSpec(document, schedule, new Dictionary<string, object>(operation, StringComparer.OrdinalIgnoreCase));
+            document.Regenerate();
+
+            return Change(operation, index, "applied",
+                target: new Dictionary<string, object>
+                {
+                    ["schedule"] = BuildScheduleSummary(document, schedule, includeFields: false)
+                },
+                before: GetDictionary(preview, "before"),
+                after: BuildScheduleFieldSummary(field, schedule, schedule.Definition.GetFieldCount() - 1));
+        }
+
+        private static Dictionary<string, object> PreviewPlaceScheduleOnSheet(Document document, Dictionary<string, object> operation, int index)
+        {
+            string sheetId = GetString(operation, "sheetId");
+            string scheduleId = GetString(operation, "scheduleId");
+            Dictionary<string, object> pointValue = GetDictionary(operation, "point");
+            if (string.IsNullOrWhiteSpace(sheetId)) return BlockedChange(operation, index, "place_schedule_on_sheet requires sheetId.");
+            if (string.IsNullOrWhiteSpace(scheduleId)) return BlockedChange(operation, index, "place_schedule_on_sheet requires scheduleId.");
+            if (pointValue == null) return BlockedChange(operation, index, "place_schedule_on_sheet requires point.");
+
+            ViewSheet sheet = ResolveElement(document, sheetId) as ViewSheet;
+            if (sheet == null) return BlockedChange(operation, index, "Sheet " + sheetId + " was not found.");
+
+            ViewSchedule schedule = ResolveElement(document, scheduleId) as ViewSchedule;
+            if (schedule == null) return BlockedChange(operation, index, "Schedule " + scheduleId + " was not found.");
+            if (schedule.IsTemplate) return BlockedChange(operation, index, "Schedule " + scheduleId + " is a template and cannot be placed on a sheet.");
+
+            XYZ point;
+            try
+            {
+                point = ToInternalSheetPoint(pointValue, "point");
+            }
+            catch (Exception ex)
+            {
+                return BlockedChange(operation, index, ex.Message);
+            }
+
+            string probeError = ProbePlaceScheduleOnSheet(document, sheet.Id, schedule.Id, point);
+            if (!string.IsNullOrWhiteSpace(probeError)) return BlockedChange(operation, index, probeError);
+
+            return Change(operation, index, "ready",
+                target: new Dictionary<string, object>
+                {
+                    ["sheet"] = SheetSnapshot(document, sheet),
+                    ["schedule"] = BuildScheduleSummary(document, schedule, includeFields: false)
+                },
+                before: null,
+                after: new Dictionary<string, object>
+                {
+                    ["sheetId"] = ToElementIdString(sheet.Id),
+                    ["scheduleId"] = ToElementIdString(schedule.Id),
+                    ["point"] = PointValue(point)
+                });
+        }
+
+        private static Dictionary<string, object> ApplyPlaceScheduleOnSheet(Document document, Dictionary<string, object> operation, int index)
+        {
+            Dictionary<string, object> preview = PreviewPlaceScheduleOnSheet(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "place_schedule_on_sheet preview failed.");
+            }
+
+            ViewSheet sheet = ResolveElement(document, GetString(operation, "sheetId")) as ViewSheet;
+            ViewSchedule schedule = ResolveElement(document, GetString(operation, "scheduleId")) as ViewSchedule;
+            XYZ point = ToInternalSheetPoint(GetDictionary(operation, "point"), "point");
+            ScheduleSheetInstance instance = ScheduleSheetInstance.Create(document, sheet.Id, schedule.Id, point);
+            if (instance == null)
+            {
+                throw new InvalidOperationException("Revit did not create a schedule sheet instance.");
+            }
+
+            return Change(operation, index, "applied",
+                target: ElementTarget(instance, null),
+                before: null,
+                after: ScheduleSheetInstanceSnapshot(instance, sheet.Id, schedule.Id, point));
         }
 
         private static Dictionary<string, object> PreviewCreateTextNote(Document document, Dictionary<string, object> operation, int index)
@@ -4153,6 +4535,17 @@ namespace RevitMcpNext.Addin.Revit
                 .Any(sheet => string.Equals(sheet.SheetNumber, normalized, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static bool ViewNameExists(Document document, string name)
+        {
+            string normalized = NormalizeOptionalText(name);
+            if (string.IsNullOrWhiteSpace(normalized)) return false;
+
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(View))
+                .Cast<View>()
+                .Any(view => string.Equals(SafeElementName(view), normalized, StringComparison.OrdinalIgnoreCase));
+        }
+
         private static FloorType ResolveFloorType(Document document, string floorTypeId)
         {
             if (!string.IsNullOrWhiteSpace(floorTypeId))
@@ -4910,6 +5303,131 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return snapshot;
+        }
+
+        private static Dictionary<string, object> ScheduleSheetInstanceSnapshot(ScheduleSheetInstance instance, ElementId sheetId, ElementId scheduleId, XYZ point)
+        {
+            return new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(instance.Id),
+                ["uniqueId"] = instance.UniqueId,
+                ["sheetId"] = ToElementIdString(sheetId),
+                ["scheduleId"] = ToElementIdString(scheduleId),
+                ["point"] = PointValue(point)
+            };
+        }
+
+        private static Dictionary<string, object> BuildScheduleSummary(Document document, ViewSchedule schedule, bool includeFields)
+        {
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ToElementIdString(schedule.Id),
+                ["uniqueId"] = schedule.UniqueId,
+                ["name"] = SafeElementName(schedule),
+                ["type"] = schedule.ViewType.ToString(),
+                ["isTemplate"] = schedule.IsTemplate
+            };
+
+            ElementId categoryId = GetScheduleCategoryId(schedule);
+            if (IsScheduleCategoryId(categoryId))
+            {
+                Dictionary<string, object> category = BuildScheduleCategorySummary(document, categoryId);
+                summary["categoryId"] = ToElementIdString(categoryId);
+                if (category.TryGetValue("name", out object name)) summary["category"] = name;
+                if (category.TryGetValue("builtInCategory", out object builtInCategory)) summary["builtInCategory"] = builtInCategory;
+            }
+
+            try
+            {
+                summary["fieldCount"] = schedule.Definition.GetFieldCount();
+                summary["isItemized"] = schedule.Definition.IsItemized;
+                if (includeFields) summary["fields"] = GetExistingScheduleFields(schedule).ToArray();
+            }
+            catch
+            {
+                summary["fieldCount"] = 0;
+            }
+
+            return summary;
+        }
+
+        private static List<Dictionary<string, object>> GetExistingScheduleFields(ViewSchedule schedule)
+        {
+            var fields = new List<Dictionary<string, object>>();
+            ScheduleDefinition definition = schedule.Definition;
+            int count = definition.GetFieldCount();
+            for (int index = 0; index < count; index++)
+            {
+                try
+                {
+                    fields.Add(BuildScheduleFieldSummary(definition.GetField(index), schedule, index));
+                }
+                catch
+                {
+                    // Preserve the rest of the schedule field list when Revit rejects one field.
+                }
+            }
+
+            return fields;
+        }
+
+        private static Dictionary<string, object> BuildScheduleFieldSummary(ScheduleField field, ViewSchedule schedule, int fieldIndex)
+        {
+            string name = GetScheduleFieldName(field);
+            var summary = new Dictionary<string, object>
+            {
+                ["id"] = ScheduleFieldIdString(field),
+                ["fieldIndex"] = fieldIndex,
+                ["name"] = string.IsNullOrWhiteSpace(name) ? "(unnamed)" : name
+            };
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(field.ColumnHeading)) summary["heading"] = field.ColumnHeading;
+            }
+            catch
+            {
+                // Column heading can be unavailable for some calculated/internal fields.
+            }
+
+            object fieldType = GetPropertyValue(field, "FieldType");
+            if (fieldType != null) summary["fieldType"] = fieldType.ToString();
+
+            ElementId parameterId = GetReflectedElementId(field, "ParameterId");
+            if (IsScheduleCategoryId(parameterId) || IsValidElementId(parameterId)) summary["parameterId"] = ToElementIdString(parameterId);
+
+            try
+            {
+                summary["isHidden"] = field.IsHidden;
+            }
+            catch
+            {
+                // Hidden state is not exposed on every schedule field variant.
+            }
+
+            object canTotal = InvokeParameterless(field, "CanTotal");
+            if (canTotal is bool canTotalValue) summary["canTotal"] = canTotalValue;
+
+            return summary;
+        }
+
+        private static Dictionary<string, object> BuildSchedulableFieldSummary(Document document, SchedulableField field, ViewSchedule schedule)
+        {
+            string name = GetSchedulableFieldName(document, field);
+            var summary = new Dictionary<string, object>
+            {
+                ["fieldId"] = SchedulableFieldIdString(field),
+                ["name"] = string.IsNullOrWhiteSpace(name) ? "(unnamed)" : name
+            };
+
+            object fieldType = GetPropertyValue(field, "FieldType");
+            if (fieldType != null) summary["fieldType"] = fieldType.ToString();
+
+            ElementId parameterId = GetReflectedElementId(field, "ParameterId");
+            if (IsScheduleCategoryId(parameterId) || IsValidElementId(parameterId)) summary["parameterId"] = ToElementIdString(parameterId);
+
+            if (schedule != null) summary["alreadyInSchedule"] = ScheduleHasFieldNamed(schedule, name);
+            return summary;
         }
 
         private static Dictionary<string, object> TextNoteSnapshot(Document document, TextNote textNote)
@@ -6216,6 +6734,8 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.get_levels",
                     "revit.get_views",
                     "revit.get_sheets",
+                    "revit.get_schedules",
+                    "revit.get_schedule_fields",
                     "revit.get_current_view",
                     "revit.get_current_view_elements",
                     "revit.get_selection",
@@ -6387,6 +6907,41 @@ namespace RevitMcpNext.Addin.Revit
                 string[] sheetTitleBlockIds = GetSheetTitleBlockIds(document, sheet).ToArray();
                 if (!titleBlockIds.Any(id => sheetTitleBlockIds.Contains(id, StringComparer.OrdinalIgnoreCase))) return false;
             }
+
+            return true;
+        }
+
+        private static bool MatchesScheduleFilter(Document document, ViewSchedule schedule, Dictionary<string, object> filter)
+        {
+            IReadOnlyList<string> scheduleIds = GetStringList(filter, "scheduleIds");
+            if (scheduleIds.Count > 0 && !scheduleIds.Contains(ToElementIdString(schedule.Id), StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> uniqueIds = GetStringList(filter, "uniqueIds");
+            if (uniqueIds.Count > 0 && !uniqueIds.Contains(schedule.UniqueId, StringComparer.OrdinalIgnoreCase)) return false;
+
+            IReadOnlyList<string> categories = GetStringList(filter, "categories");
+            if (categories.Count > 0)
+            {
+                Dictionary<string, object> category = BuildScheduleCategorySummary(document, GetScheduleCategoryId(schedule));
+                string categoryName = GetString(category, "name");
+                string builtInCategory = GetString(category, "builtInCategory");
+                if (!categories.Any(candidate =>
+                    string.Equals(candidate, categoryName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(candidate, builtInCategory, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false;
+                }
+            }
+
+            string nameContains = GetString(filter, "nameContains");
+            if (!string.IsNullOrWhiteSpace(nameContains) &&
+                (SafeElementName(schedule) ?? string.Empty).IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            bool? isTemplate = GetNullableBool(filter, "isTemplate");
+            if (isTemplate.HasValue && schedule.IsTemplate != isTemplate.Value) return false;
 
             return true;
         }
@@ -7994,6 +8549,76 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
+        private static string[] NormalizeScheduleFields(IReadOnlyList<string> requested, string preset, bool includeFields, List<BridgeWarning> warnings)
+        {
+            string[] defaults;
+            switch (preset)
+            {
+                case "idOnly":
+                    defaults = new[] { "id" };
+                    break;
+                case "fields":
+                    defaults = new[] { "id", "uniqueId", "name", "category", "builtInCategory", "fieldCount", "isItemized", "fields" };
+                    break;
+                default:
+                    defaults = new[] { "id", "uniqueId", "name", "category", "builtInCategory", "fieldCount", "isItemized" };
+                    break;
+            }
+
+            IReadOnlyList<string> source = requested.Count == 0 ? defaults : requested;
+            var normalized = new List<string>();
+            foreach (string rawField in source)
+            {
+                string field = rawField?.Trim();
+                if (string.IsNullOrWhiteSpace(field)) continue;
+                if (string.Equals(field, "fields", StringComparison.OrdinalIgnoreCase) && !includeFields)
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "SCHEDULE_FIELDS_NOT_INCLUDED",
+                        Message = "Field fields requires includeFields=true or preset=fields."
+                    });
+                    continue;
+                }
+
+                if (IsSupportedScheduleField(field) && !normalized.Contains(field, StringComparer.OrdinalIgnoreCase))
+                {
+                    normalized.Add(field);
+                }
+                else if (!IsSupportedScheduleField(field))
+                {
+                    warnings.Add(new BridgeWarning
+                    {
+                        Code = "UNSUPPORTED_SCHEDULE_FIELD",
+                        Message = "Schedule field '" + field + "' is not supported by the current schedule projection."
+                    });
+                }
+            }
+
+            return normalized.Count == 0 ? new[] { "id" } : normalized.ToArray();
+        }
+
+        private static bool IsSupportedScheduleField(string field)
+        {
+            switch (field)
+            {
+                case "id":
+                case "uniqueId":
+                case "name":
+                case "type":
+                case "categoryId":
+                case "category":
+                case "builtInCategory":
+                case "fieldCount":
+                case "isItemized":
+                case "isTemplate":
+                case "fields":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static string[] NormalizeCatalogFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
         {
             string[] defaults;
@@ -8144,6 +8769,23 @@ namespace RevitMcpNext.Addin.Revit
                     case "placedViews":
                         if (includePlacedViews) item["placedViews"] = GetSheetPlacedViews(document, sheet).ToArray();
                         break;
+                }
+            }
+
+            return item;
+        }
+
+        private static Dictionary<string, object> BuildScheduleItem(Document document, ViewSchedule schedule, IReadOnlyList<string> fields, bool includeFields)
+        {
+            Dictionary<string, object> full = BuildScheduleSummary(document, schedule, includeFields);
+            var item = new Dictionary<string, object> { ["id"] = ToElementIdString(schedule.Id) };
+
+            foreach (string field in fields)
+            {
+                if (string.Equals(field, "id", StringComparison.OrdinalIgnoreCase)) continue;
+                if (full.TryGetValue(field, out object value))
+                {
+                    item[field] = value;
                 }
             }
 
@@ -8779,6 +9421,284 @@ namespace RevitMcpNext.Addin.Revit
                    value is float || value is double || value is decimal;
         }
 
+        private static bool ContainsIgnoreCase(string value, string needle)
+        {
+            return !string.IsNullOrWhiteSpace(value) &&
+                   !string.IsNullOrWhiteSpace(needle) &&
+                   value.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string TryResolveScheduleCategoryId(string category, out ElementId categoryId)
+        {
+            categoryId = ElementId.InvalidElementId;
+            string trimmed = (category ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(trimmed)) return "Schedule category is required.";
+
+            if (long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out long rawId))
+            {
+                categoryId = CreateElementId(rawId.ToString(CultureInfo.InvariantCulture));
+                return null;
+            }
+
+            if (!TryParseBuiltInCategory(trimmed, out BuiltInCategory builtInCategory))
+            {
+                return "Schedule category '" + category + "' is not a recognized BuiltInCategory. Use values such as OST_Walls, OST_Doors, OST_Rooms, or OST_Floors.";
+            }
+
+            categoryId = CreateCategoryElementId(builtInCategory);
+            return null;
+        }
+
+        private static ElementId CreateCategoryElementId(BuiltInCategory category)
+        {
+            try
+            {
+                return (ElementId)Activator.CreateInstance(typeof(ElementId), category);
+            }
+            catch
+            {
+                return CreateElementId(Convert.ToInt64(category, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture));
+            }
+        }
+
+        private static bool IsScheduleCategoryId(ElementId id)
+        {
+            return id != null && GetElementIdValue(id) != GetElementIdValue(ElementId.InvalidElementId);
+        }
+
+        private static ElementId GetScheduleCategoryId(ViewSchedule schedule)
+        {
+            ElementId categoryId = GetReflectedElementId(schedule?.Definition, "CategoryId");
+            return IsScheduleCategoryId(categoryId) ? categoryId : ElementId.InvalidElementId;
+        }
+
+        private static Dictionary<string, object> BuildScheduleCategorySummary(Document document, ElementId categoryId)
+        {
+            var summary = new Dictionary<string, object>();
+            if (!IsScheduleCategoryId(categoryId)) return summary;
+
+            summary["id"] = ToElementIdString(categoryId);
+            try
+            {
+                BuiltInCategory builtInCategory = (BuiltInCategory)GetElementIdValue(categoryId);
+                summary["builtInCategory"] = builtInCategory.ToString();
+            }
+            catch
+            {
+                // Custom or future category ids may not map to a BuiltInCategory enum value.
+            }
+
+            try
+            {
+                foreach (Category category in document.Settings.Categories)
+                {
+                    if (category != null && GetElementIdValue(category.Id) == GetElementIdValue(categoryId))
+                    {
+                        summary["name"] = category.Name;
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // Category display names are best-effort metadata.
+            }
+
+            return summary;
+        }
+
+        private static string ProbeCreateSchedule(
+            Document document,
+            ElementId categoryId,
+            List<Dictionary<string, object>> fieldSpecs,
+            out List<Dictionary<string, object>> fieldSummaries)
+        {
+            fieldSummaries = new List<Dictionary<string, object>>();
+            using (var transaction = new Transaction(document, "Revit MCP preview create_schedule"))
+            {
+                try
+                {
+                    transaction.Start();
+                    ViewSchedule schedule = ViewSchedule.CreateSchedule(document, categoryId);
+                    if (schedule == null)
+                    {
+                        transaction.RollBack();
+                        return "Revit did not create a schedule for category " + ToElementIdString(categoryId) + ".";
+                    }
+
+                    foreach (Dictionary<string, object> fieldSpec in fieldSpecs)
+                    {
+                        ScheduleField field = AddScheduleFieldFromSpec(document, schedule, fieldSpec);
+                        fieldSummaries.Add(BuildScheduleFieldSummary(field, schedule, schedule.Definition.GetFieldCount() - 1));
+                    }
+
+                    transaction.RollBack();
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    if (transaction.HasStarted()) transaction.RollBack();
+                    return "Revit could not preview create_schedule: " + ex.Message;
+                }
+            }
+        }
+
+        private static string ProbePlaceScheduleOnSheet(Document document, ElementId sheetId, ElementId scheduleId, XYZ point)
+        {
+            using (var transaction = new Transaction(document, "Revit MCP preview place_schedule_on_sheet"))
+            {
+                try
+                {
+                    transaction.Start();
+                    ScheduleSheetInstance instance = ScheduleSheetInstance.Create(document, sheetId, scheduleId, point);
+                    if (instance == null)
+                    {
+                        transaction.RollBack();
+                        return "Revit did not create a schedule sheet instance.";
+                    }
+                    transaction.RollBack();
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    if (transaction.HasStarted()) transaction.RollBack();
+                    return "Revit could not preview place_schedule_on_sheet: " + ex.Message;
+                }
+            }
+        }
+
+        private static List<Dictionary<string, object>> GetSchedulableFieldSummaries(Document document, ViewSchedule schedule, ElementId categoryId)
+        {
+            if (schedule != null)
+            {
+                return schedule.Definition
+                    .GetSchedulableFields()
+                    .Select(field => BuildSchedulableFieldSummary(document, field, schedule))
+                    .OrderBy(field => GetString(field, "name"), StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            var result = new List<Dictionary<string, object>>();
+            using (var transaction = new Transaction(document, "Revit MCP preview schedule fields"))
+            {
+                try
+                {
+                    transaction.Start();
+                    ViewSchedule temp = ViewSchedule.CreateSchedule(document, categoryId);
+                    result = temp.Definition
+                        .GetSchedulableFields()
+                        .Select(field => BuildSchedulableFieldSummary(document, field, null))
+                        .OrderBy(field => GetString(field, "name"), StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    transaction.RollBack();
+                }
+                catch
+                {
+                    if (transaction.HasStarted()) transaction.RollBack();
+                    throw;
+                }
+            }
+
+            return result;
+        }
+
+        private static ScheduleField AddScheduleFieldFromSpec(Document document, ViewSchedule schedule, Dictionary<string, object> fieldSpec)
+        {
+            string error = TryResolveSchedulableField(document, schedule, fieldSpec, out SchedulableField schedulableField, out string fieldName);
+            if (!string.IsNullOrWhiteSpace(error)) throw new InvalidOperationException(error);
+
+            ScheduleField field = schedule.Definition.AddField(schedulableField);
+            string heading = NormalizeOptionalText(GetString(fieldSpec, "heading"));
+            if (!string.IsNullOrWhiteSpace(heading)) field.ColumnHeading = heading;
+            if (fieldSpec.ContainsKey("hidden")) field.IsHidden = GetBool(fieldSpec, "hidden", false);
+            return field;
+        }
+
+        private static string TryResolveSchedulableField(
+            Document document,
+            ViewSchedule schedule,
+            Dictionary<string, object> fieldSpec,
+            out SchedulableField schedulableField,
+            out string fieldName)
+        {
+            schedulableField = null;
+            fieldName = null;
+            if (schedule == null) return "A target schedule is required.";
+
+            string requestedName = NormalizeOptionalText(GetString(fieldSpec, "fieldName"));
+            string requestedId = NormalizeOptionalText(GetString(fieldSpec, "fieldId"));
+            if (string.IsNullOrWhiteSpace(requestedName) && string.IsNullOrWhiteSpace(requestedId))
+            {
+                return "Schedule field requires fieldName or fieldId.";
+            }
+
+            foreach (SchedulableField candidate in schedule.Definition.GetSchedulableFields())
+            {
+                string candidateName = GetSchedulableFieldName(document, candidate);
+                string candidateId = SchedulableFieldIdString(candidate);
+                if ((!string.IsNullOrWhiteSpace(requestedId) && string.Equals(requestedId, candidateId, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(requestedName) && string.Equals(requestedName, candidateName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    schedulableField = candidate;
+                    fieldName = candidateName;
+                    return null;
+                }
+            }
+
+            return "Schedulable field was not found for schedule " + ToElementIdString(schedule.Id) + ": " +
+                   (string.IsNullOrWhiteSpace(requestedName) ? requestedId : requestedName) + ".";
+        }
+
+        private static bool ScheduleHasFieldNamed(ViewSchedule schedule, string fieldName)
+        {
+            if (string.IsNullOrWhiteSpace(fieldName)) return false;
+            return GetExistingScheduleFields(schedule)
+                .Any(field => string.Equals(GetString(field, "name"), fieldName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string GetScheduleFieldName(ScheduleField field)
+        {
+            try
+            {
+                string name = field.GetName();
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+            catch
+            {
+                // Use heading fallback below.
+            }
+
+            try
+            {
+                return field.ColumnHeading ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static string GetSchedulableFieldName(Document document, SchedulableField field)
+        {
+            object value = InvokeMethod(field, "GetName", document);
+            return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        }
+
+        private static string ScheduleFieldIdString(ScheduleField field)
+        {
+            object fieldId = GetPropertyValue(field, "FieldId");
+            return fieldId == null ? string.Empty : fieldId.ToString();
+        }
+
+        private static string SchedulableFieldIdString(SchedulableField field)
+        {
+            ElementId parameterId = GetReflectedElementId(field, "ParameterId");
+            if (IsScheduleCategoryId(parameterId) || IsValidElementId(parameterId)) return ToElementIdString(parameterId);
+
+            object fieldId = GetPropertyValue(field, "FieldId");
+            return fieldId == null ? field.ToString() : fieldId.ToString();
+        }
+
         private static bool TryParseBuiltInCategory(string value, out BuiltInCategory category)
         {
             string trimmed = (value ?? string.Empty).Trim();
@@ -8809,6 +9729,52 @@ namespace RevitMcpNext.Addin.Revit
             {
                 return (ElementId)Activator.CreateInstance(typeof(ElementId), Convert.ToInt32(idValue));
             }
+        }
+
+        private static object GetPropertyValue(object target, string propertyName)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(propertyName)) return null;
+            try
+            {
+                return target.GetType().GetProperty(propertyName)?.GetValue(target, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object InvokeParameterless(object target, string methodName)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(methodName)) return null;
+            try
+            {
+                return target.GetType().GetMethod(methodName, Type.EmptyTypes)?.Invoke(target, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object InvokeMethod(object target, string methodName, params object[] args)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(methodName)) return null;
+            try
+            {
+                Type[] argumentTypes = args?.Select(arg => arg?.GetType() ?? typeof(object)).ToArray() ?? Type.EmptyTypes;
+                return target.GetType().GetMethod(methodName, argumentTypes)?.Invoke(target, args);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static ElementId GetReflectedElementId(object target, string propertyName)
+        {
+            object value = GetPropertyValue(target, propertyName);
+            return value is ElementId elementId ? elementId : ElementId.InvalidElementId;
         }
 
         private static bool IsValidElementId(ElementId id)
@@ -8890,6 +9856,14 @@ namespace RevitMcpNext.Addin.Revit
         private static Dictionary<string, object> GetDictionary(Dictionary<string, object> root, string key)
         {
             return root != null && root.TryGetValue(key, out object value) ? value as Dictionary<string, object> : null;
+        }
+
+        private static List<Dictionary<string, object>> GetDictionaryList(Dictionary<string, object> root, string key)
+        {
+            if (root == null || !root.TryGetValue(key, out object value) || value == null) return new List<Dictionary<string, object>>();
+            if (value is object[] array) return array.OfType<Dictionary<string, object>>().ToList();
+            if (value is ArrayList list) return list.Cast<object>().OfType<Dictionary<string, object>>().ToList();
+            return new List<Dictionary<string, object>>();
         }
 
         private static Dictionary<string, object> CloneDictionary(Dictionary<string, object> source)

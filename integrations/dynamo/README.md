@@ -29,8 +29,9 @@ The nodes return compact bridge data. For writes, build a change set, call
 `preview_change_set`, inspect every change, then call `apply_preview` or
 `apply_change_set` only when the preview is ready and explicitly confirmed.
 For reads, prefer the typed in-process helpers such as `get_levels`,
-`get_current_view_elements`, `get_rooms`, `query`, `catalog`, and
-`describe_parameters` instead of passing raw operation-name strings.
+`get_current_view_elements`, `get_rooms`, `get_schedules`,
+`get_schedule_fields`, `query`, `catalog`, and `describe_parameters` instead
+of passing raw operation-name strings.
 `workflow_examples_node.py` previews model-changing operations without applying
 them by default. Set `REVIT_MCP_NEXT_EXAMPLE_APPLY_WRITES=1` to apply the grid
 sample and `REVIT_MCP_NEXT_EXAMPLE_APPLY_PLACEMENT=1` to apply family placement

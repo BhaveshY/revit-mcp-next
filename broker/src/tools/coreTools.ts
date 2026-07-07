@@ -204,6 +204,41 @@ const sheetsSchema = {
   includeTotalCount: z.boolean().default(false),
 };
 
+const scheduleFilterSchema = z
+  .object({
+    scheduleIds: z.array(boundedId).max(256).optional(),
+    uniqueIds: z.array(boundedString).max(256).optional(),
+    categories: z.array(boundedString).max(16).optional().describe("BuiltInCategory names such as OST_Walls or OST_Rooms."),
+    nameContains: z.string().min(1).max(128).optional(),
+    isTemplate: z.boolean().optional(),
+  })
+  .strict();
+
+const schedulesSchema = {
+  ...documentGuardSchema,
+  filter: scheduleFilterSchema.optional(),
+  fields: z.array(boundedString).max(32).optional(),
+  preset: z.enum(["idOnly", "summary", "fields"]).default("summary"),
+  includeFields: z.boolean().default(false).describe("Include existing schedule fields for each returned schedule."),
+  limit: z.number().int().min(1).max(500).default(50),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+};
+
+const scheduleFieldsSchema = {
+  ...documentGuardSchema,
+  scheduleId: boundedId.optional().describe("Existing ViewSchedule ID. Use this to inspect existing and available fields."),
+  category: boundedString
+    .optional()
+    .describe("BuiltInCategory name such as OST_Walls or OST_Rooms. Used when planning a new schedule before it exists."),
+  nameContains: z.string().min(1).max(128).optional(),
+  limit: z.number().int().min(1).max(500).default(100),
+  cursor: z.string().optional(),
+  includeTotalCount: z.boolean().default(false),
+  includeExistingFields: z.boolean().default(true),
+  includeAvailableFields: z.boolean().default(true),
+};
+
 const scopedElementListSchema = {
   ...documentGuardSchema,
   filter: scopedQueryFilterSchema.optional().describe("Additional filters within the tool scope. viewId and selectionOnly are set by the tool."),
@@ -577,6 +612,41 @@ const placeViewOnSheetOperationSchema = operationBaseSchema
     center: changePoint2Schema.describe("Viewport center on the sheet in sheet coordinates with explicit units."),
   })
   .strict();
+const scheduleFieldSpecSchema = z
+  .object({
+    fieldName: z.string().min(1).max(128).optional().describe("Schedulable field display name, such as Type, Count, Area, or Family and Type."),
+    fieldId: boundedString.optional().describe("Schedulable field identifier from revit.get_schedule_fields."),
+    heading: z.string().min(1).max(128).optional().describe("Optional column heading override."),
+    hidden: z.boolean().optional().describe("Whether the schedule field should be hidden."),
+  })
+  .strict();
+const createScheduleOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("create_schedule"),
+    category: boundedString.describe("Schedule category as a BuiltInCategory name such as OST_Walls, OST_Doors, OST_Rooms, or OST_Floors."),
+    name: z.string().min(1).max(256).optional().describe("Optional schedule view name. Revit requires unique view names."),
+    fields: z.array(scheduleFieldSpecSchema).max(32).optional().describe("Optional initial fields to add to the new schedule."),
+    isItemized: z.boolean().optional().describe("Optional ScheduleDefinition.IsItemized value. Defaults to Revit's schedule default."),
+  })
+  .strict();
+const addScheduleFieldOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("add_schedule_field"),
+    scheduleId: boundedId.describe("Target ViewSchedule element ID."),
+    fieldName: z.string().min(1).max(128).optional().describe("Schedulable field display name to add."),
+    fieldId: boundedString.optional().describe("Schedulable field identifier from revit.get_schedule_fields."),
+    heading: z.string().min(1).max(128).optional().describe("Optional column heading override."),
+    hidden: z.boolean().optional().describe("Whether the added field should be hidden."),
+  })
+  .strict();
+const placeScheduleOnSheetOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("place_schedule_on_sheet"),
+    sheetId: boundedId.describe("Target ViewSheet element ID."),
+    scheduleId: boundedId.describe("ViewSchedule ID to place on the sheet."),
+    point: changePoint2Schema.describe("Schedule placement point on the sheet in sheet coordinates with explicit units."),
+  })
+  .strict();
 const createTextNoteOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("create_text_note"),
@@ -731,6 +801,9 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   placeFamilyInstanceOperationSchema,
   createSheetOperationSchema,
   placeViewOnSheetOperationSchema,
+  createScheduleOperationSchema,
+  addScheduleFieldOperationSchema,
+  placeScheduleOnSheetOperationSchema,
   createTextNoteOperationSchema,
   loadFamilyOperationSchema,
   tagRoomOperationSchema,
@@ -1099,6 +1172,63 @@ const sheetsResultSchema = pageBaseSchema
   })
   .passthrough();
 
+const scheduleFieldSummarySchema = z
+  .object({
+    id: z.string().optional(),
+    fieldIndex: z.number().optional(),
+    name: z.string(),
+    heading: z.string().optional(),
+    fieldType: z.string().optional(),
+    parameterId: z.string().optional(),
+    isHidden: z.boolean().optional(),
+    canTotal: z.boolean().optional(),
+  })
+  .passthrough();
+
+const schedulableFieldSummarySchema = z
+  .object({
+    fieldId: z.string().optional(),
+    name: z.string(),
+    fieldType: z.string().optional(),
+    parameterId: z.string().optional(),
+    alreadyInSchedule: z.boolean().optional(),
+  })
+  .passthrough();
+
+const scheduleSummarySchema = z
+  .object({
+    id: z.string(),
+    uniqueId: z.string().nullable().optional(),
+    name: z.string(),
+    type: z.string().optional(),
+    categoryId: z.string().optional(),
+    category: z.string().optional(),
+    builtInCategory: z.string().optional(),
+    fieldCount: z.number().optional(),
+    isItemized: z.boolean().optional(),
+    isTemplate: z.boolean().optional(),
+    fields: z.array(scheduleFieldSummarySchema).optional(),
+  })
+  .passthrough();
+
+const schedulesResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    items: z.array(scheduleSummarySchema),
+    fields: z.array(z.string()),
+  })
+  .passthrough();
+
+const scheduleFieldsResultSchema = pageBaseSchema
+  .extend({
+    document: documentReferenceSchema,
+    schedule: scheduleSummarySchema.optional(),
+    category: z.object({ id: z.string().optional(), name: z.string().optional(), builtInCategory: z.string().optional() }).passthrough().optional(),
+    existingFields: z.array(scheduleFieldSummarySchema).optional(),
+    availableFields: z.array(schedulableFieldSummarySchema).optional(),
+  })
+  .passthrough();
+
 const scopedElementListResultSchema = queryResultSchema
   .extend({
     document: documentReferenceSchema,
@@ -1346,6 +1476,8 @@ const outputSchemas = {
   currentView: toolOutputSchema(currentViewDataSchema),
   views: toolOutputSchema(viewsResultSchema),
   sheets: toolOutputSchema(sheetsResultSchema),
+  schedules: toolOutputSchema(schedulesResultSchema),
+  scheduleFields: toolOutputSchema(scheduleFieldsResultSchema),
   scopedElements: toolOutputSchema(scopedElementListResultSchema),
   modelStatistics: toolOutputSchema(modelStatisticsResultSchema),
   modelReadiness: toolOutputSchema(modelReadinessResultSchema),
@@ -1854,6 +1986,85 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
   );
 
   server.registerTool(
+    "revit.get_schedules",
+    {
+      title: "Get Revit Schedules",
+      description:
+        "Return compact, paginated ViewSchedule inventory with categories, field counts, and optional existing fields for schedule creation/edit planning.",
+      inputSchema: schedulesSchema,
+      outputSchema: outputSchemas.schedules,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const basePayload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        filter: args.filter ?? {},
+        fields: args.fields,
+        preset: args.preset ?? "summary",
+        includeFields: args.includeFields ?? false,
+        limit: args.limit ?? 50,
+        includeTotalCount: args.includeTotalCount ?? false,
+      };
+      const page = preparePagedPayload(context, "get_schedules", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
+      const request = makeRequest(context.sessionId, "get_schedules", "read", payload, 30000);
+      const response = await context.bridge.getSchedules(request, { signal: extra.signal });
+      return asToolResult(
+        withOpaqueCursor(response, context, "get_schedules", basePayload),
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} Revit schedule(s) returned.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_schedule_fields",
+    {
+      title: "Get Revit Schedule Fields",
+      description:
+        "Return existing and available schedulable fields for an existing schedule, or available fields for a category before create_schedule.",
+      inputSchema: scheduleFieldsSchema,
+      outputSchema: outputSchemas.scheduleFields,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const basePayload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
+        scheduleId: args.scheduleId,
+        category: args.category,
+        nameContains: args.nameContains,
+        limit: args.limit ?? 100,
+        includeTotalCount: args.includeTotalCount ?? false,
+        includeExistingFields: args.includeExistingFields ?? true,
+        includeAvailableFields: args.includeAvailableFields ?? true,
+      };
+      const page = preparePagedPayload(context, "get_schedule_fields", args.cursor, basePayload);
+      if (!page.ok) return page.result;
+      const payload = page.payload;
+      const request = makeRequest(context.sessionId, "get_schedule_fields", "read", payload, 30000);
+      const response = await context.bridge.getScheduleFields(request, { signal: extra.signal });
+      return asToolResult(
+        withOpaqueCursor(response, context, "get_schedule_fields", basePayload),
+        (result) =>
+          `${result.returnedCount}${result.totalCount === undefined ? "" : ` of ${result.totalCount}`} schedule field row(s) returned.`
+      );
+    }
+  );
+
+  server.registerTool(
     "revit.get_current_view",
     {
       title: "Get Current Revit View",
@@ -2287,7 +2498,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_schedule, add_schedule_field, place_schedule_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: outputSchemas.previewChange,
       annotations: {

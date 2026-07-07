@@ -31,9 +31,10 @@ Common installed helper path:
 ```
 
 The shared in-process helper exposes direct read wrappers such as `get_levels`,
-`get_current_view_elements`, `get_rooms`, `query`, `catalog`, and
-`describe_parameters`, plus guarded `preview_change_set`, `apply_change_set`,
-and `apply_preview` helpers for writes.
+`get_current_view_elements`, `get_rooms`, `get_schedules`,
+`get_schedule_fields`, `query`, `catalog`, and `describe_parameters`, plus
+guarded `preview_change_set`, `apply_change_set`, and `apply_preview` helpers
+for writes.
 
 Included commands:
 

@@ -37,6 +37,11 @@ import type {
   RoomSummary,
   RoomsRequest,
   RoomsResult,
+  ScheduleFieldsRequest,
+  ScheduleFieldsResult,
+  ScheduleSummary,
+  SchedulesRequest,
+  SchedulesResult,
   ScopedElementListRequest,
   ScopedElementListResult,
   SheetSummary,
@@ -136,6 +141,73 @@ const fakeSheets: SheetSummary[] = [
   },
 ];
 
+const fakeSchedules: ScheduleSummary[] = [
+  {
+    id: "1401",
+    uniqueId: "schedule-1401",
+    name: "Wall Schedule",
+    type: "Schedule",
+    categoryId: "-2000011",
+    category: "Walls",
+    builtInCategory: "OST_Walls",
+    fieldCount: 2,
+    isItemized: true,
+    isTemplate: false,
+    fields: [
+      {
+        id: "field-1",
+        fieldIndex: 0,
+        name: "Family and Type",
+        heading: "Family and Type",
+        fieldType: "Instance",
+        parameterId: "-1002051",
+        isHidden: false,
+      },
+      {
+        id: "field-2",
+        fieldIndex: 1,
+        name: "Length",
+        heading: "Length",
+        fieldType: "Instance",
+        parameterId: "-1004005",
+        isHidden: false,
+        canTotal: true,
+      },
+    ],
+  },
+];
+
+const fakeSchedulableFields: NonNullable<ScheduleFieldsResult["availableFields"]> = [
+  {
+    fieldId: "-1002051",
+    name: "Family and Type",
+    fieldType: "Instance",
+    parameterId: "-1002051",
+    alreadyInSchedule: true,
+  },
+  {
+    fieldId: "-1004005",
+    name: "Length",
+    fieldType: "Instance",
+    parameterId: "-1004005",
+    alreadyInSchedule: true,
+  },
+  {
+    fieldId: "-1001203",
+    name: "Comments",
+    fieldType: "Instance",
+    parameterId: "-1001203",
+    alreadyInSchedule: false,
+  },
+  {
+    fieldId: "-1001205",
+    name: "Mark",
+    fieldType: "Instance",
+    parameterId: "-1001205",
+    alreadyInSchedule: false,
+  },
+];
+
 const capabilities = [
   "revit.status",
   "revit.list_documents",
@@ -143,6 +215,8 @@ const capabilities = [
   "revit.get_levels",
   "revit.get_views",
   "revit.get_sheets",
+  "revit.get_schedules",
+  "revit.get_schedule_fields",
   "revit.get_current_view",
   "revit.get_current_view_elements",
   "revit.get_selection",
@@ -626,6 +700,72 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       truncated,
       fields: request.payload.fields ?? ["id", "uniqueId", "sheetNumber", "name", "titleBlockIds"],
       scope: "sheets",
+      source: "fake-bridge",
+    });
+  }
+
+  async getSchedules(
+    request: BridgeRequest<SchedulesRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<SchedulesResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 50, 500);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const filter = request.payload.filter ?? {};
+    const includeFields = request.payload.includeFields === true || request.payload.preset === "fields";
+    const items = fakeSchedules.filter((schedule) => matchesScheduleFilter(schedule, filter));
+    const page = items.slice(offset, offset + limit).map((schedule) => ({
+      ...schedule,
+      fields: includeFields ? schedule.fields : undefined,
+    }));
+    const truncated = offset + page.length < items.length;
+    return ok(request, {
+      document: documentReference(),
+      items: page,
+      returnedCount: page.length,
+      totalCount: request.payload.includeTotalCount ? items.length : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      fields: request.payload.fields ?? ["id", "uniqueId", "name", "category", "builtInCategory", "fieldCount", "isItemized"],
+      scope: "schedules",
+      source: "fake-bridge",
+    });
+  }
+
+  async getScheduleFields(
+    request: BridgeRequest<ScheduleFieldsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScheduleFieldsResult>> {
+    maybeAbort(options);
+    const limit = Math.min(request.payload.limit ?? 100, 500);
+    const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
+    const schedule = request.payload.scheduleId
+      ? fakeSchedules.find((candidate) => candidate.id === request.payload.scheduleId)
+      : undefined;
+    const includeExistingFields = request.payload.includeExistingFields !== false;
+    const includeAvailableFields = request.payload.includeAvailableFields !== false;
+    const available = includeAvailableFields
+      ? fakeSchedulableFields.filter((field) => !request.payload.nameContains || containsIgnoreCase(field.name, request.payload.nameContains))
+      : [];
+    const page = available.slice(offset, offset + limit);
+    const truncated = offset + page.length < available.length;
+    return ok(request, {
+      document: documentReference(),
+      schedule,
+      category: schedule
+        ? { id: schedule.categoryId, name: schedule.category, builtInCategory: schedule.builtInCategory }
+        : request.payload.category
+          ? { name: request.payload.category, builtInCategory: request.payload.category }
+          : undefined,
+      existingFields: includeExistingFields ? schedule?.fields ?? [] : undefined,
+      availableFields: includeAvailableFields ? page : undefined,
+      returnedCount: includeAvailableFields ? page.length : includeExistingFields ? schedule?.fields?.length ?? 0 : 0,
+      totalCount: request.payload.includeTotalCount ? (includeAvailableFields ? available.length : schedule?.fields?.length ?? 0) : undefined,
+      limit,
+      cursor: truncated ? String(offset + page.length) : undefined,
+      truncated,
+      scope: schedule ? `schedule:${schedule.id}` : `category:${request.payload.category ?? "unspecified"}`,
       source: "fake-bridge",
     });
   }
@@ -1400,6 +1540,25 @@ function matchesSheetFilter(sheet: SheetSummary, filter: SheetsRequest["filter"]
   return true;
 }
 
+function matchesScheduleFilter(schedule: ScheduleSummary, filter: SchedulesRequest["filter"]): boolean {
+  if (!filter) return true;
+  if (filter.scheduleIds?.length && !filter.scheduleIds.includes(schedule.id)) return false;
+  if (filter.uniqueIds?.length && (!schedule.uniqueId || !filter.uniqueIds.includes(schedule.uniqueId))) return false;
+  if (
+    filter.categories?.length &&
+    !filter.categories.some(
+      (category) =>
+        equalsCatalogToken(category, schedule.category) ||
+        equalsCatalogToken(category, schedule.builtInCategory)
+    )
+  ) {
+    return false;
+  }
+  if (filter.nameContains && !containsIgnoreCase(schedule.name, filter.nameContains)) return false;
+  if (filter.isTemplate !== undefined && schedule.isTemplate !== filter.isTemplate) return false;
+  return true;
+}
+
 function projectRoom(room: RoomSummary, fields: string[]): RoomSummary {
   const projected: RoomSummary = {
     id: room.id,
@@ -1578,6 +1737,7 @@ function getFakeElementUniqueId(elementId: string): string | undefined {
     levels.find((level) => level.id === elementId)?.uniqueId ??
     fakeViews.find((view) => view.id === elementId)?.uniqueId ??
     fakeSheets.find((sheet) => sheet.id === elementId)?.uniqueId ??
+    fakeSchedules.find((schedule) => schedule.id === elementId)?.uniqueId ??
     catalogItems.find((item) => item.id === elementId)?.uniqueId
   );
 }
@@ -1624,6 +1784,25 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         sheetId: operation.sheetId,
         viewId: operation.viewId,
+      };
+    case "create_schedule":
+      return {
+        document: activeDocument.title,
+        category: operation.category,
+        name: operation.name,
+      };
+    case "add_schedule_field":
+      return {
+        scheduleId: operation.scheduleId,
+        ...fakeUniqueIdField(operation.scheduleId),
+        fieldName: operation.fieldName,
+        fieldId: operation.fieldId,
+      };
+    case "place_schedule_on_sheet":
+      return {
+        sheetId: operation.sheetId,
+        scheduleId: operation.scheduleId,
+        ...fakeUniqueIdField(operation.scheduleId, "scheduleUniqueId"),
       };
     case "create_text_note":
       return {
@@ -1751,6 +1930,32 @@ function getOperationAfter(operation: ChangeOperation): Record<string, unknown> 
         viewId: operation.viewId,
         center: operation.center,
       };
+    case "create_schedule":
+      return {
+        id: "1402",
+        uniqueId: "schedule-1402",
+        name: operation.name ?? `${operation.category} Schedule`,
+        category: operation.category,
+        builtInCategory: operation.category,
+        fieldCount: operation.fields?.length ?? 0,
+        fields: operation.fields,
+        isItemized: operation.isItemized ?? true,
+      };
+    case "add_schedule_field":
+      return {
+        scheduleId: operation.scheduleId,
+        fieldName: operation.fieldName,
+        fieldId: operation.fieldId,
+        heading: operation.heading,
+        hidden: operation.hidden ?? false,
+      };
+    case "place_schedule_on_sheet":
+      return {
+        scheduleInstanceId: "1403",
+        sheetId: operation.sheetId,
+        scheduleId: operation.scheduleId,
+        point: operation.point,
+      };
     case "create_text_note":
       return {
         id: "1303",
@@ -1877,6 +2082,9 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
     operation.type === "place_family_instance" ||
     operation.type === "create_sheet" ||
     operation.type === "place_view_on_sheet" ||
+    operation.type === "create_schedule" ||
+    operation.type === "add_schedule_field" ||
+    operation.type === "place_schedule_on_sheet" ||
     operation.type === "create_text_note" ||
     operation.type === "load_family" ||
     operation.type === "tag_room" ||

@@ -31,6 +31,10 @@ import type {
   RevitStatus,
   RoomsRequest,
   RoomsResult,
+  ScheduleFieldsRequest,
+  ScheduleFieldsResult,
+  SchedulesRequest,
+  SchedulesResult,
   ScopedElementListRequest,
   ScopedElementListResult,
   SheetsRequest,
@@ -101,6 +105,20 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<SheetsRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<SheetsResult>> {
+    return this.send(request, options);
+  }
+
+  getSchedules(
+    request: BridgeRequest<SchedulesRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<SchedulesResult>> {
+    return this.send(request, options);
+  }
+
+  getScheduleFields(
+    request: BridgeRequest<ScheduleFieldsRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ScheduleFieldsResult>> {
     return this.send(request, options);
   }
 

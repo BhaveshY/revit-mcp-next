@@ -108,6 +108,30 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     related: ["revit.get_views", "revit.preview_change_set"],
   },
   {
+    name: "revit.get_schedules",
+    title: "Get Revit Schedules",
+    category: "read",
+    description: "Return compact paginated schedule inventory with category and optional field details.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use before editing, placing, or auditing schedules.",
+    compactUse: "Use preset=summary first; includeFields=true only when field layout is needed.",
+    related: ["revit.get_schedule_fields", "revit.preview_change_set"],
+  },
+  {
+    name: "revit.get_schedule_fields",
+    title: "Get Revit Schedule Fields",
+    category: "read",
+    description: "Return existing and available schedulable fields for a schedule or schedule category.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use before create_schedule or add_schedule_field so field names/IDs are exact.",
+    compactUse: "Filter by nameContains and keep limit bounded; use category when planning a new schedule.",
+    related: ["revit.get_schedules", "revit.preview_change_set"],
+  },
+  {
     name: "revit.get_current_view",
     title: "Get Current Revit View",
     category: "read",
@@ -308,6 +332,9 @@ const writeOperations = [
   "place_family_instance",
   "create_sheet",
   "place_view_on_sheet",
+  "create_schedule",
+  "add_schedule_field",
+  "place_schedule_on_sheet",
   "create_text_note",
   "load_family",
   "tag_room",
@@ -483,7 +510,7 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
         "selection-update":
           "Selection update workflow: call revit.status, revit.get_selection with preset=summary, revit.describe_parameters with preset=writableEdit for target IDs, preview set_parameter/change_element_type, then apply only the matching ready preview.",
         "sheet-planning":
-          "Sheet planning workflow: call revit.status, revit.get_views with preset=sheetPlacement, revit.get_sheets with includePlacedViews only when needed, revit.catalog kind=titleBlocks, then preview create_sheet/place_view_on_sheet.",
+          "Sheet planning workflow: call revit.status, revit.get_views with preset=sheetPlacement, revit.get_sheets with includePlacedViews only when needed, revit.get_schedules and revit.get_schedule_fields when schedule creation or placement is needed, revit.catalog kind=titleBlocks, then preview create_sheet/place_view_on_sheet/create_schedule/add_schedule_field/place_schedule_on_sheet.",
         "family-placement":
           "Family placement workflow: call revit.status, revit.catalog kind=familySymbols preset=placement with tight filters, query candidate hosts/levels, preview place_family_instance, and treat blocked previews as discovery evidence.",
         "room-layout":

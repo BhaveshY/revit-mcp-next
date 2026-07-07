@@ -131,6 +131,12 @@ class RevitMcpClient(object):
     def get_sheets(self, arguments=None):
         return self.call_tool("revit.get_sheets", arguments or {})
 
+    def get_schedules(self, arguments=None):
+        return self.call_tool("revit.get_schedules", arguments or {})
+
+    def get_schedule_fields(self, arguments=None):
+        return self.call_tool("revit.get_schedule_fields", arguments or {})
+
     def get_current_view(self, arguments=None):
         return self.call_tool("revit.get_current_view", arguments or {})
 

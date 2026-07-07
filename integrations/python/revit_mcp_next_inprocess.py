@@ -215,6 +215,30 @@ def get_sheets(uiapp, payload=None, document_fingerprint=None, expected_generati
     )
 
 
+def get_schedules(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_schedules",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
+def get_schedule_fields(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
+    return execute_read(
+        uiapp,
+        "get_schedule_fields",
+        payload=payload,
+        document_fingerprint=document_fingerprint,
+        expected_generation=expected_generation,
+        timeout_ms=timeout_ms,
+        addin_path=addin_path,
+    )
+
+
 def get_current_view(uiapp, payload=None, document_fingerprint=None, expected_generation=None, timeout_ms=DEFAULT_READ_TIMEOUT_MS, addin_path=None):
     return execute_read(
         uiapp,

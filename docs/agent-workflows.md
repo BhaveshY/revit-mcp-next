@@ -7,7 +7,7 @@ These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP cl
 Use this sequence when the user asks what is in the model, what is selected, or what needs cleanup:
 
 1. `revit.read_bundle` for connection, Revit version, active document, generation, levels, readiness, current view, current-view elements, selection, queue diagnostics, and preview-token health.
-2. `revit.get_views` and `revit.get_sheets` when the task mentions documentation, sheets, view placement, templates, or drawing organization.
+2. `revit.get_views`, `revit.get_sheets`, and `revit.get_schedules` when the task mentions documentation, sheets, schedules, view placement, templates, or drawing organization.
 3. `revit.get_current_view` for view type, scale, and crop state.
 4. `revit.get_current_view_elements` with `preset: "summary"` and a low `limit`; use `preset: "geometrySummary"` instead when the workflow needs compact element `location` and model-space `bounds` in millimeters. When more results are available, repeat the same call and add the opaque `cursor` from `structuredContent.data.cursor`.
 5. `revit.get_selection` when the user references selected elements.
@@ -16,6 +16,7 @@ Use this sequence when the user asks what is in the model, what is selected, or 
 8. `revit.get_warnings` with `preset: "summary"` for compact model-health issues; switch to `preset: "elements"` only when warning element IDs are needed.
 9. `revit.get_material_quantities` for bounded material takeoff.
 10. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
+11. `revit.get_schedule_fields` when the task needs schedule columns, exact field IDs, or a new schedule for a known category.
 
 Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed. Leave `includeTotalCount` false unless the user needs an exact total for reporting; cursor-first reads avoid full model counts on large projects. Cursors are opaque and bound to the same tool arguments/session/document state; do not parse, increment, construct, or reuse a cursor after changing filters, fields, presets, limits, document guards, or count settings.
 
@@ -26,10 +27,12 @@ Use this sequence when the user asks what sheets/views exist, which views are pl
 1. `revit.read_bundle` with a small `catalogs` request for `titleBlocks` or `viewFamilyTypes`, or `revit.status` when only active document fingerprint and generation are needed.
 2. `revit.get_views` with `filter.isTemplate: false` and a low `limit`; use `structuredContent.data.cursor` with the same arguments for additional pages.
 3. `revit.get_sheets` with `includePlacedViews: true` when the task involves sheet composition.
-4. `revit.catalog` with `kind: "titleBlocks"` and `preset: "sheet"` when sheet creation or title block availability matters.
-5. `revit.catalog` with `kind: "viewFamilyTypes"` when plan/section/elevation view creation is being evaluated.
+4. `revit.get_schedules` with `includeFields: true` when schedules may need to be created, edited, or placed.
+5. `revit.get_schedule_fields` with `scheduleId` or `category` before adding fields or creating a schedule.
+6. `revit.catalog` with `kind: "titleBlocks"` and `preset: "sheet"` when sheet creation or title block availability matters.
+7. `revit.catalog` with `kind: "viewFamilyTypes"` when plan/section/elevation view creation is being evaluated.
 
-The current release also supports `create_sheet` and `place_view_on_sheet` through `preview_change_set`. Use `titleBlockTypeId` from `revit.catalog kind=titleBlocks`; note that sheet `titleBlockIds` returned by `revit.get_sheets` are placed title block instance IDs, not type IDs. For `place_view_on_sheet`, collect existing `placedViews` first and choose an unplaced printable non-template view. `center` is in sheet-space coordinates.
+The current release also supports `create_sheet`, `place_view_on_sheet`, `create_schedule`, `add_schedule_field`, and `place_schedule_on_sheet` through `preview_change_set`. Use `titleBlockTypeId` from `revit.catalog kind=titleBlocks`; note that sheet `titleBlockIds` returned by `revit.get_sheets` are placed title block instance IDs, not type IDs. For `place_view_on_sheet`, collect existing `placedViews` first and choose an unplaced printable non-template view. `center` is in sheet-space coordinates. For schedule work, use `revit.get_schedule_fields` before composing `fields` or `fieldId`, and place schedules with sheet-space `point`.
 
 ## Annotation Planning
 

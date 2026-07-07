@@ -307,6 +307,41 @@ test("fake bridge returns read and analysis parity result shapes", async () => {
   assert.equal(rooms.data.items[0]?.number, "101");
   assert.equal(rooms.data.units.area, "m2");
   assert.equal(rooms.data.units.location, "mm");
+
+  const schedules = await bridge.getSchedules(
+    makeRequest(
+      "test",
+      "get_schedules",
+      "read",
+      { filter: { categories: ["OST_Walls"] }, includeFields: true, includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(schedules.ok, true);
+  if (!schedules.ok) return;
+  assert.equal(schedules.data.returnedCount, 1);
+  assert.equal(schedules.data.totalCount, 1);
+  assert.equal(schedules.data.items[0]?.id, "1401");
+  assert.equal(schedules.data.items[0]?.builtInCategory, "OST_Walls");
+  assert.equal(schedules.data.items[0]?.fields?.[0]?.name, "Family and Type");
+
+  const scheduleFields = await bridge.getScheduleFields(
+    makeRequest(
+      "test",
+      "get_schedule_fields",
+      "read",
+      { scheduleId: "1401", nameContains: "Mark", includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(scheduleFields.ok, true);
+  if (!scheduleFields.ok) return;
+  assert.equal(scheduleFields.data.schedule?.id, "1401");
+  assert.equal(scheduleFields.data.returnedCount, 1);
+  assert.equal(scheduleFields.data.totalCount, 1);
+  assert.equal(scheduleFields.data.existingFields?.[0]?.name, "Family and Type");
+  assert.equal(scheduleFields.data.availableFields?.[0]?.name, "Mark");
+  assert.equal(scheduleFields.data.availableFields?.[0]?.alreadyInSchedule, false);
 });
 
 test("fake bridge returns bounded catalog result shape with compatibility paging", async () => {
@@ -614,6 +649,35 @@ test("fake bridge previews and applies a bounded change set", async () => {
       },
       {
         id: "op-19",
+        type: "create_schedule" as const,
+        category: "OST_Walls",
+        name: "Wall Schedule Preview",
+        fields: [
+          { fieldName: "Mark", heading: "Mark" },
+          { fieldId: "-1001203", heading: "Comments", hidden: false },
+        ],
+        isItemized: true,
+      },
+      {
+        id: "op-20",
+        type: "add_schedule_field" as const,
+        scheduleId: "1401",
+        fieldName: "Comments",
+        heading: "Comments",
+        hidden: false,
+      },
+      {
+        id: "op-21",
+        type: "place_schedule_on_sheet" as const,
+        sheetId: "1101",
+        scheduleId: "1401",
+        point: {
+          x: { value: 120, unit: "mm", system: "metric" as const },
+          y: { value: 90, unit: "mm", system: "metric" as const },
+        },
+      },
+      {
+        id: "op-22",
         type: "delete_element" as const,
         elementId: "501",
         expectedUniqueId: "wall-501",
@@ -630,7 +694,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(preview.ok, true);
   if (!preview.ok) return;
   assert.equal(preview.data.ready, true);
-  assert.equal(preview.data.operationCount, 19);
+  assert.equal(preview.data.operationCount, 22);
   assert.equal(preview.data.riskLevel, "high");
   assert.equal(preview.data.documentFingerprint, "sample-doc-fingerprint");
   assert.equal(preview.data.baseGeneration, 7);
@@ -748,9 +812,34 @@ test("fake bridge previews and applies a bounded change set", async () => {
     tagTypeId: "9701",
   });
   assert.equal(preview.data.changes[17]?.after?.hasLeader, true);
-  assert.equal(preview.data.changes[18]?.type, "delete_element");
-  assert.deepEqual(preview.data.changes[18]?.after?.deletedElementIds, ["501", "801"]);
-  assert.equal(preview.data.changes[18]?.after?.dependentDeletedCount, 1);
+  assert.equal(preview.data.changes[18]?.type, "create_schedule");
+  assert.deepEqual(preview.data.changes[18]?.target, {
+    document: "Sample.rvt",
+    category: "OST_Walls",
+    name: "Wall Schedule Preview",
+  });
+  assert.equal(preview.data.changes[18]?.after?.fieldCount, 2);
+  assert.equal(preview.data.changes[19]?.type, "add_schedule_field");
+  assert.deepEqual(preview.data.changes[19]?.target, {
+    scheduleId: "1401",
+    uniqueId: "schedule-1401",
+    fieldName: "Comments",
+    fieldId: undefined,
+  });
+  assert.equal(preview.data.changes[19]?.after?.heading, "Comments");
+  assert.equal(preview.data.changes[20]?.type, "place_schedule_on_sheet");
+  assert.deepEqual(preview.data.changes[20]?.target, {
+    sheetId: "1101",
+    scheduleId: "1401",
+    scheduleUniqueId: "schedule-1401",
+  });
+  assert.deepEqual(preview.data.changes[20]?.after?.point, {
+    x: { value: 120, unit: "mm", system: "metric" },
+    y: { value: 90, unit: "mm", system: "metric" },
+  });
+  assert.equal(preview.data.changes[21]?.type, "delete_element");
+  assert.deepEqual(preview.data.changes[21]?.after?.deletedElementIds, ["501", "801"]);
+  assert.equal(preview.data.changes[21]?.after?.dependentDeletedCount, 1);
 
   const applyPayload = {
     ...changeSet,
@@ -767,7 +856,7 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.ok, true);
   if (!applied.ok) return;
   assert.equal(applied.data.applied, true);
-  assert.equal(applied.data.changedCount, 19);
+  assert.equal(applied.data.changedCount, 22);
   assert.equal(applied.data.changeSetHash, preview.data.changeSetHash);
   assert.equal(applied.data.baseGeneration, preview.data.baseGeneration);
   assert.equal(applied.data.changes[2]?.type, "create_wall");
@@ -786,7 +875,10 @@ test("fake bridge previews and applies a bounded change set", async () => {
   assert.equal(applied.data.changes[15]?.type, "create_room");
   assert.equal(applied.data.changes[16]?.type, "tag_room");
   assert.equal(applied.data.changes[17]?.type, "tag_element");
-  assert.equal(applied.data.changes[18]?.type, "delete_element");
+  assert.equal(applied.data.changes[18]?.type, "create_schedule");
+  assert.equal(applied.data.changes[19]?.type, "add_schedule_field");
+  assert.equal(applied.data.changes[20]?.type, "place_schedule_on_sheet");
+  assert.equal(applied.data.changes[21]?.type, "delete_element");
 
   const cancel = await bridge.cancel(
     makeRequest("session", "cancel_request", "debug", { requestId: "fake-request-id", reason: "test cleanup" }, 5000)

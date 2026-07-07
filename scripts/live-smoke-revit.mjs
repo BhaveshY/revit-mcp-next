@@ -18,6 +18,8 @@ const RETRYABLE_TOOLS = new Set([
   "revit.get_levels",
   "revit.get_views",
   "revit.get_sheets",
+  "revit.get_schedules",
+  "revit.get_schedule_fields",
   "revit.get_current_view",
   "revit.get_current_view_elements",
   "revit.get_selection",
@@ -39,6 +41,8 @@ const REQUIRED_TOOLS = [
   "revit.get_levels",
   "revit.get_views",
   "revit.get_sheets",
+  "revit.get_schedules",
+  "revit.get_schedule_fields",
   "revit.get_current_view",
   "revit.get_current_view_elements",
   "revit.get_selection",
@@ -348,6 +352,28 @@ async function main() {
     assert(Array.isArray(sheets.items), "revit.get_sheets did not return an items array.");
     assert(sheets.returnedCount === sheets.items.length, "revit.get_sheets returnedCount did not match items length.");
     console.log(`Sheets OK: ${sheets.returnedCount}${sheets.totalCount === undefined ? "" : ` of ${sheets.totalCount}`} sample sheet(s)`);
+
+    const schedules = await callRequiredTool(client, "revit.get_schedules", {
+      ...documentGuard,
+      preset: "summary",
+      limit: 5,
+      includeTotalCount: true,
+    });
+    assert(Array.isArray(schedules.items), "revit.get_schedules did not return an items array.");
+    assert(schedules.returnedCount === schedules.items.length, "revit.get_schedules returnedCount did not match items length.");
+    console.log(`Schedules OK: ${schedules.returnedCount}${schedules.totalCount === undefined ? "" : ` of ${schedules.totalCount}`} sample schedule(s)`);
+
+    const scheduleFields = await callRequiredTool(client, "revit.get_schedule_fields", {
+      ...documentGuard,
+      category: "OST_Walls",
+      includeExistingFields: false,
+      includeAvailableFields: true,
+      limit: 5,
+      includeTotalCount: false,
+    });
+    assert(Array.isArray(scheduleFields.availableFields), "revit.get_schedule_fields did not return an availableFields array.");
+    assert(scheduleFields.returnedCount === scheduleFields.availableFields.length, "revit.get_schedule_fields returnedCount did not match availableFields length.");
+    console.log(`Schedule fields OK: ${scheduleFields.returnedCount} wall field candidate(s)`);
 
     const currentViewElements = await callRequiredTool(client, "revit.get_current_view_elements", {
       ...documentGuard,

@@ -75,6 +75,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.get_levels",
       "revit.get_views",
       "revit.get_sheets",
+      "revit.get_schedules",
+      "revit.get_schedule_fields",
       "revit.get_current_view_elements",
       "revit.get_selection",
       "revit.analyze_model",
@@ -234,6 +236,55 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(sheets.structuredContent?.data?.returnedCount, 1);
     assert.equal(sheets.structuredContent?.data?.items?.[0]?.sheetNumber, "A-101");
     assert.equal(sheets.structuredContent?.data?.items?.[0]?.placedViews?.[0]?.viewId, "1024");
+
+    const schedulesTool = tools.tools.find((tool) => tool.name === "revit.get_schedules");
+    assert.ok(schedulesTool?.inputSchema, "revit.get_schedules should declare inputSchema");
+    assert.match(JSON.stringify(schedulesTool.inputSchema), /includeFields/);
+    assert.match(JSON.stringify(schedulesTool.outputSchema), /fieldCount/);
+    const schedules = (await client.callTool({
+      name: "revit.get_schedules",
+      arguments: { includeFields: true, includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          returnedCount?: number;
+          items?: Array<{ id?: string; name?: string; builtInCategory?: string; fields?: Array<{ name?: string }> }>;
+        };
+      };
+    };
+    assert.equal(schedules.isError, undefined);
+    assert.equal(schedules.structuredContent?.data?.returnedCount, 1);
+    assert.equal(schedules.structuredContent?.data?.items?.[0]?.name, "Wall Schedule");
+    assert.equal(schedules.structuredContent?.data?.items?.[0]?.builtInCategory, "OST_Walls");
+    assert.equal(schedules.structuredContent?.data?.items?.[0]?.fields?.[0]?.name, "Family and Type");
+
+    const scheduleFieldsTool = tools.tools.find((tool) => tool.name === "revit.get_schedule_fields");
+    assert.ok(scheduleFieldsTool?.inputSchema, "revit.get_schedule_fields should declare inputSchema");
+    assert.match(JSON.stringify(scheduleFieldsTool.inputSchema), /scheduleId/);
+    assert.match(JSON.stringify(scheduleFieldsTool.outputSchema), /availableFields/);
+    const scheduleFields = (await client.callTool({
+      name: "revit.get_schedule_fields",
+      arguments: { scheduleId: "1401", nameContains: "Mark", includeTotalCount: true },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          returnedCount?: number;
+          totalCount?: number;
+          schedule?: { id?: string };
+          existingFields?: Array<{ name?: string }>;
+          availableFields?: Array<{ name?: string; alreadyInSchedule?: boolean }>;
+        };
+      };
+    };
+    assert.equal(scheduleFields.isError, undefined);
+    assert.equal(scheduleFields.structuredContent?.data?.schedule?.id, "1401");
+    assert.equal(scheduleFields.structuredContent?.data?.returnedCount, 1);
+    assert.equal(scheduleFields.structuredContent?.data?.totalCount, 1);
+    assert.equal(scheduleFields.structuredContent?.data?.existingFields?.[0]?.name, "Family and Type");
+    assert.equal(scheduleFields.structuredContent?.data?.availableFields?.[0]?.name, "Mark");
+    assert.equal(scheduleFields.structuredContent?.data?.availableFields?.[0]?.alreadyInSchedule, false);
 
     const viewElements = (await client.callTool({
       name: "revit.get_current_view_elements",
@@ -703,6 +754,9 @@ test("broker exposes annotated tools with output schemas and callable structured
       "place_family_instance",
       "create_sheet",
       "place_view_on_sheet",
+      "create_schedule",
+      "add_schedule_field",
+      "place_schedule_on_sheet",
       "create_text_note",
       "load_family",
       "tag_room",
@@ -727,6 +781,15 @@ test("broker exposes annotated tools with output schemas and callable structured
       "sheetId",
       "viewId",
       "center",
+      "category",
+      "fields",
+      "isItemized",
+      "scheduleId",
+      "fieldName",
+      "fieldId",
+      "heading",
+      "hidden",
+      "point",
       "text",
       "position",
       "textNoteTypeId",
@@ -886,6 +949,32 @@ test("broker exposes annotated tools with output schemas and callable structured
         center: {
           x: { value: 250, unit: "mm", system: "metric" },
           y: { value: 180, unit: "mm", system: "metric" },
+        },
+      },
+      {
+        type: "create_schedule",
+        category: "OST_Walls",
+        name: "Wall Schedule Preview",
+        fields: [
+          { fieldName: "Mark", heading: "Mark" },
+          { fieldId: "-1001203", heading: "Comments", hidden: false },
+        ],
+        isItemized: true,
+      },
+      {
+        type: "add_schedule_field",
+        scheduleId: "1401",
+        fieldName: "Comments",
+        heading: "Comments",
+        hidden: false,
+      },
+      {
+        type: "place_schedule_on_sheet",
+        sheetId: "1101",
+        scheduleId: "1401",
+        point: {
+          x: { value: 120, unit: "mm", system: "metric" },
+          y: { value: 90, unit: "mm", system: "metric" },
         },
       },
       {
@@ -1074,9 +1163,9 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.ok(preview.structuredContent?.data?.changeSetHash);
     assert.ok(preview.structuredContent?.data?.expiresAt);
     assert.equal(preview.structuredContent?.data?.transactionName, "Update Mark Wall Move");
-    assert.equal(preview.structuredContent?.data?.operationCount, 18);
+    assert.equal(preview.structuredContent?.data?.operationCount, 21);
     assert.equal(preview.structuredContent?.data?.requiresConfirmation, true);
-    assert.equal(preview.structuredContent?.data?.changes?.length, 18);
+    assert.equal(preview.structuredContent?.data?.changes?.length, 21);
     const firstPreviewChange = preview.structuredContent?.data?.changes?.[0];
     assert.equal(Object.hasOwn(firstPreviewChange ?? {}, "operationId"), false);
     assert.deepEqual(firstPreviewChange, {
@@ -1094,6 +1183,13 @@ test("broker exposes annotated tools with output schemas and callable structured
       hostUniqueId: "wall-501",
       levelId: "311",
     });
+    const schedulePreviewChange = preview.structuredContent?.data?.changes?.find((change) => change.type === "create_schedule");
+    assert.deepEqual(schedulePreviewChange?.target, {
+      document: "Sample.rvt",
+      category: "OST_Walls",
+      name: "Wall Schedule Preview",
+    });
+    assert.equal(schedulePreviewChange?.after?.fieldCount, 2);
 
     try {
       const missingMetadataApply = (await client.callTool({
@@ -1145,13 +1241,13 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(apply.isError, undefined);
     assertNoUndefinedValues(apply.structuredContent, "apply.structuredContent");
     assert.equal(apply.structuredContent?.data?.applied, true);
-    assert.equal(apply.structuredContent?.data?.changedCount, 18);
+    assert.equal(apply.structuredContent?.data?.changedCount, 21);
     assert.equal(apply.structuredContent?.data?.previewId, preview.structuredContent?.data?.previewId);
     assert.equal(apply.structuredContent?.data?.documentFingerprint, preview.structuredContent?.data?.documentFingerprint);
     assert.equal(apply.structuredContent?.data?.baseGeneration, preview.structuredContent?.data?.baseGeneration);
     assert.equal(apply.structuredContent?.data?.changeSetHash, preview.structuredContent?.data?.changeSetHash);
     assert.equal(apply.structuredContent?.data?.transactionName, "Update Mark Wall Move");
-    assert.equal(apply.structuredContent?.data?.changes?.length, 18);
+    assert.equal(apply.structuredContent?.data?.changes?.length, 21);
     assert.equal(Object.hasOwn(apply.structuredContent?.data?.changes?.[0] ?? {}, "operationId"), false);
     assert.equal(apply.structuredContent?.data?.changes?.[0]?.status, "applied");
     assert.deepEqual(apply.structuredContent?.data?.changes?.[0]?.after, { value: "A-101" });
@@ -1238,6 +1334,9 @@ test("broker exposes MCP discovery resources and workflow prompts", async () => 
     assert.ok(discovery.tools?.some((tool) => tool.name === "revit.apply_change_set" && tool.resource === "revit://tools/revit.apply_change_set"));
     assert.ok(discovery.writeOperations?.includes("tag_element"));
     assert.ok(discovery.writeOperations?.includes("load_family"));
+    assert.ok(discovery.writeOperations?.includes("create_schedule"));
+    assert.ok(discovery.writeOperations?.includes("add_schedule_field"));
+    assert.ok(discovery.writeOperations?.includes("place_schedule_on_sheet"));
     assert.doesNotMatch(JSON.stringify(discovery), /auth\.env|pipeToken|Bhavesh/i);
 
     const queryResource = await client.readResource({ uri: "revit://tools/revit.query" });

@@ -477,6 +477,106 @@ export interface SheetsResult {
   source: string;
 }
 
+export type SchedulePreset = "idOnly" | "summary" | "fields";
+
+export interface SchedulesFilter {
+  scheduleIds?: ElementId[];
+  uniqueIds?: UniqueId[];
+  categories?: string[];
+  nameContains?: string;
+  isTemplate?: boolean;
+}
+
+export interface ScheduleFieldSummary {
+  id?: string;
+  fieldIndex?: number;
+  name: string;
+  heading?: string;
+  fieldType?: string;
+  parameterId?: ElementId;
+  isHidden?: boolean;
+  canTotal?: boolean;
+}
+
+export interface SchedulableFieldSummary {
+  fieldId?: string;
+  name: string;
+  fieldType?: string;
+  parameterId?: ElementId;
+  alreadyInSchedule?: boolean;
+}
+
+export interface ScheduleSummary {
+  id: ElementId;
+  uniqueId?: UniqueId;
+  name: string;
+  type?: string;
+  categoryId?: ElementId;
+  category?: string;
+  builtInCategory?: string;
+  fieldCount?: number;
+  isItemized?: boolean;
+  isTemplate?: boolean;
+  fields?: ScheduleFieldSummary[];
+}
+
+export interface SchedulesRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  filter?: SchedulesFilter;
+  fields?: string[];
+  preset?: SchedulePreset;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+  includeFields?: boolean;
+}
+
+export interface SchedulesResult {
+  document: DocumentReference;
+  items: ScheduleSummary[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  fields: string[];
+  scope: string;
+  source: string;
+}
+
+export interface ScheduleFieldsRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
+  scheduleId?: ElementId;
+  category?: string;
+  nameContains?: string;
+  limit?: number;
+  cursor?: string;
+  includeTotalCount?: boolean;
+  includeExistingFields?: boolean;
+  includeAvailableFields?: boolean;
+}
+
+export interface ScheduleFieldsResult {
+  document: DocumentReference;
+  schedule?: ScheduleSummary;
+  category?: {
+    id?: ElementId;
+    name?: string;
+    builtInCategory?: string;
+  };
+  existingFields?: ScheduleFieldSummary[];
+  availableFields?: SchedulableFieldSummary[];
+  returnedCount: number;
+  totalCount?: number;
+  limit: number;
+  cursor?: string;
+  truncated: boolean;
+  scope: string;
+  source: string;
+}
+
 export interface ScopedElementListRequest {
   documentFingerprint?: string;
   expectedGeneration?: number;
@@ -897,6 +997,9 @@ export type ChangeOperationType =
   | "place_family_instance"
   | "create_sheet"
   | "place_view_on_sheet"
+  | "create_schedule"
+  | "add_schedule_field"
+  | "place_schedule_on_sheet"
   | "create_text_note"
   | "load_family"
   | "tag_room"
@@ -971,6 +1074,37 @@ export interface PlaceViewOnSheetOperation extends ChangeOperationBase {
   sheetId: ElementId;
   viewId: ElementId;
   center: Point2;
+}
+
+export interface ScheduleFieldSpec {
+  fieldName?: string;
+  fieldId?: string;
+  heading?: string;
+  hidden?: boolean;
+}
+
+export interface CreateScheduleOperation extends ChangeOperationBase {
+  type: "create_schedule";
+  category: string;
+  name?: string;
+  fields?: ScheduleFieldSpec[];
+  isItemized?: boolean;
+}
+
+export interface AddScheduleFieldOperation extends ChangeOperationBase {
+  type: "add_schedule_field";
+  scheduleId: ElementId;
+  fieldName?: string;
+  fieldId?: string;
+  heading?: string;
+  hidden?: boolean;
+}
+
+export interface PlaceScheduleOnSheetOperation extends ChangeOperationBase {
+  type: "place_schedule_on_sheet";
+  sheetId: ElementId;
+  scheduleId: ElementId;
+  point: Point2;
 }
 
 export interface CreateTextNoteOperation extends ChangeOperationBase {
@@ -1096,6 +1230,9 @@ export type ChangeOperation =
   | PlaceFamilyInstanceOperation
   | CreateSheetOperation
   | PlaceViewOnSheetOperation
+  | CreateScheduleOperation
+  | AddScheduleFieldOperation
+  | PlaceScheduleOnSheetOperation
   | CreateTextNoteOperation
   | LoadFamilyOperation
   | TagRoomOperation

@@ -35,6 +35,8 @@ class InProcessWrapperTests(unittest.TestCase):
             ("get_levels", lambda: inprocess.get_levels("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
             ("get_views", lambda: inprocess.get_views("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
             ("get_sheets", lambda: inprocess.get_sheets("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
+            ("get_schedules", lambda: inprocess.get_schedules("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
+            ("get_schedule_fields", lambda: inprocess.get_schedule_fields("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
             ("get_current_view", lambda: inprocess.get_current_view("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
             ("get_current_view_elements", lambda: inprocess.get_current_view_elements("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),
             ("get_selection", lambda: inprocess.get_selection("uiapp", {"limit": 1}, document_fingerprint="doc-1", expected_generation=7, timeout_ms=1234, addin_path="addin.dll")),

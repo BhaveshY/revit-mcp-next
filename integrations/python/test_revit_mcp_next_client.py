@@ -155,6 +155,8 @@ class RevitMcpNextClientTests(unittest.TestCase):
             ("revit.get_levels", {"limit": 1}, lambda: client.get_levels({"limit": 1})),
             ("revit.get_views", {"limit": 1}, lambda: client.get_views({"limit": 1})),
             ("revit.get_sheets", {"limit": 1}, lambda: client.get_sheets({"limit": 1})),
+            ("revit.get_schedules", {"limit": 1}, lambda: client.get_schedules({"limit": 1})),
+            ("revit.get_schedule_fields", {"scheduleId": "1401"}, lambda: client.get_schedule_fields({"scheduleId": "1401"})),
             ("revit.get_current_view", {"limit": 1}, lambda: client.get_current_view({"limit": 1})),
             ("revit.get_current_view_elements", {"limit": 1}, lambda: client.get_current_view_elements({"limit": 1})),
             ("revit.get_selection", {"limit": 1}, lambda: client.get_selection({"limit": 1})),

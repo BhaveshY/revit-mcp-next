@@ -39,6 +39,8 @@ function validateAddinOperationKindGuard() {
     get_levels: "read",
     get_views: "read",
     get_sheets: "read",
+    get_schedules: "read",
+    get_schedule_fields: "read",
     get_current_view: "read",
     get_current_view_elements: "read",
     get_selection: "read",

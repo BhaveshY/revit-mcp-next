@@ -15,6 +15,8 @@ const READ_OPERATIONS = new Set([
   "get_levels",
   "get_views",
   "get_sheets",
+  "get_schedules",
+  "get_schedule_fields",
   "get_current_view",
   "get_current_view_elements",
   "get_selection",
@@ -261,6 +263,10 @@ function resolveCommandOperation(options: RevitCtlOptions): {
       return { operation: "get_views", operationKind: "read", payload: payloadObject(options.payload) };
     case "sheets":
       return { operation: "get_sheets", operationKind: "read", payload: payloadObject(options.payload) };
+    case "schedules":
+      return { operation: "get_schedules", operationKind: "read", payload: payloadObject(options.payload) };
+    case "schedule-fields":
+      return { operation: "get_schedule_fields", operationKind: "read", payload: payloadObject(options.payload) };
     case "current-view":
       return { operation: "get_current_view", operationKind: "read", payload: payloadObject(options.payload) };
     case "current-view-elements":
@@ -605,6 +611,10 @@ async function callBridge(
       return bridge.getViews(request as unknown as Parameters<NamedPipeBridgeClient["getViews"]>[0]);
     case "get_sheets":
       return bridge.getSheets(request as unknown as Parameters<NamedPipeBridgeClient["getSheets"]>[0]);
+    case "get_schedules":
+      return bridge.getSchedules(request as unknown as Parameters<NamedPipeBridgeClient["getSchedules"]>[0]);
+    case "get_schedule_fields":
+      return bridge.getScheduleFields(request as unknown as Parameters<NamedPipeBridgeClient["getScheduleFields"]>[0]);
     case "get_current_view":
       return bridge.getCurrentView(request as Parameters<NamedPipeBridgeClient["getCurrentView"]>[0]);
     case "get_current_view_elements":

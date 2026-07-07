@@ -4,6 +4,7 @@ Write operations use a preview/apply contract.
 
 1. Run `revit.status` and record the active document fingerprint.
 2. Run `revit.get_levels`, `revit.catalog`, and, for room changes, `revit.get_rooms` for IDs and existing room numbers that the change set needs.
+   For schedule changes, run `revit.get_schedules` for existing schedule IDs and `revit.get_schedule_fields` with either `scheduleId` or `category` for exact schedulable field names/IDs.
    For parameter edits, run `revit.describe_parameters` on the target element IDs before choosing `set_parameter`. The default `preset: "writableEdit"` returns compact writable instance parameter metadata; use `preset: "full"` only when read-only, type-parameter, or current-value details are needed.
 3. Run `revit.preview_change_set` with a bounded change set.
 4. Inspect every returned change. Do not apply blocked previews.
@@ -26,6 +27,7 @@ Use `revit.catalog` instead of guessing type IDs:
 - `change_element_type.typeId`: `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"` so the returned IDs come from Revit's compatible type list.
 - Family placement discovery: `revit.catalog` supports `kind: "familySymbols"` with `preset: "placement"`. Only apply placement change sets when preview reports ready; missing symbols, missing hosts, or unsupported placement classes should be treated as blocked previews.
 - Tag and family bootstrap: check `revit.catalog kind=tagTypes` first for compatible room, wall, or multi-category tag symbols. Use `load_family` only when compatible symbols are missing and a vetted local `.rfa` path is available; include `expectedSha256` when known, then re-run catalog before `tag_room`, `tag_element`, or placement work.
+- Schedule discovery: use `revit.get_schedules` with `includeFields: true` to inspect existing schedules, then `revit.get_schedule_fields` with `scheduleId` or `category` before `create_schedule` or `add_schedule_field`.
 
 When a previous read, preview, or apply response already returned element identifiers, use `revit.query` with `filter.elementIds` or `filter.uniqueIds` to retrieve just those elements instead of scanning a broader model scope.
 
@@ -45,6 +47,9 @@ End-to-end supported operations:
 - `load_family`: load one vetted local `.rfa` family file into the active document after a ready preview, optionally guarded by `expectedSha256`; use it for deterministic annotation/tag/family workflows such as loading room tag and multi-category/wall tag families before tag smoke or agent workflows.
 - `create_sheet`: create one sheet with unique `sheetNumber`, optional `name`, and optional `titleBlockTypeId`; discover title block type IDs with `revit.catalog kind=titleBlocks preset=sheet`.
 - `place_view_on_sheet`: place one eligible unplaced view on a sheet by `sheetId`, `viewId`, and sheet-space `center`; use `revit.get_sheets includePlacedViews=true` to avoid already placed views.
+- `create_schedule`: create one schedule for a supported category such as `OST_Walls`, `OST_Doors`, `OST_Rooms`, or `OST_Floors`, with optional unique `name`, initial fields from `revit.get_schedule_fields`, optional headings, hidden flags, and `isItemized`.
+- `add_schedule_field`: add one schedulable field to an existing schedule by `scheduleId` plus `fieldName` or exact `fieldId` from `revit.get_schedule_fields`.
+- `place_schedule_on_sheet`: place one existing schedule on a sheet by `sheetId`, `scheduleId`, and sheet-space `point`; use `revit.get_sheets includePlacedViews=true` and `revit.get_schedules` first.
 - `create_text_note`: create one text note in a graphical non-template view by `viewId`, `text`, `position`, optional `textNoteTypeId`, optional `width`, and optional `rotation`.
 - `tag_room`: create one room tag by `roomId`, plan/section `viewId`, 2D `location`, optional `expectedUniqueId`, optional `tagTypeId`, optional `hasLeader`, and optional `orientation`; discover room tag types with `revit.catalog kind=tagTypes filter.categories=["OST_RoomTags"]`.
 - `tag_element`: create one independent element tag by `elementId`, graphical `viewId`, tag `FamilySymbol` `tagTypeId`, `position`, optional `expectedUniqueId`, optional `hasLeader`, and optional `orientation`; discover wall or multi-category tags with `revit.catalog kind=tagTypes`.
