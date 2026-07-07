@@ -97,6 +97,14 @@ function Redact-ShareableText($Text) {
     return $result
 }
 
+function ConvertTo-ShareableReason($Value) {
+    if ([string]::IsNullOrWhiteSpace([string] $Value)) {
+        return [string] $Value
+    }
+
+    return Redact-ShareableText ([string] $Value)
+}
+
 function ConvertTo-ShareableObject($Value) {
     if ($null -eq $Value) {
         return $null
@@ -834,9 +842,14 @@ $packageZipHash = Get-Sha256Hash $packageZip.FullName
 $packageZipHashLine = "$packageZipHash  $($packageZip.Name)"
 Set-Content -LiteralPath (Join-Path $packageEvidenceRoot "package-zip.sha256") -Value $packageZipHashLine -Encoding ASCII
 
+$shareableSigningSkipReason = ConvertTo-ShareableReason $SigningSkipReason
+$shareableLiveSmokeSkipReason = ConvertTo-ShareableReason $LiveSmokeSkipReason
+$shareableSupportBundleSkipReason = ConvertTo-ShareableReason $SupportBundleSkipReason
+$shareableHostedIntegrationSkipReason = ConvertTo-ShareableReason $HostedIntegrationSkipReason
+
 $signingRequested = [bool] $releaseManifest.signing.requested
 $signingStatus = "captured"
-$effectiveSigningSkipReason = $SigningSkipReason
+$effectiveSigningSkipReason = $shareableSigningSkipReason
 if (-not $signingRequested) {
     if ([string]::IsNullOrWhiteSpace($effectiveSigningSkipReason)) {
         throw "Signing was not requested for this build. Pass -SigningSkipReason to make that release evidence explicit."
@@ -851,7 +864,7 @@ $liveSmokeSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
     sourcePathRedacted = $false
-    skipReason = $LiveSmokeSkipReason
+    skipReason = $shareableLiveSmokeSkipReason
     summary = $null
     files = @()
 }
@@ -895,7 +908,7 @@ $supportSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
     sourcePathRedacted = $false
-    skipReason = $SupportBundleSkipReason
+    skipReason = $shareableSupportBundleSkipReason
     files = @()
 }
 if (-not [string]::IsNullOrWhiteSpace($SupportBundlePath)) {
@@ -915,7 +928,7 @@ $hostedIntegrationSection = [ordered] @{
     status = "skipped"
     sourcePath = $null
     sourcePathRedacted = $false
-    skipReason = $HostedIntegrationSkipReason
+    skipReason = $shareableHostedIntegrationSkipReason
     summary = $null
     files = @()
 }
@@ -1034,13 +1047,13 @@ if ($signingStatus -eq "skipped") {
     $summaryLines += "- Signing skip reason: $effectiveSigningSkipReason"
 }
 if ($liveSmokeSection.status -eq "skipped") {
-    $summaryLines += "- Live smoke skip reason: $LiveSmokeSkipReason"
+    $summaryLines += "- Live smoke skip reason: $shareableLiveSmokeSkipReason"
 }
 if ($supportSection.status -eq "skipped") {
-    $summaryLines += "- Support bundle skip reason: $SupportBundleSkipReason"
+    $summaryLines += "- Support bundle skip reason: $shareableSupportBundleSkipReason"
 }
 if ($hostedIntegrationSection.status -eq "skipped") {
-    $summaryLines += "- Hosted pyRevit/Dynamo integrations skip reason: $HostedIntegrationSkipReason"
+    $summaryLines += "- Hosted pyRevit/Dynamo integrations skip reason: $shareableHostedIntegrationSkipReason"
 }
 
 $summaryLines += @(

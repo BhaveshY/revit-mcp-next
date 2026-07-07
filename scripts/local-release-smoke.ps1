@@ -906,7 +906,7 @@ if (-not $NoEvidence) {
             }
         }
         if ($hostCommandLogPaths.Count -gt 0) {
-            $evidenceArgs += @("-CommandLogPaths") + $hostCommandLogPaths
+            $evidenceArgs += @("-CommandLogPaths", ($hostCommandLogPaths -join ";"))
         }
     } else {
         $evidenceArgs += @("-HostedIntegrationSkipReason", "Hosted pyRevit/Dynamo smoke was not run by this MCP launcher smoke. Run npm run smoke:host-integrations and pass -HostedIntegrationEvidencePath for production release evidence.")
