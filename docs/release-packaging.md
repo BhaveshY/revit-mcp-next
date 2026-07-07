@@ -284,7 +284,7 @@ npm run smoke:dynamo-host -- `
   -LaunchRevit
 ```
 
-After the Dynamo profile has already been warmed manually once, add `-UseDynamoJournal` to have the wrapper write a temporary Revit journal with `dynPath` and `dynPathExecute=true`, launch Revit, and run the packaged graph automatically. This mode requires an existing parseable `DynamoSettings.xml` by default, so Autodesk/Dynamo privacy or startup prompts are still handled manually, not by automation.
+After the Dynamo profile has already been warmed manually once, add `-UseDynamoJournal` to have the wrapper write a temporary Revit journal with `dynPath` and `dynPathExecute=true`, launch Revit, and run the packaged graph automatically. This mode requires an existing parseable `DynamoSettings.xml` by default, so Autodesk/Dynamo privacy or startup prompts are still handled manually, not by automation. To avoid Dynamo's external-file trust dialog, journal mode copies the packaged graph into the first writable folder already present in Dynamo's `TrustedLocations`; it records both the packaged source graph and the effective launch copy, including SHA-256 hashes, in `dynamo-preflight.json`.
 
 For unattended runners, add `-RequireWarmedDynamo` so the command fails fast with the exact settings path and preflight reason instead of waiting for evidence that cannot be produced behind first-run UI:
 
@@ -304,7 +304,7 @@ npm run smoke:dynamo-host -- `
   -RequireWarmedDynamo
 ```
 
-The wrapper also prints and, during collection, records a bounded Dynamo preflight report next to the evidence as `dynamo-preflight.json`. It includes the Revit year, Dynamo version/settings path when discoverable, settings-source confidence, graph path, install root, evidence path, model path, and whether an existing `DynamoSettings.xml` appears warmed. The report is read-only: it does not alter privacy settings, simulate consent, or automate UI prompts. Release evidence requires this preflight file alongside `pyrevit.json`, `dynamo.json`, and `host-integrations-summary.json`. To collect only that report:
+The wrapper also prints and, during collection, records a bounded Dynamo preflight report next to the evidence as `dynamo-preflight.json`. It includes the Revit year, Dynamo version/settings path when discoverable, settings-source confidence, graph path, trusted graph launch plan, install root, evidence path, model path, and whether an existing `DynamoSettings.xml` appears warmed. The report is read-only: it does not alter privacy settings, edit trusted locations, simulate consent, or automate UI prompts. Release evidence requires this preflight file alongside `pyrevit.json`, `dynamo.json`, and `host-integrations-summary.json`. To collect only that report:
 
 ```powershell
 npm run smoke:dynamo-host -- `

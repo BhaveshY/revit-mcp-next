@@ -209,14 +209,14 @@ The aggregate runner creates the raw evidence files and composes the summary in 
 npm run smoke:host-integrations -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\host-integrations -SeedPyRevitHosts -LaunchRevitForDynamo
 ```
 
-After the Dynamo profile has already been warmed manually once, the Dynamo runner can launch Revit with a journal that opens and runs the packaged graph:
+After the Dynamo profile has already been warmed manually once, the Dynamo runner can launch Revit with a journal that opens and runs the packaged graph. For journal runs, the wrapper copies the packaged graph into the first writable folder already listed in Dynamo's `TrustedLocations`, records both source and effective graph paths/hashes in `dynamo-preflight.json`, and fails fast if it cannot avoid Dynamo's external-file trust prompt:
 
 ```powershell
 npm run smoke:host-integrations -- -RevitYear 2024 -ModelPath C:\tmp\disposable.rvt -OutputRoot artifacts\host-integrations -SeedPyRevitHosts -LaunchRevitForDynamo -UseDynamoJournalForDynamo
 ```
 
 For unattended aggregate runs, also pass `-RequireWarmedDynamoForDynamo`.
-Journal mode refuses to run when `DynamoSettings.xml` is missing or not parseable, unless `-AllowUnwarmedDynamoJournal` is passed for an explicitly supervised local experiment. It does not change Dynamo privacy settings or click startup prompts.
+Journal mode refuses to run when `DynamoSettings.xml` is missing or not parseable, unless `-AllowUnwarmedDynamoJournal` is passed for an explicitly supervised local experiment. It does not change Dynamo privacy settings, edit trusted locations, or click startup/trust prompts.
 `-AllowUnwarmedDynamoJournal` is not a release-evidence shortcut; if Dynamo blocks on first-run UI, warm the profile manually and rerun without that flag.
 
 After collecting the raw host JSON files and Dynamo preflight report, build the summary with:

@@ -237,8 +237,17 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     $modelPath = Join-Path $RunRoot "host-smoke\disposable.rvt"
     $dynamoSettingsPath = Join-Path $RunRoot "host-smoke\Dynamo\Dynamo Revit\2.17\DynamoSettings.xml"
     $dynamoPreflightReportPath = Join-Path $RunRoot "host-smoke\dynamo-preflight.json"
+    $trustedDynamoRoot = Join-Path $RunRoot "host-smoke\trusted-dynamo"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dynamoSettingsPath) | Out-Null
-    Set-Content -LiteralPath $dynamoSettingsPath -Value "<PreferenceSettings />" -Encoding UTF8
+    New-Item -ItemType Directory -Force -Path $trustedDynamoRoot | Out-Null
+    $dynamoSettingsXml = @"
+<PreferenceSettings>
+  <TrustedLocations>
+    <string>$trustedDynamoRoot</string>
+  </TrustedLocations>
+</PreferenceSettings>
+"@
+    Set-Content -LiteralPath $dynamoSettingsPath -Value $dynamoSettingsXml -Encoding UTF8
 
     $pyRevitOutput = Invoke-RepoScriptCapture $pyRevitSmokeScript @(
         "-DryRun",
@@ -325,6 +334,9 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     if ($dynamoState.preflight.manualWarmupRequired -ne $false -or $dynamoState.preflight.dynamoJournalAllowed -ne $true) {
         throw "Dynamo host smoke dry run did not record warmed-profile audit fields."
     }
+    if ($dynamoState.preflight.dynamoGraphLaunch.trustPromptLikely -ne $false -or [string] $dynamoState.preflight.dynamoGraphLaunch.mode -ne "source") {
+        throw "Dynamo host smoke non-journal dry run should not require trusted graph staging."
+    }
     if (Test-Path -LiteralPath $dynamoPreflightReportPath -PathType Leaf) {
         throw "Dynamo host smoke dry run wrote the preflight report."
     }
@@ -355,6 +367,15 @@ function Assert-HostedSmokeWrapperDryRuns($PackageRoot, $InstallRoot, $RunRoot) 
     }
     if ($dynamoJournalState.preflight.useDynamoJournal -ne $true -or $dynamoJournalState.preflight.allowUnwarmedDynamoJournal -ne $false) {
         throw "Dynamo host smoke journal dry run did not record journal policy in preflight."
+    }
+    if ($dynamoJournalState.dynamoGraphLaunch.trustedGraphCopyUsed -ne $true -or $dynamoJournalState.dynamoGraphLaunch.trustPromptLikely -ne $false) {
+        throw "Dynamo host smoke journal dry run did not plan a trusted graph copy."
+    }
+    if (-not ([string] $dynamoJournalState.dynamoGraphLaunch.effectiveGraphPath).StartsWith([System.IO.Path]::GetFullPath($trustedDynamoRoot), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Dynamo host smoke journal dry run did not stage the graph under the synthetic trusted location."
+    }
+    if ($dynamoJournalState.preflight.dynamoGraphLaunch.trustedGraphCopyUsed -ne $true) {
+        throw "Dynamo host smoke journal dry run did not record trusted graph staging in preflight."
     }
     if (Test-Path -LiteralPath $dynamoJournalPath -PathType Leaf) {
         throw "Dynamo host smoke journal dry run wrote the journal file."

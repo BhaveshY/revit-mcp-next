@@ -435,6 +435,141 @@ function Save-DynamoPreflightReport($Report, $Path) {
     Set-Content -LiteralPath $Path -Value ($Report | ConvertTo-Json -Depth 12) -Encoding UTF8
 }
 
+function Test-PathUnderRoot($Path, $Root) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Root)) {
+        return $false
+    }
+
+    try {
+        $trimChars = [char[]] @('\', '/')
+        $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd($trimChars)
+        $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd($trimChars)
+        return $fullPath.Equals($fullRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $fullPath.StartsWith("$fullRoot$([System.IO.Path]::DirectorySeparatorChar)", [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Get-DynamoTrustedLocations($SettingsPath) {
+    $locations = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrWhiteSpace($SettingsPath) -or -not (Test-Path -LiteralPath $SettingsPath -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        [xml] $settingsXml = Get-Content -LiteralPath $SettingsPath -Raw
+        $nodes = $settingsXml.SelectNodes("//TrustedLocations/string")
+        foreach ($node in $nodes) {
+            $raw = [string] $node.InnerText
+            if ([string]::IsNullOrWhiteSpace($raw)) {
+                continue
+            }
+
+            $expanded = [Environment]::ExpandEnvironmentVariables($raw.Trim())
+            try {
+                $full = [System.IO.Path]::GetFullPath($expanded)
+            } catch {
+                continue
+            }
+
+            if (-not ($locations | Where-Object { $_ -ieq $full })) {
+                $locations.Add($full) | Out-Null
+            }
+        }
+    } catch {
+        return @()
+    }
+
+    return @($locations.ToArray())
+}
+
+function New-DynamoGraphLaunchPlan($SourceGraphFull, $SettingsPath, [switch] $WriteCopy) {
+    $trustedLocations = @(Get-DynamoTrustedLocations $SettingsPath)
+    $sourceHash = ""
+    if (Test-Path -LiteralPath $SourceGraphFull -PathType Leaf) {
+        $sourceHash = (Get-FileHash -LiteralPath $SourceGraphFull -Algorithm SHA256).Hash
+    }
+
+    $plan = [ordered] @{
+        sourceGraphPath = $SourceGraphFull
+        sourceGraphSha256 = $sourceHash
+        effectiveGraphPath = $SourceGraphFull
+        effectiveGraphSha256 = $sourceHash
+        trustedGraphCopyUsed = $false
+        trustedGraphCopyWritten = $false
+        trustPromptLikely = [bool] $UseDynamoJournal
+        mode = if ($UseDynamoJournal) { "source-unchecked" } else { "source" }
+        reason = if ($UseDynamoJournal) { "journal-mode-checking-dynamo-trusted-locations" } else { "journal-mode-not-requested" }
+        settingsPath = $SettingsPath
+        trustedLocations = $trustedLocations
+        trustedRoot = ""
+        stagingErrors = @()
+    }
+
+    if (-not $UseDynamoJournal) {
+        $plan.trustPromptLikely = $false
+        return $plan
+    }
+
+    foreach ($trustedRoot in $trustedLocations) {
+        if (Test-PathUnderRoot $SourceGraphFull $trustedRoot) {
+            $plan.mode = "source-already-trusted"
+            $plan.reason = "source-graph-is-under-existing-dynamo-trusted-location"
+            $plan.trustedRoot = $trustedRoot
+            $plan.trustPromptLikely = $false
+            return $plan
+        }
+    }
+
+    if ($trustedLocations.Count -eq 0) {
+        $plan.mode = "no-trusted-locations"
+        $plan.reason = "DynamoSettings.xml does not list trusted locations; refusing to rely on a UI trust prompt."
+        return $plan
+    }
+
+    $fileName = Split-Path -Leaf $SourceGraphFull
+    foreach ($trustedRoot in $trustedLocations) {
+        $stageDir = Join-Path $trustedRoot "RevitMcpNext\DynamoHostSmoke\$RevitYear"
+        $target = Join-Path $stageDir $fileName
+
+        if (-not $WriteCopy) {
+            $plan.mode = "trusted-copy-planned"
+            $plan.reason = "journal-mode-will-stage-graph-under-existing-dynamo-trusted-location"
+            $plan.effectiveGraphPath = $target
+            $plan.trustedGraphCopyUsed = $true
+            $plan.trustedRoot = $trustedRoot
+            $plan.trustPromptLikely = $false
+            return $plan
+        }
+
+        try {
+            New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+            Copy-Item -LiteralPath $SourceGraphFull -Destination $target -Force
+            $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+            $plan.mode = "trusted-copy-written"
+            $plan.reason = "journal-mode-staged-graph-under-existing-dynamo-trusted-location"
+            $plan.effectiveGraphPath = $target
+            $plan.effectiveGraphSha256 = $targetHash
+            $plan.trustedGraphCopyUsed = $true
+            $plan.trustedGraphCopyWritten = $true
+            $plan.trustedRoot = $trustedRoot
+            $plan.trustPromptLikely = $false
+            return $plan
+        } catch {
+            $plan.stagingErrors += @([ordered] @{
+                trustedRoot = $trustedRoot
+                targetPath = $target
+                error = $_.Exception.Message
+            })
+        }
+    }
+
+    $plan.mode = "trusted-copy-failed"
+    $plan.reason = "No existing Dynamo trusted location was writable for the journal graph copy; refusing to rely on a UI trust prompt."
+    return $plan
+}
+
 function ConvertTo-JournalString($Value) {
     return ([string] $Value).Replace('"', '""')
 }
@@ -580,6 +715,7 @@ if ([string]::IsNullOrWhiteSpace($PreflightReportPath)) {
 }
 $preflightReportFull = Get-FullPath $PreflightReportPath
 $preflight = New-DynamoPreflightReport $revitExe $installRootFull $graphFull $evidenceFull $modelFull $preflightReportFull
+$preflight["dynamoGraphLaunch"] = New-DynamoGraphLaunchPlan $graphFull ([string] $preflight.dynamoSettingsPath)
 if ([string]::IsNullOrWhiteSpace($DynamoJournalPath)) {
     $DynamoJournalPath = Get-DefaultDynamoJournalPath $evidenceFull
 }
@@ -609,6 +745,7 @@ if ($DryRun) {
         requireWarmedDynamo = [bool] $RequireWarmedDynamo
         useDynamoJournal = [bool] $UseDynamoJournal
         dynamoJournalPath = if ($UseDynamoJournal) { $dynamoJournalFull } else { "" }
+        dynamoGraphLaunch = $preflight.dynamoGraphLaunch
         dynamoJournalRequiresWarmedSettings = [bool] ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal)
         dynamoJournalAllowed = [bool] (-not $UseDynamoJournal -or $AllowUnwarmedDynamoJournal -or [bool] $preflight.dynamoSettingsAppearsWarmed)
         environment = [ordered] @{
@@ -678,6 +815,17 @@ if ($UseDynamoJournal -and -not $AllowUnwarmedDynamoJournal -and [bool] $preflig
     throw "Dynamo journal launch requires an existing parseable DynamoSettings.xml so Autodesk/Dynamo privacy and startup prompts are handled manually before automation. Run Dynamo once in this test profile, answer prompts manually, then rerun. Pass -AllowUnwarmedDynamoJournal only for explicitly supervised local experiments."
 }
 
+if (-not $ValidateOnly -and $LaunchRevit -and $UseDynamoJournal) {
+    $preflight["dynamoGraphLaunch"] = New-DynamoGraphLaunchPlan $graphFull ([string] $preflight.dynamoSettingsPath) -WriteCopy
+    if ($shouldWritePreflightReport) {
+        Save-DynamoPreflightReport $preflight $preflightReportFull
+    }
+
+    if ([bool] $preflight.dynamoGraphLaunch.trustPromptLikely) {
+        throw "Dynamo journal graph staging could not avoid Dynamo's external-file trust prompt. $($preflight.dynamoGraphLaunch.reason) Source graph: $graphFull. Preflight report: $preflightReportFull"
+    }
+}
+
 if ($ValidateOnly) {
     if (-not (Test-Path -LiteralPath $evidenceFull -PathType Leaf)) {
         throw "Dynamo evidence was not found: $evidenceFull"
@@ -702,6 +850,11 @@ if ($ValidateOnly) {
 
 if (-not $LaunchRevit) {
     throw "Dynamo host smoke collection requires -LaunchRevit so Revit inherits REVIT_MCP_NEXT_DYNAMO_EVIDENCE. Use -ValidateOnly to validate evidence from an already completed Dynamo-for-Revit run."
+}
+
+$launchGraphFull = [string] $preflight.dynamoGraphLaunch.effectiveGraphPath
+if ([string]::IsNullOrWhiteSpace($launchGraphFull)) {
+    $launchGraphFull = $graphFull
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $evidenceFull) | Out-Null
@@ -733,7 +886,7 @@ try {
         }
 
         if ($UseDynamoJournal) {
-            New-DynamoJournalFile $dynamoJournalFull $graphFull
+            New-DynamoJournalFile $dynamoJournalFull $launchGraphFull
             $launchArgs += "/J"
             $launchArgs += "`"$dynamoJournalFull`""
         }
@@ -741,6 +894,9 @@ try {
         if ($UseDynamoJournal) {
             Write-Step "Launching Revit with a warmed-profile Dynamo journal so it inherits smoke environment variables and runs the graph."
             Write-Step "Dynamo journal: $dynamoJournalFull"
+            if ($launchGraphFull -ne $graphFull) {
+                Write-Step "Dynamo graph launch copy: $launchGraphFull"
+            }
         } else {
             Write-Step "Launching Revit so it inherits Dynamo smoke environment variables."
         }
@@ -748,7 +904,7 @@ try {
     }
 
     Write-Step "Dynamo host smoke is waiting for evidence."
-    Write-Step "Graph: $graphFull"
+    Write-Step "Graph: $launchGraphFull"
     Write-Step "Evidence path: $evidenceFull"
     if ($UseDynamoJournal) {
         Write-Step "Waiting for the Dynamo journal to open and run the packaged graph. If Dynamo shows privacy or startup prompts, handle them manually and rerun."
@@ -781,6 +937,7 @@ $result = [ordered] @{
     status = [string] $evidence.status
     evidencePath = $evidenceFull
     graphPath = $graphFull
+    launchGraphPath = $launchGraphFull
     modelPath = $modelFull
     installRoot = $installRootFull
     preflightReportPath = if ($shouldWritePreflightReport) { $preflightReportFull } else { "" }
