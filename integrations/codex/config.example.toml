@@ -1,4 +1,3 @@
 [mcp_servers.revit-mcp-next]
 command = "cmd"
-args = ["/c", "%LOCALAPPDATA%\\RevitMcpNext\\launch-revit-mcp-next.cmd"]
-
+args = ["/c", "C:\\Users\\YOUR_USER\\AppData\\Local\\RevitMcpNext\\launch-revit-mcp-next.cmd"]

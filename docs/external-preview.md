@@ -26,11 +26,13 @@ The package `release-manifest.json` also records `sharing.shareProfile`, `sharin
 
 ## Recipient Install
 
+For AI agents, use the concise [AI Agent Install Guide](agent-install.md). The steps below are the same preview install path written for human recipients.
+
 1. Extract the package zip.
 2. Run the packaged installer:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\install-windows.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\install-windows.ps1 -RevitYears 2024 -TrustRevitAlwaysLoad
 ```
 
 3. Open Revit 2024 with a disposable or test project first.
@@ -51,10 +53,18 @@ Generate token-safe client config from the installed discovery file:
 ```powershell
 npm run mcp:config
 npm run mcp:config -- -Client claude-code
+npm run mcp:config -- -Client claude-desktop
 npm run mcp:config -- -Client codex
 ```
 
 Use the generated launcher path. Do not copy the local pipe auth token into Claude or Codex config.
+
+If the package is extracted without a repo checkout, run the packaged script directly:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\print-mcp-config.ps1 -Client all
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\doctor-clients.ps1
+```
 
 ## Debug CLI
 

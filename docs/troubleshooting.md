@@ -1,5 +1,7 @@
 # Troubleshooting
 
+For first-time AI agent installation and client setup, start with [agent-install.md](agent-install.md). This page is the deeper failure-recovery reference.
+
 Run:
 
 ```powershell

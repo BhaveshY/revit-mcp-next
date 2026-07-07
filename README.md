@@ -51,6 +51,8 @@ Revit 2024-only production-candidate slice, not yet a signed production release:
 
 ## First Local Commands
 
+AI agents setting up this repo or an extracted package should start with the concise [AI Agent Install Guide](docs/agent-install.md). It contains the package install path, Claude/Codex config commands, first connection checks, and recovery rules without exposing the local auth token.
+
 ```powershell
 npm install
 npm run build
@@ -137,11 +139,12 @@ After install, print ready-to-use MCP client entries without exposing the auth t
 ```powershell
 npm run mcp:config
 npm run mcp:config -- -Client claude-code
+npm run mcp:config -- -Client claude-desktop
 npm run mcp:config -- -Client codex
 npm run doctor:clients
 ```
 
-Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token. `npm run doctor:clients` verifies the generated snippets, existing Claude Desktop/Codex config files when present, launcher quoting, stale install roots, raw token leakage risk, and basic MCP startup plus `tools/list` without requiring a Revit connection.
+Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token. `npm run doctor:clients` verifies the generated snippets, existing Claude Desktop/Codex config files when present, launcher quoting, stale install roots, raw token leakage risk, and basic MCP startup plus `tools/list` without requiring a Revit connection. See [agent-install.md](docs/agent-install.md) for the copy-paste install flow and first MCP call checklist.
 
 ## Internal Debug CLI
 

@@ -1,10 +1,28 @@
 @echo off
 setlocal
-set "LAUNCHER=%LOCALAPPDATA%\RevitMcpNext\launch-revit-mcp-next.cmd"
-if not exist "%LAUNCHER%" (
-  echo Revit MCP Next launcher not installed at %LAUNCHER%. Run installer\install-windows.ps1 first. 1>&2
-  exit /b 127
+if defined REVIT_MCP_NEXT_LAUNCHER (
+  if exist "%REVIT_MCP_NEXT_LAUNCHER%" (
+    set "LAUNCHER=%REVIT_MCP_NEXT_LAUNCHER%"
+    goto run
+  )
 )
+if defined REVIT_MCP_NEXT_INSTALL_ROOT (
+  if exist "%REVIT_MCP_NEXT_INSTALL_ROOT%\launch-revit-mcp-next.cmd" (
+    set "LAUNCHER=%REVIT_MCP_NEXT_INSTALL_ROOT%\launch-revit-mcp-next.cmd"
+    goto run
+  )
+)
+if exist "%LOCALAPPDATA%\RevitMcpNext\launch-revit-mcp-next.cmd" (
+  set "LAUNCHER=%LOCALAPPDATA%\RevitMcpNext\launch-revit-mcp-next.cmd"
+  goto run
+)
+if exist "%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext\launch-revit-mcp-next.cmd" (
+  set "LAUNCHER=%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext\launch-revit-mcp-next.cmd"
+  goto run
+)
+echo Revit MCP Next launcher not installed. Run installer\install-windows.ps1 or set REVIT_MCP_NEXT_INSTALL_ROOT. 1>&2
+exit /b 127
+
+:run
 cmd /c "%LAUNCHER%"
 exit /b %ERRORLEVEL%
-
