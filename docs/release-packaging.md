@@ -25,7 +25,7 @@ npm run package:windows
 
 The package is written under `artifacts\release\revit-mcp-next-<version>-windows` with a sibling `.zip`. The package contains:
 
-- `payload\broker`, `payload\contracts`, and `payload\addin` runtime files.
+- `payload\broker`, `payload\contracts`, and per-year `payload\addin\<year>` runtime files.
 - Packaged broker production `node_modules` unless `-SkipDependencyInstall` is used.
 - `installer`, `scripts`, `docs`, `integrations`, `README.md`, `LICENSE`, and `SECURITY.md` for offline install, diagnostics, client setup, and evidence collection.
 - Installed launchers for MCP and `revitctl`.
@@ -42,7 +42,7 @@ npm run test:release:windows
 
 That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token and host identity, verifies shareable metadata files are present, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
 
-The contract also verifies that unsupported Revit years fail instead of writing misleading manifests. Until the per-year .NET 8 add-in build/package path exists, release packaging and install support `-RevitYears 2024` only.
+The contract also verifies that unsupported Revit years fail instead of writing misleading manifests. Release packaging and install support `-RevitYears 2024`, `-RevitYears 2027`, or both years when their matching add-in artifacts are present.
 
 `npm test` also runs `npm run test:integrations:python`, which syntax-checks the pyRevit/Dynamo Python examples and exercises the shared Python MCP client against a fake stdio MCP server.
 
@@ -360,7 +360,7 @@ Minimum evidence for a release candidate:
 - Output from `npm run package:windows` or `npm run package:windows -- -Sign -RequireSigned`, plus `npm run doctor:windows`.
 - Output from the manual live smoke, or the uploaded `Live Revit Smoke` workflow artifact, when a Revit host is available. Live-smoke evidence must include `smoke-summary.json` with `status: "passed"`, loaded add-in identity matching the package manifest, `operationKindGuard.errorCode=OPERATION_KIND_MISMATCH`, `requiredCoverage.roomTag=true`, `requiredCoverage.elementTag=true`, populated `result.tagCoverage`, and `tagSelectors` when the curated runner pins tag symbols.
 - `npm run support:bundle` output after install or after any failed smoke.
-- pyRevit and Dynamo hosted-smoke output from the installed package. Hosted integration evidence must include `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries. Release evidence verifies the `assemblySha256` loaded by both hosts against `payload/addin/RevitMcpNext.Addin.dll` in the package manifest.
+- pyRevit and Dynamo hosted-smoke output from the installed package. Hosted integration evidence must include `host-integrations-summary.json` with `status: "passed"` and passed `pyrevit` and `dynamo` host entries. Release evidence verifies the `assemblySha256` loaded by both hosts against `payload/addin/<year>/RevitMcpNext.Addin.dll` in the package manifest.
 - Authenticode signing and verification output when signing is enabled.
 
 If signing, live smoke, support bundle, or hosted integration capture is skipped, pass the corresponding skip reason. The collector refuses to create evidence when those evidence classes are absent without an explicit reason.

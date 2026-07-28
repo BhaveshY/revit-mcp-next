@@ -5,7 +5,6 @@ using System.IO.Pipes;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Addin.Revit;
 using RevitMcpNext.Contracts;
@@ -19,7 +18,9 @@ namespace RevitMcpNext.Addin.Ipc
         private readonly string _pipeName;
         private readonly RevitRequestQueue _requestQueue;
         private readonly PipeAuthOptions _authOptions;
+#if NETFRAMEWORK
         private readonly PipeSecurity _pipeSecurity;
+#endif
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private Task _acceptLoop;
 
@@ -28,7 +29,9 @@ namespace RevitMcpNext.Addin.Ipc
             _pipeName = pipeName;
             _requestQueue = requestQueue;
             _authOptions = authOptions ?? PipeAuthOptions.FromEnvironment();
+#if NETFRAMEWORK
             _pipeSecurity = PipeSecurityFactory.CreateCurrentUserOnly();
+#endif
         }
 
         public void Start()
@@ -145,6 +148,7 @@ namespace RevitMcpNext.Addin.Ipc
 
         private NamedPipeServerStream CreateServerStream()
         {
+#if NETFRAMEWORK
             return new NamedPipeServerStream(
                 _pipeName,
                 PipeDirection.InOut,
@@ -154,11 +158,21 @@ namespace RevitMcpNext.Addin.Ipc
                 DefaultPipeBufferSize,
                 DefaultPipeBufferSize,
                 _pipeSecurity);
+#else
+            return new NamedPipeServerStream(
+                _pipeName,
+                PipeDirection.InOut,
+                maxNumberOfServerInstances: 4,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                DefaultPipeBufferSize,
+                DefaultPipeBufferSize);
+#endif
         }
 
         private static ParsedBridgeRequest ParseRequest(string requestJson)
         {
-            object parsed = CreateSerializer().DeserializeObject(requestJson);
+            object parsed = JsonWireCodec.DeserializeObject(requestJson);
             var root = parsed as Dictionary<string, object>;
             if (root == null)
             {
@@ -207,7 +221,7 @@ namespace RevitMcpNext.Addin.Ipc
                 body["error"] = ToWireError(response.Error);
             }
 
-            return CreateSerializer().Serialize(body);
+            return JsonWireCodec.Serialize(body);
         }
 
         private static BridgeResponseEnvelope Failure(
@@ -228,15 +242,6 @@ namespace RevitMcpNext.Addin.Ipc
                     SuggestedNextAction = suggestedNextAction
                 },
                 Metrics = new BridgeMetrics { ElapsedMs = 0 }
-            };
-        }
-
-        private static JavaScriptSerializer CreateSerializer()
-        {
-            return new JavaScriptSerializer
-            {
-                MaxJsonLength = 4 * 1024 * 1024,
-                RecursionLimit = 64
             };
         }
 

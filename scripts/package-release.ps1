@@ -5,7 +5,7 @@ param(
     [switch] $Sign,
     [switch] $RequireSigned,
     [switch] $RequireTrustedSignatures,
-    [int[]] $RevitYears = @(2024),
+    [string[]] $RevitYears = @("2024"),
     [string] $OutputRoot = "",
     [string] $AddinOutputRoot = "",
     [string] $Version = "",
@@ -356,11 +356,39 @@ function Assert-SupportedRevitYears {
         throw "At least one Revit year must be supplied."
     }
 
-    foreach ($year in ($RevitYears | Sort-Object -Unique)) {
-        if ($year -ne 2024) {
-            throw "Revit $year packaging is not supported yet. Revit 2025+ requires year-specific .NET 8 add-in artifacts; this package currently supports Revit 2024 only."
+    $normalizedYears = New-Object System.Collections.Generic.List[int]
+    foreach ($value in $RevitYears) {
+        foreach ($part in ([string] $value -split ",")) {
+            $year = 0
+            if (-not [int]::TryParse($part.Trim(), [ref] $year)) {
+                throw "Invalid Revit year: $part"
+            }
+            $normalizedYears.Add($year)
         }
     }
+
+    foreach ($year in ($normalizedYears | Sort-Object -Unique)) {
+        if ($year -notin @(2024, 2027)) {
+            throw "Revit $year packaging is not supported yet. Supported Revit years: 2024, 2027."
+        }
+    }
+
+    $script:RevitYears = @($normalizedYears | Sort-Object -Unique)
+}
+
+function Resolve-AddinOutputForYear($Root, [int] $Year, [int] $YearCount, [bool] $AllowLegacy2024Root) {
+    $yearDirectory = Join-Path $Root "$Year"
+    if (Test-Path -LiteralPath $yearDirectory -PathType Container) {
+        return (Resolve-Path -LiteralPath $yearDirectory).Path
+    }
+
+    if ($Year -eq 2024 -and $YearCount -eq 1 -and $AllowLegacy2024Root -and
+        (Test-Path -LiteralPath (Join-Path $Root "RevitMcpNext.Addin.dll") -PathType Leaf)) {
+        Write-Step "Using legacy direct add-in output for Revit 2024: $Root"
+        return (Resolve-Path -LiteralPath $Root).Path
+    }
+
+    throw "Year-specific Revit $Year add-in output is missing. Expected: $yearDirectory. Build it with scripts\build-addin.ps1 -RevitYear $Year."
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -380,6 +408,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 Assert-SupportedRevitYears
+$RevitYears = @($RevitYears | Sort-Object -Unique)
 
 $packageName = "revit-mcp-next-$Version-windows"
 $outputRootFull = Get-FullPath $OutputRoot
@@ -396,17 +425,43 @@ $brokerPackage = Resolve-RequiredFile (Join-Path $repoRoot "broker\package.json"
 $contractsPackage = Resolve-RequiredFile (Join-Path $repoRoot "contracts\package.json") "Contracts package metadata is missing."
 $addinTemplate = Resolve-RequiredFile (Join-Path $repoRoot "addin\RevitMcpNext.Addin\RevitMcpNext.addin.template") "Add-in manifest template is missing."
 
+$allowLegacy2024Root = $false
 if ([string]::IsNullOrWhiteSpace($AddinOutputRoot)) {
-    $addinOut = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Release\net48"
-    if (-not (Test-Path -LiteralPath $addinOut -PathType Container)) {
-        $addinOut = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Debug\net48"
+    $addinOutputBase = Join-Path $repoRoot "artifacts\addin"
+    $legacy2024Release = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Release\net48"
+    $legacy2024Debug = Join-Path $repoRoot "addin\RevitMcpNext.Addin\bin\Debug\net48"
+    if ($RevitYears.Count -eq 1 -and $RevitYears[0] -eq 2024 -and
+        -not (Test-Path -LiteralPath (Join-Path $addinOutputBase "2024") -PathType Container)) {
+        if (Test-Path -LiteralPath $legacy2024Release -PathType Container) {
+            $addinOutputBase = $legacy2024Release
+            $allowLegacy2024Root = $true
+        } elseif (Test-Path -LiteralPath $legacy2024Debug -PathType Container) {
+            $addinOutputBase = $legacy2024Debug
+            $allowLegacy2024Root = $true
+        }
     }
 } else {
-    $addinOut = Resolve-RequiredDirectory $AddinOutputRoot "Configured add-in output root was not found."
+    $addinOutputBase = Resolve-RequiredDirectory $AddinOutputRoot "Configured add-in output root was not found."
+    $allowLegacy2024Root = $true
 }
 
-$addinDll = Resolve-RequiredFile (Join-Path $addinOut "RevitMcpNext.Addin.dll") "Add-in is not built. Build it with npm run build:addin."
-$contractsDll = Resolve-RequiredFile (Join-Path $addinOut "RevitMcpNext.Contracts.dll") "Contracts DLL is missing from the add-in output."
+$addinSources = [ordered] @{}
+$seenAddinDlls = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($year in $RevitYears) {
+    $addinOut = Resolve-AddinOutputForYear $addinOutputBase $year $RevitYears.Count $allowLegacy2024Root
+    $addinDll = Resolve-RequiredFile (Join-Path $addinOut "RevitMcpNext.Addin.dll") "Revit $year add-in is not built."
+    $contractsDll = Resolve-RequiredFile (Join-Path $addinOut "RevitMcpNext.Contracts.dll") "Revit $year contracts DLL is missing from the add-in output."
+    if (-not $seenAddinDlls.Add($addinDll)) {
+        throw "Revit $year resolves to an add-in DLL already assigned to another Revit year. Each year must use a distinct build artifact."
+    }
+
+    $addinSources["$year"] = [ordered] @{
+        directory = $addinOut
+        addinDll = $addinDll
+        contractsDll = $contractsDll
+        targetFramework = if ($year -eq 2024) { "net48" } else { "net10.0-windows" }
+    }
+}
 
 if ($DryRun) {
     Write-Step "Would reset staging directory: $stageRoot"
@@ -429,10 +484,14 @@ Copy-File $brokerPackage (Join-Path $payloadRoot "broker\package.json")
 Copy-DirectoryContents $contractsDist (Join-Path $payloadRoot "contracts\dist")
 Copy-DirectoryContents $contractsSchemas (Join-Path $payloadRoot "contracts\schemas")
 Copy-File $contractsPackage (Join-Path $payloadRoot "contracts\package.json")
-Copy-File $addinDll (Join-Path $payloadRoot "addin\RevitMcpNext.Addin.dll")
-Copy-File $contractsDll (Join-Path $payloadRoot "addin\RevitMcpNext.Contracts.dll")
-Copy-OptionalFile (Join-Path $addinOut "RevitMcpNext.Addin.pdb") (Join-Path $payloadRoot "addin\RevitMcpNext.Addin.pdb")
-Copy-OptionalFile (Join-Path $addinOut "RevitMcpNext.Contracts.pdb") (Join-Path $payloadRoot "addin\RevitMcpNext.Contracts.pdb")
+foreach ($year in $RevitYears) {
+    $source = $addinSources["$year"]
+    $yearPayload = Join-Path $payloadRoot "addin\$year"
+    Copy-File $source.addinDll (Join-Path $yearPayload "RevitMcpNext.Addin.dll")
+    Copy-File $source.contractsDll (Join-Path $yearPayload "RevitMcpNext.Contracts.dll")
+    Copy-OptionalFile (Join-Path $source.directory "RevitMcpNext.Addin.pdb") (Join-Path $yearPayload "RevitMcpNext.Addin.pdb")
+    Copy-OptionalFile (Join-Path $source.directory "RevitMcpNext.Contracts.pdb") (Join-Path $yearPayload "RevitMcpNext.Contracts.pdb")
+}
 Copy-File $addinTemplate (Join-Path $payloadRoot "addin\RevitMcpNext.addin.template")
 
 Copy-DirectoryContents (Join-Path $repoRoot "installer") (Join-Path $stageRoot "installer")
@@ -475,6 +534,13 @@ $manifest = [ordered] @{
         platform = "windows"
         createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         revitYears = $RevitYears
+        addinArtifacts = @($RevitYears | ForEach-Object {
+            [ordered] @{
+                revitYear = $_
+                targetFramework = $addinSources["$_"].targetFramework
+                path = "payload/addin/$_/RevitMcpNext.Addin.dll"
+            }
+        })
         nodeMajor = 24
         gitCommit = $gitCommit
         gitDirty = -not [string]::IsNullOrWhiteSpace($gitStatus)

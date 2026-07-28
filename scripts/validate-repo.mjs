@@ -11,9 +11,14 @@ const checkedExtensions = new Set([".json", ".toml", ".md", ".cmd", ".ps1", ".ym
 const failures = [];
 
 validateAddinOperationKindGuard();
+validateRevitVersionConfiguration();
 
 for (const file of walk(root)) {
-  if (file.includes("\\node_modules\\") || file.includes("\\.git\\")) continue;
+  if (
+    file.includes("\\node_modules\\") ||
+    file.includes("\\.git\\") ||
+    file.includes("\\artifacts\\")
+  ) continue;
   const ext = file.slice(file.lastIndexOf("."));
   if (!checkedExtensions.has(ext)) continue;
   const text = readFileSync(file, "utf8");
@@ -99,11 +104,82 @@ function validateAddinOperationKindGuard() {
   }
 }
 
+function validateRevitVersionConfiguration() {
+  const projectPath = join(root, "addin", "RevitMcpNext.Addin", "RevitMcpNext.Addin.csproj");
+  const buildPath = join(root, "scripts", "build-addin.ps1");
+  const packagePath = join(root, "scripts", "package-release.ps1");
+  const installerPath = join(root, "installer", "install-windows.ps1");
+  const matrixPath = join(root, "docs", "version-matrix.md");
+  const liveWorkflowPath = join(root, ".github", "workflows", "live-revit-smoke.yml");
+
+  const project = readFileSync(projectPath, "utf8");
+  requireText(projectPath, project, [
+    "<RevitYear Condition=",
+    "'$(RevitYear)' == '2027'",
+    "net10.0-windows",
+    "'$(RevitYear)' == '2024' and '$(TargetFramework)' != 'net48'",
+    "'$(RevitYear)' == '2027' and '$(TargetFramework)' != 'net10.0-windows'",
+  ]);
+
+  const build = readFileSync(buildPath, "utf8");
+  requireText(buildPath, build, [
+    "[ValidateSet(2024, 2027)]",
+    "-p:RevitYear=$RevitYear",
+    '"net10.0-windows"',
+    '"artifacts\\addin"',
+  ]);
+
+  const packageScript = readFileSync(packagePath, "utf8");
+  requireText(packagePath, packageScript, [
+    "$year -notin @(2024, 2027)",
+    'Join-Path $payloadRoot "addin\\$year"',
+    "addinArtifacts",
+    'path = "payload/addin/$_/RevitMcpNext.Addin.dll"',
+  ]);
+
+  const installer = readFileSync(installerPath, "utf8");
+  requireText(installerPath, installer, [
+    "$year -notin @(2024, 2027)",
+    'Join-Path $installedAddin "$year"',
+    "addinAssemblyPaths",
+    'Join-Path $installedAddin "$year\\RevitMcpNext.Addin.dll"',
+  ]);
+  if (installer.includes('$assemblyPath = Join-Path $installedAddin "RevitMcpNext.Addin.dll"')) {
+    failures.push(`${installerPath}: manifests must resolve the year-specific installed add-in DLL.`);
+  }
+
+  const matrix = readFileSync(matrixPath, "utf8");
+  requireText(matrixPath, matrix, [
+    "| 2027 | .NET 10 / `net10.0-windows` |",
+    "Compile/package validation only",
+    "Revit 2025 and 2026 remain excluded",
+  ]);
+
+  const liveWorkflow = readFileSync(liveWorkflowPath, "utf8");
+  requireText(liveWorkflowPath, liveWorkflow, [
+    "revit_year must be 2024 or 2027",
+    "-RevitYear $env:REVIT_YEAR",
+    "expectedApiMajor",
+    "revitApiAssemblyVersion",
+  ]);
+}
+
+function requireText(path, text, expectedFragments) {
+  for (const fragment of expectedFragments) {
+    if (!text.includes(fragment)) {
+      failures.push(`${path}: missing Revit version validation marker ${JSON.stringify(fragment)}.`);
+    }
+  }
+}
+
 function* walk(dir) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const stat = statSync(path);
     if (stat.isDirectory()) {
+      if (name === "node_modules" || name === ".git" || name === "artifacts") {
+        continue;
+      }
       yield* walk(path);
     } else {
       yield path;

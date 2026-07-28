@@ -1,15 +1,82 @@
 # Revit Version Matrix
 
-Initial target:
+Revit MCP Next produces a separate add-in artifact for each supported Revit
+major version. A successful compile/package is not, by itself, evidence that a
+release is ready for production use in that Revit host.
 
-| Revit | Runtime | Status |
-| --- | --- | --- |
-| 2024 | .NET Framework 4.8 | Supported staged-package target |
-| 2025 | .NET 8 | Blocked until year-specific add-in build/package output exists |
-| 2026 | .NET 8 | Blocked until year-specific add-in build/package output exists |
+| Revit | Runtime / target | Build and package status | Host-validation status |
+| --- | --- | --- | --- |
+| 2024 | .NET Framework 4.8 / `net48` | Supported staged-package target | Existing live-smoke workflow; release evidence is still required for each published package |
+| 2025 | .NET 8 / `net8.0-windows` | Not supported | Not validated |
+| 2026 | .NET 8 / `net8.0-windows` | Not supported | Not validated |
+| 2027 | .NET 10 / `net10.0-windows` | Supported source-build, package, and per-user install target | Compile/package validation only; full Revit, pyRevit, and Dynamo live-smoke evidence is pending |
 
-The add-in should not promise one binary across Revit major versions. Revit 2024 and earlier need .NET Framework builds. Revit 2025+ uses modern .NET builds. Release packaging should produce one add-in artifact per supported Revit year.
+The 2027 implementation is intentionally described as build/package support
+until the exact packaged DLL is loaded and exercised by the self-hosted live
+smoke workflow. Do not label a 2027 package production-ready, or claim parity
+with the established 2024 host evidence, before that evidence is archived.
 
-Current guardrail: `scripts/package-release.ps1` and `installer/install-windows.ps1` reject `-RevitYears` values other than `2024`. This is intentional production hardening so a release candidate cannot silently install the Revit 2024/net48 add-in into Revit 2025 or 2026.
+## Build Inputs And Outputs
 
-Do not vendor Autodesk API DLLs in this repository.
+Use the API assemblies from the matching installed Revit release. Autodesk API
+DLLs are not vendored in this repository.
+
+```powershell
+# Revit 2024
+npm run build:addin -- -RevitYear 2024 `
+  -RevitApiPath "C:\Program Files\Autodesk\Revit 2024"
+
+# Revit 2027
+npm run build:addin -- -RevitYear 2027 `
+  -RevitApiPath "C:\Program Files\Autodesk\Revit 2027"
+```
+
+Year-specific outputs are written below `artifacts\addin\<year>\`. Release
+packages preserve that boundary below `payload\addin\<year>\`, and the installer
+selects the matching artifact for each requested `-RevitYears` value. Never
+copy the 2024 DLL into a 2027 manifest, or the 2027 DLL into a 2024 manifest.
+
+The 2027 development baseline used for this compatibility work was Autodesk
+Revit 2027.2:
+
+- `RevitAPI.dll` and `RevitAPIUI.dll` file version `27.2.0.39`
+- API assembly version `27.2.0.0`
+- .NET 10 SDK available on the build machine
+
+Patch numbers are evidence, not a hardcoded compatibility check. The important
+build rule is that `-RevitYear`, the API directory, the target framework, and
+the packaged artifact year must agree.
+
+## Installation Locations
+
+The installer uses the supported per-user manifest location:
+
+```text
+%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext.addin
+```
+
+That location is valid for both 2024 and 2027. Revit 2027 no longer loads
+third-party all-user manifests from `%ProgramData%`. If an all-user installation
+mode is added later, its 2027 manifest must be placed below
+`%ProgramFiles%\Autodesk\Revit\Addins\2027`.
+
+## Validation Required Before Expanding Claims
+
+For every supported year:
+
+1. Build against that year's installed `RevitAPI.dll` and `RevitAPIUI.dll`.
+2. Verify the package contains `payload\addin\<year>` and its manifest records
+   only years with matching payloads.
+3. Install from the staged package and verify client discovery maps the year to
+   the same installed DLL.
+4. Cold-start the matching Revit release with a disposable `.rvt` file.
+5. Run broker/add-in status, read, preview/apply, restart, support-bundle, and
+   release-evidence checks.
+6. Run the hosted pyRevit and Dynamo evidence paths, or record explicit skip
+   reasons for an external preview. Release-candidate and production claims
+   require passed hosted-integration evidence.
+
+Revit 2025 and 2026 remain excluded even though both use .NET 8. They need their
+own API references, artifacts, installer/package coverage, and host evidence;
+the existence of a modern-.NET build for 2027 does not imply compatibility with
+either release.

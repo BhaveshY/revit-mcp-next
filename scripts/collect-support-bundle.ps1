@@ -336,8 +336,10 @@ $inventoryTargets.Add((Join-Path $InstallRoot "revitctl.cmd")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "broker\dist\src\index.js")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "broker\dist\src\server.js")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "broker\dist\src\cli\revitctl.js")) | Out-Null
-$inventoryTargets.Add((Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll")) | Out-Null
-$inventoryTargets.Add((Join-Path $InstallRoot "addin\RevitMcpNext.Contracts.dll")) | Out-Null
+foreach ($year in $RevitYears) {
+    $inventoryTargets.Add((Join-Path $InstallRoot "addin\$year\RevitMcpNext.Addin.dll")) | Out-Null
+    $inventoryTargets.Add((Join-Path $InstallRoot "addin\$year\RevitMcpNext.Contracts.dll")) | Out-Null
+}
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_inprocess.py")) | Out-Null
 $inventoryTargets.Add((Join-Path $InstallRoot "integrations\python\revit_mcp_next_host_smoke.py")) | Out-Null

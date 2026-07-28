@@ -1,13 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <RevitYear Condition="'$(RevitYear)' == ''">2024</RevitYear>
+    <TargetFramework Condition="'$(RevitYear)' == '2027'">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net48</TargetFramework>
+    <UseWPF Condition="'$(RevitYear)' == '2027'">true</UseWPF>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>false</ImplicitUsings>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AssemblyName>RevitMcpNext.Addin</AssemblyName>
     <RootNamespace>RevitMcpNext.Addin</RootNamespace>
-    <RevitApiPath Condition="'$(RevitApiPath)' == ''">$(ProgramFiles)\Autodesk\Revit 2024</RevitApiPath>
+    <RevitApiPath Condition="'$(RevitApiPath)' == ''">$(ProgramFiles)\Autodesk\Revit $(RevitYear)</RevitApiPath>
+    <DefineConstants>$(DefineConstants);REVIT$(RevitYear)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,14 +23,26 @@
       <HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Web.Extensions" Condition="'$(TargetFramework)' == 'net48'" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj" />
   </ItemGroup>
+
+  <Target Name="ValidateRevitConfiguration" BeforeTargets="PrepareForBuild">
+    <Error
+      Condition="'$(RevitYear)' != '2024' and '$(RevitYear)' != '2027'"
+      Text="Revit $(RevitYear) is not configured. Supported RevitYear values are 2024 and 2027." />
+    <Error
+      Condition="'$(RevitYear)' == '2024' and '$(TargetFramework)' != 'net48'"
+      Text="Revit 2024 must target net48." />
+    <Error
+      Condition="'$(RevitYear)' == '2027' and '$(TargetFramework)' != 'net10.0-windows'"
+      Text="Revit 2027 must target net10.0-windows." />
+  </Target>
 </Project>

@@ -1,6 +1,6 @@
 # Production Readiness Audit
 
-This project is shareable as an unsigned Revit 2024 external preview when labeled clearly. It is not a signed enterprise production release. The current repository state supports local development, staged Windows packaging, install diagnostics, `revitctl` bridge debugging, redacted support bundle collection, and release evidence bundle generation.
+This project is shareable as an unsigned Revit 2024 or Revit 2027 external preview when labeled clearly. It is not a signed enterprise production release. The current repository state supports local development, staged Windows packaging, install diagnostics, `revitctl` bridge debugging, redacted support bundle collection, and release evidence bundle generation.
 
 Use this audit to separate evidence that already exists from blockers that still need release work.
 
@@ -11,7 +11,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - CI builds and tests the broker/contracts workspaces on Windows with Node 24.
 - CI runs `node scripts/validate-repo.mjs`.
 - CI builds the .NET bridge contracts.
-- CI attempts the Revit add-in build only when Revit 2024 API DLLs are present on the runner.
+- CI attempts each Revit 2024 and Revit 2027 add-in build only when that year's API DLLs are present on the runner.
 - `npm run package:windows:dry-run` validates package inputs after the broker/contracts/add-in build outputs exist.
 - `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`; `-Sign` can request Authenticode signing before manifest, checksum, and zip capture when a certificate is supplied.
 - `npm run test:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates unsigned package creation, zip creation, package install into temp profile paths, doctor output, support bundle redaction, and checksum-tamper rejection without requiring Revit API DLLs on the runner.
@@ -25,7 +25,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - `npm run test:evidence:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates release evidence generation, explicit missing-evidence gates, failed live-smoke and hosted-integration summary rejection, package hash capture, copied package metadata, support/live-smoke/hosted evidence capture, validation log capture, token redaction, and readiness rejection of contract-fixture evidence for release-candidate or production profiles.
 - `npm run test:integrations:python` syntax-checks pyRevit/Dynamo status, preview/apply examples, and host-smoke examples, and validates the shared stdlib Python MCP client against a fake stdio MCP server.
 - `npm run doctor:windows` validates the installed MCP launcher, installed `revitctl` launcher, staged broker files, add-in DLLs, Revit manifest assembly path and stable add-in identity, packaged production dependencies, local pipe auth token shape, staged pyRevit/Dynamo examples, and add-in DLL signature status.
-- `npm run doctor:clients` validates generated Claude/Codex client config snippets, existing user config entries when present, stale install roots, launcher quoting, raw token leakage risk, Revit 2024-only client discovery including `revitctlPath`, and MCP startup plus `tools/list` without requiring a Revit connection.
+- `npm run doctor:clients` validates generated Claude/Codex client config snippets, existing user config entries when present, stale install roots, launcher quoting, raw token leakage risk, supported Revit 2024/2027 client discovery including per-year add-in paths and `revitctlPath`, and MCP startup plus `tools/list` without requiring a Revit connection.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, staged integration example hashes, and redacted auth configuration.
 - Query-style read endpoints expose compact pagination contracts and opaque signed continuation cursors bound to the same tool arguments/session/document state. The broker rejects raw, malformed, tampered, wrong-tool, and mismatched-argument cursors before the add-in can replay page 1, keeps long cursor tokens out of short text hints, and rejects unknown query filter keys before they can broaden a model query. Some add-in handlers still materialize broader Revit result sets before paging; true lazy/native-filter large-model scans remain a blocker below.
 - Core read tools now advertise typed MCP output schemas for status, broker-composed read bundles, documents, levels, current view, paged views/sheets/elements, model statistics/readiness/context, model warnings, material quantities, rooms, catalogs, generic queries, and parameter discovery. The schemas expose page fields such as `returnedCount`, `truncated`, `cursor`, `items`, `fields`, and `units` while remaining passthrough-safe for live Revit metadata. `revit.status` exposes queue diagnostics, ExternalEvent raise state, preview-token counts, and recovery hints for stalled workflows.

@@ -601,10 +601,11 @@ try {
     }
 
     $years = @($manifest.package.revitYears | ForEach-Object { [int] $_ })
-    if ($years.Count -eq 1 -and $years[0] -eq 2024) {
-        Pass "package.revitYears" "Evidence is explicitly Revit 2024-only."
+    $unsupportedYears = @($years | Where-Object { $_ -notin @(2024, 2027) })
+    if ($years.Count -gt 0 -and $unsupportedYears.Count -eq 0) {
+        Pass "package.revitYears" "Evidence advertises only supported Revit years: $($years -join ', ')."
     } else {
-        Fail "package.revitYears" "Evidence advertises unsupported Revit years: $($years -join ', ')."
+        Fail "package.revitYears" "Evidence advertises no years or unsupported Revit years: $($years -join ', ')."
     }
 
     if ([bool] $manifest.package.nodeModulesBundled -eq $true) {

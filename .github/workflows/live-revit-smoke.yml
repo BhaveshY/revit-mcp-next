@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       revit_year:
-        description: Revit year to install the add-in manifest for.
+        description: Revit year to build, package, install, and smoke (2024 or 2027).
         required: true
         default: "2024"
       revit_api_path:
@@ -254,6 +254,10 @@ jobs:
       - name: Validate release profile inputs
         run: |
           $ErrorActionPreference = "Stop"
+          if ($env:REVIT_YEAR -notin @("2024", "2027")) {
+            throw "revit_year must be 2024 or 2027. Received: $env:REVIT_YEAR"
+          }
+
           $profile = $env:READINESS_PROFILE.Trim().ToLowerInvariant()
           if ($profile -notin @("external-preview", "release-candidate", "production")) {
             throw "readiness_profile must be one of: external-preview, release-candidate, production. Received: $env:READINESS_PROFILE"
@@ -283,13 +287,33 @@ jobs:
           $ErrorActionPreference = "Stop"
           $apiDll = Join-Path $env:REVIT_API_PATH "RevitAPI.dll"
           $apiUiDll = Join-Path $env:REVIT_API_PATH "RevitAPIUI.dll"
+          $expectedApiMajor = if ($env:REVIT_YEAR -eq "2024") { 24 } else { 27 }
+          $apiAssemblyVersion = $null
+          $apiUiAssemblyVersion = $null
+          $revitFileVersion = $null
+
+          if (Test-Path -LiteralPath $apiDll -PathType Leaf) {
+            $apiAssemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($apiDll).Version
+          }
+          if (Test-Path -LiteralPath $apiUiDll -PathType Leaf) {
+            $apiUiAssemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($apiUiDll).Version
+          }
+          if (Test-Path -LiteralPath $env:REVIT_EXE_PATH -PathType Leaf) {
+            $revitFileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($env:REVIT_EXE_PATH).FileVersion
+          }
+
           $preflight = [ordered] @{
+            revitYear = $env:REVIT_YEAR
+            expectedApiMajor = $expectedApiMajor
             revitApiDll = $apiDll
             revitApiDllExists = Test-Path -LiteralPath $apiDll -PathType Leaf
+            revitApiAssemblyVersion = if ($apiAssemblyVersion) { $apiAssemblyVersion.ToString() } else { $null }
             revitApiUiDll = $apiUiDll
             revitApiUiDllExists = Test-Path -LiteralPath $apiUiDll -PathType Leaf
+            revitApiUiAssemblyVersion = if ($apiUiAssemblyVersion) { $apiUiAssemblyVersion.ToString() } else { $null }
             revitExePath = $env:REVIT_EXE_PATH
             revitExeExists = Test-Path -LiteralPath $env:REVIT_EXE_PATH -PathType Leaf
+            revitExeFileVersion = $revitFileVersion
           }
           $preflight | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $env:EVIDENCE_DIR "preflight.json") -Encoding UTF8
 
@@ -301,6 +325,15 @@ jobs:
           }
           if (-not $preflight.revitExeExists) {
             throw "Revit.exe was not found at $env:REVIT_EXE_PATH. Configure revit_exe_path for this runner."
+          }
+          if ($apiAssemblyVersion.Major -ne $expectedApiMajor) {
+            throw "RevitAPI.dll assembly version $apiAssemblyVersion does not match requested Revit $env:REVIT_YEAR (expected API major $expectedApiMajor)."
+          }
+          if ($apiUiAssemblyVersion.Major -ne $expectedApiMajor) {
+            throw "RevitAPIUI.dll assembly version $apiUiAssemblyVersion does not match requested Revit $env:REVIT_YEAR (expected API major $expectedApiMajor)."
+          }
+          if ([string]::IsNullOrWhiteSpace($revitFileVersion) -or -not $revitFileVersion.StartsWith("$expectedApiMajor.")) {
+            throw "Revit.exe file version '$revitFileVersion' does not match requested Revit $env:REVIT_YEAR (expected major $expectedApiMajor)."
           }
 
           Write-Host "Revit API path verified: $env:REVIT_API_PATH"
@@ -328,7 +361,7 @@ jobs:
           }
 
           $addinLog = Join-Path $env:EVIDENCE_DIR "build-addin.log"
-          & npm.cmd run build:addin -- -RevitApiPath $env:REVIT_API_PATH 2>&1 | Tee-Object -FilePath $addinLog
+          & npm.cmd run build:addin -- -RevitYear $env:REVIT_YEAR -RevitApiPath $env:REVIT_API_PATH 2>&1 | Tee-Object -FilePath $addinLog
           if ($LASTEXITCODE -ne 0) {
             throw "npm run build:addin failed with exit code $LASTEXITCODE."
           }

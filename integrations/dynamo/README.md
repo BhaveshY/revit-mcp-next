@@ -17,7 +17,7 @@ npm run install:windows
 
 2. Open Revit and load the Revit MCP Next add-in.
 3. Add a Dynamo Python node.
-4. Paste the contents of `status_node.py` for diagnostics, `create_level_node.py` for a preview/apply write example, or `workflow_examples_node.py` for status, scoped read, catalog, room read, wall/floor/room preview, blocked preview, and optional family-placement preview examples. For release-candidate hosted integration evidence, open `revit_mcp_next_host_smoke.dyn` from the installed package and run the graph inside Dynamo for Revit. The nodes search for the installed in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext`.
+4. Paste the contents of `status_node.py` for diagnostics, `create_level_node.py` for a preview/apply write example, or `workflow_examples_node.py` for status, scoped read, catalog, room read, wall/floor/room preview, blocked preview, and optional family-placement preview examples. For release-candidate hosted integration evidence, open `revit_mcp_next_host_smoke.dyn` from the installed package and run the graph inside Dynamo for Revit. The nodes search for the installed in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and the supported per-user Revit 2027/2024 add-in roots.
 
 Common installed helper path:
 

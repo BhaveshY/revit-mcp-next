@@ -93,7 +93,7 @@ function Get-RunnerImportRoot($EvidenceFull) {
 }
 
 function Write-RunnerAddinImport($ImportRoot, $InstallRoot) {
-    $addinAssembly = Join-Path $InstallRoot "addin\RevitMcpNext.Addin.dll"
+    $addinAssembly = Join-Path $InstallRoot "addin\$RevitYear\RevitMcpNext.Addin.dll"
     $addinAssemblyFull = Resolve-RequiredFile $addinAssembly "Installed Revit MCP Next add-in assembly"
 
     if (Test-Path -LiteralPath $ImportRoot -PathType Container) {

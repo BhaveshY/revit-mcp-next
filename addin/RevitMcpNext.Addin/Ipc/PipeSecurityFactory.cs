@@ -1,3 +1,4 @@
+#if NETFRAMEWORK
 using System;
 using System.IO.Pipes;
 using System.Security.AccessControl;
@@ -36,3 +37,4 @@ namespace RevitMcpNext.Addin.Ipc
         }
     }
 }
+#endif

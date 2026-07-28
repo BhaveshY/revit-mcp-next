@@ -1,6 +1,9 @@
 # Agent Instructions
 
-This repo contains Revit MCP Next, a Windows/Revit 2024 MCP bridge for Claude Code, Claude Desktop, Codex, and other MCP clients.
+This repo contains Revit MCP Next, a Windows/Revit MCP bridge for Claude Code,
+Claude Desktop, Codex, and other MCP clients. Revit 2024 is the established
+host target; Revit 2027 has a separate .NET 10 build/package/install path whose
+full live-host evidence is still pending.
 
 ## Install Or Configure The MCP
 
@@ -13,6 +16,18 @@ npm install
 npm run build
 npm run build:addin
 npm run install:windows -- -RevitYears 2024 -TrustRevitAlwaysLoad
+npm run mcp:config
+npm run doctor:clients
+```
+
+For a Revit 2027 development install, build and select the 2027 artifact
+explicitly:
+
+```powershell
+npm install
+npm run build
+npm run build:addin -- -RevitYear 2027 -RevitApiPath "C:\Program Files\Autodesk\Revit 2027"
+npm run install:windows -- -RevitYears 2027 -TrustRevitAlwaysLoad
 npm run mcp:config
 npm run doctor:clients
 ```
@@ -51,7 +66,11 @@ Live Revit smoke mutates the active model. Use only disposable/test `.rvt` files
 
 ## Revit Safety
 
-- Revit 2024 is the only supported release target.
+- Revit 2024 and 2027 builds are separate; never point one year's manifest at
+  the other year's DLL.
+- Revit 2025 and 2026 are not supported.
+- Treat Revit 2027 as build/package support until live Revit, pyRevit, and
+  Dynamo evidence from the exact package has passed.
 - MCP is the primary agent interface.
 - `revitctl.cmd` is for diagnostics/support and scripted smoke.
 - Writes must use preview/apply unless a tool is explicitly documented as setup-only.

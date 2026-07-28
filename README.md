@@ -31,13 +31,16 @@ Autodesk Revit API
 
 ## Current Status
 
-Revit 2024-only production-candidate slice, not yet a signed production release:
+Revit 2024 remains the established staged-package target. Revit 2027 now has
+separate .NET 10 build/package/install support, but its full live Revit,
+pyRevit, and Dynamo smoke evidence is still pending. This is not yet a signed
+production release:
 
 - `contracts/`: shared protocol and tool-result TypeScript types plus JSON schema.
 - `broker/`: MCP stdio server with bounded read/write tools, including view/sheet inventory, model warnings, parameter discovery, `revit.get_rooms`, guarded `create_room`, output schemas, structured errors, pipe auth token forwarding, `revitctl`, and bridge tests.
-- `addin/`: Revit 2024 add-in with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers including rooms, and preview/apply write handlers including room placement.
-- `installer/`: Windows installer that stages broker/contracts/add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes the Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates the Claude/Codex MCP launcher plus `revitctl.cmd` for debugging.
-- `scripts/package-release.ps1`: staged Windows release package with payload checksums and optional bundled production dependencies.
+- `addin/`: year-specific Revit 2024 (`net48`) and Revit 2027 (`net10.0-windows`) add-ins with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers including rooms, and preview/apply write handlers including room placement.
+- `installer/`: Windows installer that stages broker/contracts and year-specific add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes each requested Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates the Claude/Codex MCP launcher plus `revitctl.cmd` for debugging.
+- `scripts/package-release.ps1`: staged Windows release package with per-year add-in payloads, checksums, and optional bundled production dependencies.
 - `scripts/ensure-dev-signing-certificate.ps1`: CurrentUser local dev code-signing certificate bootstrapper for disposable Revit smoke machines.
 - `scripts/ensure-revit-addin-trust.ps1`: supplemental helper that inspects/seeds/removes Revit's per-user `Always Load` trust entry for the add-in `ClientId`.
 - `scripts/ensure-pyrevit-hosts-cache.ps1`: optional self-hosted runner helper for pyRevit CLI builds that lag Autodesk Revit build metadata.
@@ -71,7 +74,33 @@ npm run package:windows:dry-run
 npm run test:evidence:release:windows
 ```
 
-`npm run build:addin` expects Revit 2024 API DLLs at `C:\Program Files\Autodesk\Revit 2024`. Pass `-RevitApiPath` to `scripts\build-addin.ps1` if Revit is installed elsewhere.
+`npm run build:addin` defaults to Revit 2024. Select the matching year and API
+directory explicitly for Revit 2027:
+
+```powershell
+npm run build:addin -- -RevitYear 2024 -RevitApiPath "C:\Program Files\Autodesk\Revit 2024"
+npm run build:addin -- -RevitYear 2027 -RevitApiPath "C:\Program Files\Autodesk\Revit 2027"
+```
+
+The outputs are isolated under `artifacts\addin\2024` and
+`artifacts\addin\2027`. Package and install only years whose matching artifact
+was built:
+
+```powershell
+npm run package:windows -- -RevitYears 2027
+npm run install:windows -- -RevitYears 2027
+```
+
+To stage both year payloads in one package from PowerShell, call the script with
+an actual integer array:
+
+```powershell
+& .\scripts\package-release.ps1 -RevitYears @(2024, 2027)
+```
+
+Revit 2025 and 2026 are not supported. See
+[docs/version-matrix.md](docs/version-matrix.md) for the distinction between
+build/package support and completed host validation.
 
 `npm run smoke:revit` requires Revit to be running with an active project document and mutates that active document through the bounded preview/apply smoke workflow. It checks `revit.cancel_request` recovery behavior, creates test geometry, a room, optional family placement when the model has suitable symbols, optional or required room/element tags when the model has loaded or locally loaded tag families and suitable views, parameter/type changes where possible, movement/rotation/copy/pin operations, and cleanup of the copied wall. Use a disposable model.
 `npm run smoke:release-local` is the one-command disposable-machine path: it builds, installs to a stable per-year root under `%APPDATA%\Autodesk\Revit\Addins`, copies a sample or supplied disposable `.rvt` project, launches Revit when needed, waits for `revit.status` readiness, runs doctor/live smoke, closes and relaunches its own Revit process for a second status-only no-prompt probe, collects support output, and attempts release evidence collection. Do not pass `.rte` templates to `-ModelPath`; open the template in Revit and save a disposable `.rvt` first. Evidence and package work directories default to `C:\tmp\revit-mcp-next-smoke` when writable, otherwise a short sibling directory beside the repo, to avoid Windows path-length failures in packaged `node_modules`.
@@ -244,7 +273,10 @@ Examples:
 - Dynamo host-smoke node: `integrations/dynamo/host_smoke_node.py`
 - Dynamo host-smoke graph: `integrations/dynamo/revit_mcp_next_host_smoke.dyn`
 
-After install, examples can import the helpers from the package install root. The included scripts search the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext`.
+After install, examples can import the helpers from the package install root.
+The included scripts search the auth-config install root,
+`%LOCALAPPDATA%\RevitMcpNext`, and the selected per-user Revit add-in root under
+`%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext`.
 
 ## MVP Tool Surface
 
@@ -312,7 +344,10 @@ See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences 
 
 ## Production Readiness And Remaining Blockers
 
-This repository is ready for local development and staged Windows packaging as a Revit 2024-only production candidate, but production release hardening is still in progress.
+This repository is ready for local development and staged Windows packaging for
+Revit 2024 and Revit 2027. Revit 2027 should be treated as a build/package
+candidate until live Revit, pyRevit, and Dynamo evidence from the exact package
+has passed and been archived. Production release hardening is still in progress.
 
 See [production-readiness.md](docs/production-readiness.md) for the current evidence and blocker audit, and [fork-parity.md](docs/fork-parity.md) for the old-fork capability comparison.
 
@@ -323,4 +358,8 @@ Remaining blockers:
 - Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json` and backed by bundled raw `pyrevit.json`, `dynamo.json`, and `dynamo-preflight.json`.
 - Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, live-smoke output, and hosted integration output for that build.
 - More real-model write-operation and failure-mode evidence before calling the mutation surface production-complete.
-- Multi-version Revit compatibility validation beyond the current Revit 2024 target. Revit 2025/2026 remain intentionally out of scope until year-specific add-in artifacts are built, packaged, installed, and smoked.
+- Revit 2027 live-host validation from the exact year-specific package,
+  including cold start, broker/add-in IPC, preview/apply writes, restart,
+  pyRevit, Dynamo, support, and release evidence. Revit 2025/2026 remain
+  intentionally unsupported until their own API-specific artifacts and host
+  evidence exist.

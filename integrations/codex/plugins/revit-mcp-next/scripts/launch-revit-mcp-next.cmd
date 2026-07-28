@@ -16,6 +16,11 @@ if exist "%LOCALAPPDATA%\RevitMcpNext\launch-revit-mcp-next.cmd" (
   set "LAUNCHER=%LOCALAPPDATA%\RevitMcpNext\launch-revit-mcp-next.cmd"
   goto run
 )
+if exist "%APPDATA%\Autodesk\Revit\Addins\2027\RevitMcpNext\launch-revit-mcp-next.cmd" (
+  set "LAUNCHER=%APPDATA%\Autodesk\Revit\Addins\2027\RevitMcpNext\launch-revit-mcp-next.cmd"
+  goto run
+)
+
 if exist "%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext\launch-revit-mcp-next.cmd" (
   set "LAUNCHER=%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext\launch-revit-mcp-next.cmd"
   goto run

@@ -33,6 +33,6 @@ Validate the generated TOML, the installed Codex config when present, launcher q
 npm run doctor:clients -- -Client codex
 ```
 
-After updating Codex config, restart Codex, open Revit 2024 with a disposable project, and call `revit.status` from the MCP client.
+After updating Codex config, restart Codex, open a supported Revit release (2024 or 2027) with a disposable project, and call `revit.status` from the MCP client.
 
 The lightweight Codex plugin wrapper lives under `integrations/codex/plugins/revit-mcp-next`. It resolves `REVIT_MCP_NEXT_LAUNCHER`, `REVIT_MCP_NEXT_INSTALL_ROOT`, or the default Windows install roots and then delegates to the installed launcher.

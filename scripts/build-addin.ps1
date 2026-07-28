@@ -1,10 +1,30 @@
 param(
     [string] $Configuration = "Release",
-    [string] $RevitApiPath = "$env:ProgramFiles\Autodesk\Revit 2024",
-    [string] $DotnetPath = ""
+    [ValidateSet(2024, 2027)]
+    [int] $RevitYear = 2024,
+    [string] $RevitApiPath = "",
+    [string] $DotnetPath = "",
+    [string] $OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$project = Join-Path $repoRoot "addin\RevitMcpNext.Addin\RevitMcpNext.Addin.csproj"
+
+if ([string]::IsNullOrWhiteSpace($RevitApiPath)) {
+    $RevitApiPath = Join-Path $env:ProgramFiles "Autodesk\Revit $RevitYear"
+}
+
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $OutputRoot = Join-Path $repoRoot "artifacts\addin"
+}
+
+$targetFramework = switch ($RevitYear) {
+    2024 { "net48" }
+    2027 { "net10.0-windows" }
+}
+$yearOutput = Join-Path ([System.IO.Path]::GetFullPath($OutputRoot)) "$RevitYear"
 
 if ([string]::IsNullOrWhiteSpace($DotnetPath)) {
     $dotnet = Get-Command dotnet.exe -ErrorAction SilentlyContinue
@@ -22,11 +42,22 @@ if ([string]::IsNullOrWhiteSpace($DotnetPath) -or -not (Test-Path -LiteralPath $
     throw "dotnet.exe not found. Install the .NET SDK or pass -DotnetPath."
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $RevitApiPath "RevitAPI.dll") -PathType Leaf)) {
-    throw "Revit API was not found at '$RevitApiPath'. Install Revit 2024 or pass -RevitApiPath."
+foreach ($apiAssembly in @("RevitAPI.dll", "RevitAPIUI.dll")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RevitApiPath $apiAssembly) -PathType Leaf)) {
+        throw "$apiAssembly was not found at '$RevitApiPath'. Install Revit $RevitYear or pass -RevitApiPath."
+    }
 }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$project = Join-Path $repoRoot "addin\RevitMcpNext.Addin\RevitMcpNext.Addin.csproj"
+Write-Host "[revit-mcp-next addin] Building Revit $RevitYear ($targetFramework) -> $yearOutput"
 
-& $DotnetPath build $project -c $Configuration -p:RevitApiPath="$RevitApiPath"
+& $DotnetPath build $project `
+    -c $Configuration `
+    -p:RevitYear=$RevitYear `
+    -p:RevitApiPath="$RevitApiPath" `
+    -p:TargetFramework=$targetFramework `
+    -p:TargetFrameworks=$targetFramework `
+    -o $yearOutput
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Revit $RevitYear add-in build failed with exit code $LASTEXITCODE."
+}

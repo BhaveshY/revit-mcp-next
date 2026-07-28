@@ -22,7 +22,7 @@ npm run install:windows
 3. Reload pyRevit. Open Revit with the Revit MCP Next add-in loaded and an
    active project document.
 
-The example commands search for the in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and `%APPDATA%\Autodesk\Revit\Addins\2024\RevitMcpNext`.
+The example commands search for the in-process helper under the auth-config install root, `%LOCALAPPDATA%\RevitMcpNext`, and the supported per-user Revit 2027/2024 add-in roots.
 
 Common installed helper path:
 

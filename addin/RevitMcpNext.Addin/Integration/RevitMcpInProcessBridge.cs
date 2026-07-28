@@ -4,8 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Web.Script.Serialization;
 using Autodesk.Revit.UI;
+using RevitMcpNext.Addin.Ipc;
 using RevitMcpNext.Addin.Revit;
 using RevitMcpNext.Contracts;
 
@@ -190,7 +190,7 @@ namespace RevitMcpNext.Addin
                 throw new InvalidDataException("Bridge request JSON cannot be empty.");
             }
 
-            object parsed = CreateSerializer().DeserializeObject(requestJson);
+            object parsed = JsonWireCodec.DeserializeObject(requestJson);
             var root = parsed as Dictionary<string, object>;
             if (root == null)
             {
@@ -237,7 +237,7 @@ namespace RevitMcpNext.Addin
                 body["error"] = ToWireError(response.Error);
             }
 
-            return CreateSerializer().Serialize(body);
+            return JsonWireCodec.Serialize(body);
         }
 
         private static BridgeResponseEnvelope Failure(
@@ -259,15 +259,6 @@ namespace RevitMcpNext.Addin
                 },
                 Warnings = new List<BridgeWarning>(),
                 Metrics = new BridgeMetrics { ElapsedMs = 0 }
-            };
-        }
-
-        private static JavaScriptSerializer CreateSerializer()
-        {
-            return new JavaScriptSerializer
-            {
-                MaxJsonLength = 4 * 1024 * 1024,
-                RecursionLimit = 64
             };
         }
 

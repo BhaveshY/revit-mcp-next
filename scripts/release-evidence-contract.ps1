@@ -360,8 +360,8 @@ try {
     $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$($rootPackage.version)-windows"
     Assert-DirectoryExists $packageRoot "staged package"
     Assert-FileExists "$packageRoot.zip" "package zip"
-    $packagedAddinSha256 = (Get-FileHash -LiteralPath (Join-Path $packageRoot "payload\addin\RevitMcpNext.Addin.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
-    $installedAddinPath = Join-Path $installRoot "addin\RevitMcpNext.Addin.dll"
+    $packagedAddinSha256 = (Get-FileHash -LiteralPath (Join-Path $packageRoot "payload\addin\2024\RevitMcpNext.Addin.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
+    $installedAddinPath = Join-Path $installRoot "addin\2024\RevitMcpNext.Addin.dll"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
     Invoke-RepoScript (Join-Path $logsRoot "install-windows.log") $installerScript @(
@@ -858,7 +858,7 @@ try {
     }
     $tamperedSigningManifest.signing.targets = @(
         [ordered] @{
-            path = "payload/addin/RevitMcpNext.Addin.dll"
+            path = "payload/addin/2024/RevitMcpNext.Addin.dll"
             status = "NotSigned"
             statusMessage = "Synthetic invalid signature status."
             signerSubject = $null

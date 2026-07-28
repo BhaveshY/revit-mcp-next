@@ -533,9 +533,22 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
     if ($discovery.PSObject.Properties["supportedRevitYears"] -and $null -ne $discovery.supportedRevitYears) {
         $supportedYears = @($discovery.supportedRevitYears | ForEach-Object { [int] $_ })
     }
-    $unsupportedYears = @($supportedYears | Where-Object { $_ -ne 2024 })
+    $unsupportedYears = @($supportedYears | Where-Object { $_ -notin @(2024, 2027) })
     if ($supportedYears.Count -gt 0 -and $unsupportedYears.Count -eq 0) {
-        Write-Check "ok" "client discovery remains Revit 2024-only"
+        Write-Check "ok" "client discovery advertises only supported Revit years: $($supportedYears -join ', ')"
+        foreach ($year in $supportedYears) {
+            if ($discovery.addinAssemblyPaths -and $discovery.addinAssemblyPaths.PSObject.Properties["$year"]) {
+                $yearAssemblyPath = [string] $discovery.addinAssemblyPaths."$year"
+                Test-RequiredFile $yearAssemblyPath "Revit $year add-in assembly" | Out-Null
+                if (Test-PathChild $installRootFull $yearAssemblyPath) {
+                    Write-Check "ok" "Revit $year add-in assembly stays under install root"
+                } else {
+                    Add-Failure "Revit $year add-in assembly points outside install root: $yearAssemblyPath"
+                }
+            } else {
+                Add-Failure "client discovery is missing addinAssemblyPaths.$year"
+            }
+        }
     } else {
         Add-Failure "client discovery advertises unsupported Revit years: $($supportedYears -join ', ')"
     }

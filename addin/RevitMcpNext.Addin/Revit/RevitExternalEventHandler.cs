@@ -9797,12 +9797,16 @@ namespace RevitMcpNext.Addin.Revit
 
         private static long GetElementIdValue(ElementId id)
         {
+#if REVIT2027
+            return id.Value;
+#else
             object value = typeof(ElementId).GetProperty("Value")?.GetValue(id, null);
             if (value != null) return Convert.ToInt64(value, CultureInfo.InvariantCulture);
 
 #pragma warning disable CS0618
             return id.IntegerValue;
 #pragma warning restore CS0618
+#endif
         }
 
         private static int ParseCursor(string cursor, List<BridgeWarning> warnings)

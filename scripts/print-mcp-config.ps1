@@ -41,6 +41,7 @@ function Resolve-InstallRoot {
         $candidates.Add($env:REVIT_MCP_NEXT_INSTALL_ROOT) | Out-Null
     }
     if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $candidates.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\2027\RevitMcpNext")) | Out-Null
         $candidates.Add((Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext")) | Out-Null
     }
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -107,9 +108,15 @@ function Assert-DiscoveryMatchesInstallRoot($Discovery, $Root) {
     if ($Discovery.PSObject.Properties["supportedRevitYears"] -and $null -ne $Discovery.supportedRevitYears) {
         $supportedYears = @($Discovery.supportedRevitYears | ForEach-Object { [int] $_ })
     }
-    $unsupportedYears = @($supportedYears | Where-Object { $_ -ne 2024 })
+    $unsupportedYears = @($supportedYears | Where-Object { $_ -notin @(2024, 2027) })
     if ($supportedYears.Count -gt 0 -and $unsupportedYears.Count -gt 0) {
-        throw "Client discovery advertises unsupported Revit years: $($supportedYears -join ', '). Revit MCP Next packages are Revit 2024-only."
+        throw "Client discovery advertises unsupported Revit years: $($unsupportedYears -join ', '). Supported package years are 2024 and 2027."
+    }
+
+    foreach ($year in $supportedYears) {
+        if (-not $Discovery.addinAssemblyPaths -or -not $Discovery.addinAssemblyPaths.PSObject.Properties["$year"]) {
+            throw "Client discovery is missing addinAssemblyPaths.$year."
+        }
     }
 }
 

@@ -1,6 +1,8 @@
 param(
     [string] $PackageRoot = "",
     [string] $PackageZipPath = "",
+    [ValidateSet(0, 2024, 2027)]
+    [int] $RevitYear = 0,
     [string] $OutputRoot = "",
     [string] $SigningSkipReason = "",
     [string] $LiveSmokeEvidencePath = "",
@@ -680,8 +682,21 @@ function Get-PackageContentEntry($ReleaseManifest, $RelativePath) {
     throw "Release manifest is missing package content entry: $normalizedRelativePath"
 }
 
-function Get-PackagedAddinIdentity($ReleaseManifest) {
-    $relativePath = "payload/addin/RevitMcpNext.Addin.dll"
+function Get-PackagedAddinIdentity($ReleaseManifest, $RequestedRevitYear) {
+    $packageYears = @($ReleaseManifest.package.revitYears | ForEach-Object { [int] $_ })
+    $effectiveRevitYear = [int] $RequestedRevitYear
+    if ($effectiveRevitYear -eq 0) {
+        if ($packageYears.Count -ne 1) {
+            throw "Release evidence for a multi-year package requires -RevitYear. Packaged years: $($packageYears -join ', ')."
+        }
+        $effectiveRevitYear = $packageYears[0]
+    }
+
+    if ($packageYears -notcontains $effectiveRevitYear) {
+        throw "Requested Revit year $effectiveRevitYear is not present in the package. Packaged years: $($packageYears -join ', ')."
+    }
+
+    $relativePath = "payload/addin/$effectiveRevitYear/RevitMcpNext.Addin.dll"
     $entry = Get-PackageContentEntry $ReleaseManifest $relativePath
     $sha256 = ([string] $entry.sha256).Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($sha256)) {
@@ -689,6 +704,7 @@ function Get-PackagedAddinIdentity($ReleaseManifest) {
     }
 
     return [ordered] @{
+        revitYear = $effectiveRevitYear
         packagePath = $relativePath
         sha256 = $sha256
         size = $entry.size
@@ -811,7 +827,7 @@ $version = [string] $releaseManifest.package.version
 if ([string]::IsNullOrWhiteSpace($version)) {
     throw "Release manifest package.version is missing."
 }
-$packagedAddinIdentity = Get-PackagedAddinIdentity $releaseManifest
+$packagedAddinIdentity = Get-PackagedAddinIdentity $releaseManifest $RevitYear
 
 $platform = [string] $releaseManifest.package.platform
 if ([string]::IsNullOrWhiteSpace($platform)) {
