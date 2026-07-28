@@ -183,10 +183,10 @@ export async function runRevitCtl(options: RevitCtlOptions): Promise<{ exitCode:
 
   try {
     if (options.command === "doctor") {
-      return runDoctor(bridge, sessionId, runtime.timeoutMs, runtime.discovery);
+      return await runDoctor(bridge, sessionId, runtime.timeoutMs, runtime.discovery);
     }
     if (options.command === "read-bundle" || options.command === "bundle") {
-      return runReadBundle(bridge, sessionId, runtime.timeoutMs, payloadObject(options.payload));
+      return await runReadBundle(bridge, sessionId, runtime.timeoutMs, payloadObject(options.payload));
     }
 
     const { operation, operationKind, payload } = resolveCommandOperation(options);

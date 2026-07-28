@@ -121,33 +121,136 @@ test("named pipe bridge client rejects oversized response frames", async () => {
   );
 });
 
+test("named pipe bridge client handles a pre-aborted request without rejecting", async () => {
+  const client = new NamedPipeBridgeClient({
+    pipeName: uniquePipeName(),
+    sessionId: "pipe-test",
+    defaultTimeoutMs: 2000,
+  });
+  const controller = new AbortController();
+  controller.abort();
+
+  const response = await client.status(
+    makeRequest("pipe-test", "status", "read", {}, 2000),
+    { signal: controller.signal }
+  );
+
+  assert.equal(response.ok, false);
+  if (response.ok) return;
+  assert.equal(response.error.code, "REQUEST_CANCELLED");
+});
+
+test("named pipe bridge client reports an early peer close immediately and does not retry after connect", async () => {
+  let connectionCount = 0;
+  const startedAt = Date.now();
+
+  await withRawPipeServer(
+    () => undefined,
+    (socket) => socket.end(),
+    async (pipeName) => {
+      const client = new NamedPipeBridgeClient({
+        pipeName,
+        sessionId: "pipe-test",
+        defaultTimeoutMs: 2000,
+      });
+      const response = await client.status(makeRequest("pipe-test", "status", "read", {}, 2000));
+
+      assert.equal(response.ok, false);
+      if (response.ok) return;
+      assert.equal(response.error.code, "BRIDGE_DISCONNECTED");
+      assert.ok(Date.now() - startedAt < 1000, "early close should not wait for the bridge timeout");
+      await delay(100);
+      assert.equal(connectionCount, 1, "a request must not be replayed after the pipe connected");
+    },
+    () => {
+      connectionCount++;
+    }
+  );
+});
+
+test("named pipe bridge client retries transient pre-connect failures inside the original deadline", async () => {
+  const pipeName = uniquePipeName();
+  const client = new NamedPipeBridgeClient({
+    pipeName,
+    sessionId: "pipe-test",
+    defaultTimeoutMs: 2000,
+  });
+  const responsePromise = client.status(makeRequest("pipe-test", "status", "read", {}, 2000));
+
+  await delay(100);
+  const server = await startRawPipeServer(
+    pipeName,
+    () => undefined,
+    writeStatusResponse
+  );
+
+  try {
+    const response = await responsePromise;
+    assert.equal(response.ok, true);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("named pipe bridge client parses fragmented response headers and payloads", async () => {
+  await withRawPipeServer(
+    () => undefined,
+    (socket, request) => {
+      const frame = statusResponseFrame(request);
+      const boundaries = [1, 2, 4, 7, 13, 29, 61, frame.byteLength];
+      writeFragments(socket, frame, boundaries);
+    },
+    async (pipeName) => {
+      const client = new NamedPipeBridgeClient({
+        pipeName,
+        sessionId: "pipe-test",
+        defaultTimeoutMs: 2000,
+      });
+      const response = await client.status(makeRequest("pipe-test", "status", "read", {}, 2000));
+
+      assert.equal(response.ok, true);
+      if (!response.ok) return;
+      assert.equal(response.data.connected, true);
+    }
+  );
+});
+
+test("named pipe bridge client validates its default timeout", () => {
+  assert.throws(
+    () =>
+      new NamedPipeBridgeClient({
+        pipeName: uniquePipeName(),
+        sessionId: "pipe-test",
+        defaultTimeoutMs: Number.NaN,
+      }),
+    /defaultTimeoutMs must be a positive integer/
+  );
+});
+
+test("named pipe bridge client disposal resolves pending connection attempts", async () => {
+  const client = new NamedPipeBridgeClient({
+    pipeName: uniquePipeName(),
+    sessionId: "pipe-test",
+    defaultTimeoutMs: 5000,
+  });
+  const responsePromise = client.status(makeRequest("pipe-test", "status", "read", {}, 5000));
+
+  await delay(25);
+  client.dispose();
+  const response = await responsePromise;
+
+  assert.equal(response.ok, false);
+  if (response.ok) return;
+  assert.equal(response.error.code, "BRIDGE_DISPOSED");
+});
+
 async function withStatusPipeServer(
   onRequest: (request: CapturedBridgeRequest) => void,
   runClient: (pipeName: string) => Promise<void>
 ): Promise<void> {
   await withRawPipeServer(
     onRequest,
-    (socket, request) => {
-      const response = Buffer.from(
-        JSON.stringify({
-          ok: true,
-          requestId: request.requestId,
-          data: {
-            connected: true,
-            brokerVersion: "test",
-            protocolVersion: "2026-06-23",
-            capabilities: ["status"],
-            warnings: [],
-          },
-          warnings: [],
-          metrics: { elapsedMs: 1 },
-        }),
-        "utf8"
-      );
-      const header = Buffer.allocUnsafe(4);
-      header.writeUInt32BE(response.byteLength, 0);
-      socket.write(Buffer.concat([header, response]));
-    },
+    writeStatusResponse,
     runClient
   );
 }
@@ -155,12 +258,28 @@ async function withStatusPipeServer(
 async function withRawPipeServer(
   onRequest: (request: CapturedBridgeRequest) => void,
   writeResponse: (socket: net.Socket, request: CapturedBridgeRequest) => void,
-  runClient: (pipeName: string) => Promise<void>
+  runClient: (pipeName: string) => Promise<void>,
+  onConnection?: () => void
 ): Promise<void> {
-  const pipeName = `revit-mcp-next-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const pipePath = `\\\\.\\pipe\\${pipeName}`;
+  const pipeName = uniquePipeName();
+  const server = await startRawPipeServer(pipeName, onRequest, writeResponse, onConnection);
 
+  try {
+    await runClient(pipeName);
+  } finally {
+    await closeServer(server);
+  }
+}
+
+async function startRawPipeServer(
+  pipeName: string,
+  onRequest: (request: CapturedBridgeRequest) => void,
+  writeResponse: (socket: net.Socket, request: CapturedBridgeRequest) => void,
+  onConnection?: () => void
+): Promise<net.Server> {
+  const pipePath = `\\\\.\\pipe\\${pipeName}`;
   const server = net.createServer((socket) => {
+    onConnection?.();
     let buffer = Buffer.alloc(0);
     socket.on("data", (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -175,12 +294,57 @@ async function withRawPipeServer(
   });
 
   await new Promise<void>((resolve) => server.listen(pipePath, resolve));
+  return server;
+}
 
-  try {
-    await runClient(pipeName);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+function writeStatusResponse(socket: net.Socket, request: CapturedBridgeRequest): void {
+  socket.write(statusResponseFrame(request));
+}
+
+function statusResponseFrame(request: CapturedBridgeRequest): Buffer {
+  const response = Buffer.from(
+    JSON.stringify({
+      ok: true,
+      requestId: request.requestId,
+      data: {
+        connected: true,
+        brokerVersion: "test",
+        protocolVersion: "2026-06-23",
+        capabilities: ["status"],
+        warnings: [],
+      },
+      warnings: [],
+      metrics: { elapsedMs: 1 },
+    }),
+    "utf8"
+  );
+  const header = Buffer.allocUnsafe(4);
+  header.writeUInt32BE(response.byteLength, 0);
+  return Buffer.concat([header, response]);
+}
+
+function writeFragments(socket: net.Socket, frame: Buffer, boundaries: number[]): void {
+  let offset = 0;
+  const writeNext = () => {
+    if (offset >= frame.byteLength || socket.destroyed) return;
+    const boundary = boundaries.find((value) => value > offset) ?? frame.byteLength;
+    socket.write(frame.subarray(offset, boundary));
+    offset = boundary;
+    setImmediate(writeNext);
+  };
+  writeNext();
+}
+
+function uniquePipeName(): string {
+  return `revit-mcp-next-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function closeServer(server: net.Server): Promise<void> {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 function restoreEnvAuthToken(value: string | undefined): void {
