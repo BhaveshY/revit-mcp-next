@@ -32,6 +32,9 @@ jobs:
       - name: Build .NET bridge contracts
         shell: pwsh
         run: dotnet build addin\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj -c Release
+      - name: Named-pipe host lifecycle regression
+        shell: pwsh
+        run: npm run test:pipe-host
       - name: Build year-specific Revit add-ins when APIs are installed
         shell: pwsh
         run: |

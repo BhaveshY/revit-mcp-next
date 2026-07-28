@@ -15,16 +15,25 @@ const bridge = new NamedPipeBridgeClient({
 
 const server = createBrokerServer({ bridge, brokerVersion, sessionId });
 const transport = new StdioServerTransport();
+let shuttingDown = false;
 
-process.once("SIGINT", () => {
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   bridge.dispose();
-  process.exit(0);
-});
+  try {
+    await server.close();
+  } catch (error) {
+    process.stderr.write(
+      `Revit MCP Next shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+    process.exitCode = 1;
+  }
+}
 
-process.once("SIGTERM", () => {
-  bridge.dispose();
-  process.exit(0);
-});
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());
+process.stdin.once("end", () => bridge.dispose());
 
 await server.connect(transport);
 
