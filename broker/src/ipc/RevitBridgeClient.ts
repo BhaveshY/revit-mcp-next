@@ -1,4 +1,5 @@
 import type {
+  BridgeHealthResult,
   BridgeRequest,
   BridgeResponse,
   CancelRequest,
@@ -28,6 +29,8 @@ import type {
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  RequestResultRequest,
+  RequestResultResult,
   RoomsRequest,
   RoomsResult,
   ScheduleFieldsRequest,
@@ -45,6 +48,14 @@ import type {
 } from "@revit-mcp-next/contracts";
 
 export interface RevitBridgeClient {
+  bridgeHealth(
+    request: BridgeRequest<Record<string, never>>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<BridgeHealthResult>>;
+  getRequestResult<TData = unknown>(
+    request: BridgeRequest<RequestResultRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<RequestResultResult<TData>>>;
   status(
     request: BridgeRequest<Record<string, never>>,
     options?: BridgeCallOptions

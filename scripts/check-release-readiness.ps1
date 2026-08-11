@@ -442,6 +442,22 @@ function Test-LiveSmoke($Manifest, $Inventory) {
         Fail "liveSmoke.coveredTools.status" "Live smoke did not record revit.status coverage."
     }
 
+    if (@($Manifest.liveSmoke.summary.coveredTools) -contains "revit.bridge_health") {
+        Pass "liveSmoke.coveredTools.bridgeHealth" "Live smoke covered the reserved bridge-health control path."
+    } elseif ($Profile -eq "external-preview") {
+        Warn "liveSmoke.coveredTools.bridgeHealth" "Live smoke did not record revit.bridge_health coverage; rerun smoke with a newer build."
+    } else {
+        Fail "liveSmoke.coveredTools.bridgeHealth" "Release-candidate and production readiness require reserved control-path health evidence."
+    }
+
+    if (@($Manifest.liveSmoke.summary.coveredTools) -contains "revit.get_request_result") {
+        Pass "liveSmoke.coveredTools.requestResult" "Live smoke covered retained request-result lookup."
+    } elseif ($Profile -eq "external-preview") {
+        Warn "liveSmoke.coveredTools.requestResult" "Live smoke did not record revit.get_request_result coverage; rerun smoke with a newer build."
+    } else {
+        Fail "liveSmoke.coveredTools.requestResult" "Release-candidate and production readiness require request-result recovery evidence."
+    }
+
     if (@($Manifest.liveSmoke.summary.coveredTools) -contains "revit.cancel_request") {
         Pass "liveSmoke.coveredTools.cancel" "Live smoke covered revit.cancel_request no-op behavior."
     } else {

@@ -12,7 +12,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed class RevitRequestQueue
     {
-        private readonly ConcurrentQueue<WorkItem> _queue = new ConcurrentQueue<WorkItem>();
+        private readonly ConcurrentQueue<QueuedRevitWorkItem> _queue = new ConcurrentQueue<QueuedRevitWorkItem>();
         private ExternalEvent _externalEvent;
         private long _enqueuedCount;
         private long _dequeuedCount;
@@ -25,6 +25,8 @@ namespace RevitMcpNext.Addin.Revit
         private DateTimeOffset? _lastRaiseAtUtc;
         private string _lastRaiseResult = "not-attached";
 
+        public event Action<BridgeRequestEnvelope> RequestStarted;
+
         public void AttachExternalEvent(ExternalEvent externalEvent)
         {
             _externalEvent = externalEvent;
@@ -32,7 +34,7 @@ namespace RevitMcpNext.Addin.Revit
 
         public Task<BridgeResponseEnvelope> EnqueueAsync(BridgeRequestEnvelope envelope, CancellationToken cancellationToken)
         {
-            var item = new WorkItem(envelope, cancellationToken);
+            var item = new QueuedRevitWorkItem(envelope, cancellationToken);
             Interlocked.Increment(ref _enqueuedCount);
             _lastEnqueuedAtUtc = item.EnqueuedAtUtc;
             _queue.Enqueue(item);
@@ -41,14 +43,15 @@ namespace RevitMcpNext.Addin.Revit
             return item.Completion.Task;
         }
 
-        public bool TryDequeue(out WorkItem item)
+        public bool TryDequeue(out QueuedRevitWorkItem item)
         {
             while (_queue.TryDequeue(out item))
             {
-                if (!item.IsCancelled)
+                if (item.TryBeginExecution())
                 {
                     Interlocked.Increment(ref _dequeuedCount);
                     _lastDequeuedAtUtc = DateTimeOffset.UtcNow;
+                    RequestStarted?.Invoke(item.Envelope);
                     return true;
                 }
                 item.Dispose();
@@ -86,14 +89,16 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        public bool TryCancelQueued(string requestId, string reason)
+        public bool TryCancelQueued(string requestId, string reason, string sessionId = null)
         {
             if (string.IsNullOrWhiteSpace(requestId)) return false;
 
-            foreach (WorkItem item in _queue)
+            foreach (QueuedRevitWorkItem item in _queue)
             {
                 if (item.IsCancelled) continue;
                 if (!string.Equals(item.Envelope.RequestId, requestId, StringComparison.Ordinal)) continue;
+                if (sessionId != null &&
+                    !string.Equals(item.Envelope.SessionId ?? string.Empty, sessionId, StringComparison.Ordinal)) continue;
 
                 if (item.TryCancel("REQUEST_CANCELLED", string.IsNullOrWhiteSpace(reason)
                     ? "The queued request was cancelled before Revit processed it."
@@ -110,7 +115,7 @@ namespace RevitMcpNext.Addin.Revit
 
         public void CancelAll(string code, string message)
         {
-            while (_queue.TryDequeue(out WorkItem item))
+            while (_queue.TryDequeue(out QueuedRevitWorkItem item))
             {
                 if (item.TrySetResult(Failure(item.Envelope, code, message)))
                 {
@@ -122,9 +127,11 @@ namespace RevitMcpNext.Addin.Revit
 
         public Dictionary<string, object> GetDiagnosticsSnapshot()
         {
-            WorkItem[] pending = _queue.Where(item => !item.IsCancelled).ToArray();
+            QueuedRevitWorkItem[] pending = _queue
+                .Where(item => item.State == QueuedRevitWorkState.Pending)
+                .ToArray();
             DateTimeOffset now = DateTimeOffset.UtcNow;
-            WorkItem oldest = pending.OrderBy(item => item.EnqueuedAtUtc).FirstOrDefault();
+            QueuedRevitWorkItem oldest = pending.OrderBy(item => item.EnqueuedAtUtc).FirstOrDefault();
 
             var snapshot = new Dictionary<string, object>
             {
@@ -177,50 +184,5 @@ namespace RevitMcpNext.Addin.Revit
             };
         }
 
-        internal sealed class WorkItem : IDisposable
-        {
-            private readonly CancellationTokenRegistration _cancellationRegistration;
-            private int _completed;
-
-            public WorkItem(BridgeRequestEnvelope envelope, CancellationToken cancellationToken)
-            {
-                Envelope = envelope;
-                EnqueuedAtUtc = DateTimeOffset.UtcNow;
-                _cancellationRegistration = cancellationToken.Register(() =>
-                {
-                    IsCancelled = true;
-                    TrySetResult(Failure(envelope, "REQUEST_CANCELLED", "The request was cancelled before Revit processed it."));
-                });
-            }
-
-            public BridgeRequestEnvelope Envelope { get; }
-            public DateTimeOffset EnqueuedAtUtc { get; }
-            public bool IsCancelled { get; private set; }
-            public TaskCompletionSource<BridgeResponseEnvelope> Completion { get; } =
-                new TaskCompletionSource<BridgeResponseEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            public bool TryCancel(string code, string message)
-            {
-                IsCancelled = true;
-                return TrySetResult(Failure(Envelope, code, message));
-            }
-
-            public bool TrySetResult(BridgeResponseEnvelope response)
-            {
-                if (Interlocked.Exchange(ref _completed, 1) == 0)
-                {
-                    Completion.TrySetResult(response);
-                    Dispose();
-                    return true;
-                }
-
-                return false;
-            }
-
-            public void Dispose()
-            {
-                _cancellationRegistration.Dispose();
-            }
-        }
     }
 }

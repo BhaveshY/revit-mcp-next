@@ -67,7 +67,50 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(result.structuredContent?.data?.diagnostics?.queue?.pendingCount, 0);
     assert.equal(result.structuredContent?.data?.diagnostics?.previewTokens?.activeCount, 0);
 
+    const bridgeHealthTool = tools.tools.find((tool) => tool.name === "revit.bridge_health");
+    assert.ok(bridgeHealthTool, "revit.bridge_health tool should be listed");
+    assert.equal(bridgeHealthTool.annotations?.readOnlyHint, true);
+    assert.match(JSON.stringify(bridgeHealthTool.outputSchema), /controlPipeName/);
+    assert.match(JSON.stringify(bridgeHealthTool.outputSchema), /requestOutcomes/);
+    const bridgeHealth = (await client.callTool({
+      name: "revit.bridge_health",
+      arguments: {},
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          healthy?: boolean;
+          controlPipeName?: string;
+          requestOutcomes?: { inFlightCount?: number };
+        };
+      };
+    };
+    assert.equal(bridgeHealth.isError, undefined);
+    assert.equal(bridgeHealth.structuredContent?.data?.healthy, true);
+    assert.match(bridgeHealth.structuredContent?.data?.controlPipeName ?? "", /-control$/);
+    assert.equal(bridgeHealth.structuredContent?.data?.requestOutcomes?.inFlightCount, 0);
+
+    const requestResultTool = tools.tools.find((tool) => tool.name === "revit.get_request_result");
+    assert.ok(requestResultTool, "revit.get_request_result tool should be listed");
+    assert.equal(requestResultTool.annotations?.readOnlyHint, true);
+    const requestResultSchema = JSON.stringify(requestResultTool.outputSchema);
+    for (const expectedSchemaTerm of ["found", "state", "requestId", "operation", "response"]) {
+      assert.match(requestResultSchema, new RegExp(expectedSchemaTerm));
+    }
+    const requestResult = (await client.callTool({
+      name: "revit.get_request_result",
+      arguments: { requestId: "missing-fake-request" },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { found?: boolean; state?: string } };
+    };
+    assert.equal(requestResult.isError, undefined);
+    assert.equal(requestResult.structuredContent?.data?.found, false);
+    assert.equal(requestResult.structuredContent?.data?.state, "failed");
+
     for (const expected of [
+      "revit.bridge_health",
+      "revit.get_request_result",
       "revit.get_current_view",
       "revit.list_documents",
       "revit.read_bundle",
@@ -484,6 +527,8 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.match(querySchema, /elementIds/);
     assert.match(querySchema, /uniqueIds/);
     assert.match(querySchema, /parameterEquals/);
+    assert.match(querySchema, /documentFingerprint/);
+    assert.match(querySchema, /expectedGeneration/);
     const queryOutputSchema = JSON.stringify(queryTool.outputSchema);
     assert.match(queryOutputSchema, /returnedCount/);
     assert.match(queryOutputSchema, /truncated/);
@@ -495,6 +540,8 @@ test("broker exposes annotated tools with output schemas and callable structured
     const explicitQuery = (await client.callTool({
       name: "revit.query",
       arguments: {
+        documentFingerprint: "sample-doc-fingerprint",
+        expectedGeneration: 7,
         filter: { elementIds: ["501"] },
         fields: ["id", "uniqueId", "class"],
         includeTotalCount: true,
@@ -512,6 +559,16 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.id, "501");
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.uniqueId, "wall-501");
     assert.equal(explicitQuery.structuredContent?.data?.items?.[0]?.class, "Wall");
+
+    const staleQuery = (await client.callTool({
+      name: "revit.query",
+      arguments: {
+        expectedGeneration: 6,
+        filter: { elementIds: ["501"] },
+      },
+    })) as { isError?: boolean; content?: Array<{ type: "text"; text: string }> };
+    assert.equal(staleQuery.isError, true);
+    assert.match(staleQuery.content?.[0]?.text ?? "", /generation is 7.*expected 6/i);
 
     const geometryQuery = (await client.callTool({
       name: "revit.query",
@@ -749,6 +806,10 @@ test("broker exposes annotated tools with output schemas and callable structured
     const previewSchema = JSON.stringify(previewTool.inputSchema);
     for (const expectedSchemaTerm of [
       "set_parameter",
+      "parameterRef",
+      "builtInParameter",
+      "definitionId",
+      "sharedParameterGuid",
       "create_level",
       "create_wall",
       "place_family_instance",
@@ -765,6 +826,8 @@ test("broker exposes annotated tools with output schemas and callable structured
       "rotate_element",
       "copy_element",
       "change_element_type",
+      "rename_element_type",
+      "duplicate_element_type",
       "set_element_pinned",
       "create_grid",
       "create_floor",
@@ -775,6 +838,9 @@ test("broker exposes annotated tools with output schemas and callable structured
       "end",
       "wallTypeId",
       "familySymbolId",
+      "elementTypeId",
+      "sourceTypeId",
+      "newName",
       "hostElementId",
       "sheetNumber",
       "titleBlockTypeId",
@@ -1252,6 +1318,76 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(apply.structuredContent?.data?.changes?.[0]?.status, "applied");
     assert.deepEqual(apply.structuredContent?.data?.changes?.[0]?.after, { value: "A-101" });
 
+    const stableParameterPreview = (await client.callTool({
+      name: "revit.preview_change_set",
+      arguments: {
+        transactionName: "Stable parameter preview",
+        operations: [
+          {
+            type: "set_parameter",
+            elementId: "9200",
+            parameterRef: { kind: "builtInParameter", builtInParameter: "DOOR_WIDTH" },
+            parameterName: "Wrong legacy label",
+            value: { value: 2510, unit: "mm", system: "metric" },
+          },
+        ],
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: { ready?: boolean; changes?: Array<{ target?: Record<string, unknown>; after?: Record<string, unknown> }> };
+      };
+    };
+    assert.equal(stableParameterPreview.isError, undefined);
+    assert.equal(stableParameterPreview.structuredContent?.data?.ready, true);
+    assert.equal(stableParameterPreview.structuredContent?.data?.changes?.[0]?.target?.parameterName, "Width");
+    assert.match(
+      JSON.stringify(stableParameterPreview.structuredContent?.data?.changes?.[0]?.target?.parameterRef),
+      /DOOR_WIDTH/
+    );
+    assert.deepEqual(stableParameterPreview.structuredContent?.data?.changes?.[0]?.after?.value, {
+      value: 2510,
+      unit: "mm",
+      system: "metric",
+    });
+
+    const ambiguousParameterPreview = (await client.callTool({
+      name: "revit.preview_change_set",
+      arguments: {
+        transactionName: "Ambiguous parameter preview",
+        operations: [
+          {
+            type: "set_parameter",
+            elementId: "501",
+            parameterRef: { kind: "name", name: "Code" },
+            value: "A",
+          },
+        ],
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { ready?: boolean; changes?: Array<{ message?: string }> } };
+    };
+    assert.equal(ambiguousParameterPreview.isError, undefined);
+    assert.equal(ambiguousParameterPreview.structuredContent?.data?.ready, false);
+    assert.match(ambiguousParameterPreview.structuredContent?.data?.changes?.[0]?.message ?? "", /ambiguous/);
+
+    for (const badParameterOperation of [
+      { type: "set_parameter", elementId: "501", value: "missing identity" },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "sharedParameterGuid", sharedParameterGuid: "not-a-guid" },
+        value: "invalid guid",
+      },
+    ]) {
+      const invalidParameterPreview = (await client.callTool({
+        name: "revit.preview_change_set",
+        arguments: { transactionName: "Invalid parameter identity", operations: [badParameterOperation] },
+      })) as { isError?: boolean };
+      assert.equal(invalidParameterPreview.isError, true);
+    }
+
     const invalidPreview = (await client.callTool({
       name: "revit.preview_change_set",
       arguments: {
@@ -1270,6 +1406,116 @@ test("broker exposes annotated tools with output schemas and callable structured
     };
     assert.equal(invalidPreview.isError, true);
     assert.match(invalidPreview.content[0]?.text ?? "", /elementId/);
+
+    const elementTypePreview = (await client.callTool({
+      name: "revit.preview_change_set",
+      arguments: {
+        transactionName: "Duplicate door type",
+        operations: [
+          {
+            type: "duplicate_element_type",
+            sourceTypeId: "9200",
+            expectedUniqueId: "family-symbol-9200",
+            newName: "2510x2260",
+          },
+        ],
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: {
+          previewId?: string;
+          documentFingerprint?: string;
+          changeSetHash?: string;
+          baseGeneration?: number;
+          expiresAt?: string;
+          ready?: boolean;
+          changes?: Array<{ target?: Record<string, unknown>; before?: Record<string, unknown>; after?: Record<string, unknown> }>;
+        };
+      };
+    };
+    assert.equal(elementTypePreview.isError, undefined);
+    assert.equal(elementTypePreview.structuredContent?.data?.ready, true);
+    assert.equal(elementTypePreview.structuredContent?.data?.changes?.[0]?.target?.elementTypeId, "9200");
+    assert.equal(elementTypePreview.structuredContent?.data?.changes?.[0]?.before?.typeName, "0915 x 2134mm");
+    assert.equal(elementTypePreview.structuredContent?.data?.changes?.[0]?.after?.typeName, "2510x2260");
+
+    const elementTypeMetadata = elementTypePreview.structuredContent?.data;
+    const elementTypeApply = (await client.callTool({
+      name: "revit.apply_change_set",
+      arguments: {
+        transactionName: "Duplicate door type",
+        operations: [
+          {
+            type: "duplicate_element_type",
+            sourceTypeId: "9200",
+            expectedUniqueId: "family-symbol-9200",
+            newName: "2510x2260",
+          },
+        ],
+        previewId: elementTypeMetadata?.previewId,
+        documentFingerprint: elementTypeMetadata?.documentFingerprint,
+        changeSetHash: elementTypeMetadata?.changeSetHash,
+        baseGeneration: elementTypeMetadata?.baseGeneration,
+        expiresAt: elementTypeMetadata?.expiresAt,
+        confirm: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: {
+        data?: { applied?: boolean; changes?: Array<{ after?: Record<string, unknown> }> };
+      };
+    };
+    assert.equal(elementTypeApply.isError, undefined);
+    assert.equal(elementTypeApply.structuredContent?.data?.applied, true);
+    assert.equal(elementTypeApply.structuredContent?.data?.changes?.[0]?.after?.id, "9901");
+    assert.equal(elementTypeApply.structuredContent?.data?.changes?.[0]?.after?.uniqueId, "fake-element-type-9901");
+    assert.equal(elementTypeApply.structuredContent?.data?.changes?.[0]?.after?.familyName, "Single-Flush");
+    assert.equal(elementTypeApply.structuredContent?.data?.changes?.[0]?.after?.typeName, "2510x2260");
+
+    const duplicatedTypeCatalog = (await client.callTool({
+      name: "revit.catalog",
+      arguments: {
+        kind: "familySymbols",
+        filter: { familyName: "Single-Flush", nameContains: "2510x2260" },
+        fields: ["id", "uniqueId", "class", "category", "name", "familyName", "familyId", "isActive", "placementType"],
+        includeTotalCount: true,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { items?: Array<{ id?: string; uniqueId?: string; name?: string }> } };
+    };
+    assert.equal(duplicatedTypeCatalog.isError, undefined);
+    assert.equal(duplicatedTypeCatalog.structuredContent?.data?.items?.length, 1);
+    assert.equal(duplicatedTypeCatalog.structuredContent?.data?.items?.[0]?.id, "9901");
+    assert.equal(duplicatedTypeCatalog.structuredContent?.data?.items?.[0]?.uniqueId, "fake-element-type-9901");
+    assert.equal(duplicatedTypeCatalog.structuredContent?.data?.items?.[0]?.name, "2510x2260");
+
+    const duplicateNamePreview = (await client.callTool({
+      name: "revit.preview_change_set",
+      arguments: {
+        transactionName: "Blocked duplicate door type",
+        operations: [{ type: "duplicate_element_type", sourceTypeId: "9200", newName: "2510x2260" }],
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { ready?: boolean; changes?: Array<{ status?: string; message?: string }> } };
+    };
+    assert.equal(duplicateNamePreview.isError, undefined);
+    assert.equal(duplicateNamePreview.structuredContent?.data?.ready, false);
+    assert.equal(duplicateNamePreview.structuredContent?.data?.changes?.[0]?.status, "blocked");
+    assert.match(duplicateNamePreview.structuredContent?.data?.changes?.[0]?.message ?? "", /already exists/);
+
+    for (const badOperation of [
+      { type: "rename_element_type", elementTypeId: "9200", newName: "   " },
+      { type: "duplicate_element_type", sourceTypeId: "9200", newName: "Valid", unexpected: true },
+    ]) {
+      const invalidElementTypePreview = (await client.callTool({
+        name: "revit.preview_change_set",
+        arguments: { transactionName: "Invalid type edit", operations: [badOperation] },
+      })) as { isError?: boolean };
+      assert.equal(invalidElementTypePreview.isError, true);
+    }
 
     const cancel = (await client.callTool({
       name: "revit.cancel_request",
@@ -1331,6 +1577,7 @@ test("broker exposes MCP discovery resources and workflow prompts", async () => 
     assert.equal(discovery.brokerVersion, "test");
     assert.ok(discovery.protocolVersion);
     assert.ok(discovery.workflow?.some((step) => step.includes("revit.status")));
+    assert.ok(discovery.tools?.some((tool) => tool.name === "revit.get_request_result"));
     assert.ok(discovery.tools?.some((tool) => tool.name === "revit.apply_change_set" && tool.resource === "revit://tools/revit.apply_change_set"));
     assert.ok(discovery.writeOperations?.includes("tag_element"));
     assert.ok(discovery.writeOperations?.includes("load_family"));

@@ -18,8 +18,13 @@
   <ItemGroup>
     <Compile Include="..\..\addin\RevitMcpNext.Contracts\BridgeContracts.cs" Link="Production\BridgeContracts.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\FramedPipeTransport.cs" Link="Production\FramedPipeTransport.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\BridgeProtocolGuard.cs" Link="Production\BridgeProtocolGuard.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\JsonWireCodec.cs" Link="Production\JsonWireCodec.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\NamedPipeHost.cs" Link="Production\NamedPipeHost.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\PipeSecurityFactory.cs" Link="Production\PipeSecurityFactory.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\RequestOutcomeLedger.cs" Link="Production\RequestOutcomeLedger.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Revit\CanonicalJson.cs" Link="Production\CanonicalJson.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Revit\PreviewTokenStore.cs" Link="Production\PreviewTokenStore.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Revit\QueuedRevitWorkItem.cs" Link="Production\QueuedRevitWorkItem.cs" />
   </ItemGroup>
 </Project>

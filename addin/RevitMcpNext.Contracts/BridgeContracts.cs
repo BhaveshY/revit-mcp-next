@@ -5,7 +5,7 @@ namespace RevitMcpNext.Contracts
 {
     public static class BridgeProtocol
     {
-        public const string Version = "2026-06-23";
+        public const string Version = "2026-08-11";
     }
 
     public sealed class BridgeRequestEnvelope
@@ -50,6 +50,8 @@ namespace RevitMcpNext.Contracts
     public sealed class BridgeMetrics
     {
         public long ElapsedMs { get; set; }
+        public long? QueueWaitMs { get; set; }
+        public long? RevitExecutionMs { get; set; }
         public long? CollectorElapsedMs { get; set; }
         public bool? CacheHit { get; set; }
         public int? ReturnedCount { get; set; }

@@ -34,6 +34,48 @@ test("fake bridge returns bounded query result shape", async () => {
   assert.equal(response.data.items[0]?.id, "501");
 });
 
+test("fake bridge query enforces document and generation guards", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const guarded = await bridge.query(
+    makeRequest(
+      "test",
+      "query",
+      "read",
+      {
+        documentFingerprint: "sample-doc-fingerprint",
+        expectedGeneration: 7,
+        filter: { elementIds: ["501"] },
+      },
+      30000
+    )
+  );
+  assert.equal(guarded.ok, true);
+
+  const wrongDocument = await bridge.query(
+    makeRequest(
+      "test",
+      "query",
+      "read",
+      { documentFingerprint: "another-document", filter: { elementIds: ["501"] } },
+      30000
+    )
+  );
+  assert.equal(wrongDocument.ok, false);
+  if (!wrongDocument.ok) assert.equal(wrongDocument.error.code, "NO_ACTIVE_DOCUMENT");
+
+  const staleGeneration = await bridge.query(
+    makeRequest(
+      "test",
+      "query",
+      "read",
+      { expectedGeneration: 6, filter: { elementIds: ["501"] } },
+      30000
+    )
+  );
+  assert.equal(staleGeneration.ok, false);
+  if (!staleGeneration.ok) assert.equal(staleGeneration.error.code, "GENERATION_MISMATCH");
+});
+
 test("fake bridge query honors cursor and field projection", async () => {
   const bridge = new FakeRevitBridgeClient();
   const firstPage = await bridge.query(
@@ -994,4 +1036,425 @@ test("fake bridge blocks mismatched write identity guards", async () => {
   assert.match(preview.data.changes[0]?.message ?? "", /Element 501 uniqueId did not match expectedUniqueId/);
   assert.match(preview.data.changes[1]?.message ?? "", /Room 601 uniqueId did not match expectedUniqueId/);
   assert.match(preview.data.changes[9]?.message ?? "", /Host element 501 uniqueId did not match expectedHostUniqueId/);
+});
+
+test("fake bridge duplicates and renames door types with isolated catalog state", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const duplicateChangeSet = {
+    transactionName: "Duplicate door type",
+    operations: [
+      {
+        id: "duplicate-door",
+        type: "duplicate_element_type",
+        sourceTypeId: "9200",
+        expectedUniqueId: "family-symbol-9200",
+        newName: "2510x2260",
+      },
+    ],
+  } satisfies ChangeSetRequest;
+  const duplicatePreview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", duplicateChangeSet, 30000)
+  );
+  assert.equal(duplicatePreview.ok, true);
+  if (!duplicatePreview.ok) return;
+  assert.equal(duplicatePreview.data.ready, true);
+  assert.equal(duplicatePreview.data.changes[0]?.target?.elementId, "9200");
+  assert.equal(duplicatePreview.data.changes[0]?.target?.elementTypeId, "9200");
+  assert.equal(duplicatePreview.data.changes[0]?.target?.uniqueId, "family-symbol-9200");
+  assert.equal(duplicatePreview.data.changes[0]?.before?.typeName, "0915 x 2134mm");
+  assert.equal(duplicatePreview.data.changes[0]?.after?.typeName, "2510x2260");
+
+  const duplicateApplyRequest = {
+    ...duplicateChangeSet,
+    previewId: duplicatePreview.data.previewId,
+    confirm: true,
+    documentFingerprint: duplicatePreview.data.documentFingerprint,
+    baseGeneration: duplicatePreview.data.baseGeneration,
+    changeSetHash: duplicatePreview.data.changeSetHash,
+    expiresAt: duplicatePreview.data.expiresAt,
+  } satisfies ChangeApplyRequest;
+  const duplicateApply = await bridge.applyChange(
+    makeRequest("session", "apply_change_set", "write", duplicateApplyRequest, 60000)
+  );
+  assert.equal(duplicateApply.ok, true);
+  if (!duplicateApply.ok) return;
+  const duplicatedType = duplicateApply.data.changes[0]?.after;
+  assert.equal(duplicateApply.data.applied, true);
+  assert.equal(duplicateApply.data.changes[0]?.target?.elementTypeId, "9901");
+  assert.equal(duplicateApply.data.changes[0]?.target?.uniqueId, "fake-element-type-9901");
+  assert.equal(duplicatedType?.id, "9901");
+  assert.equal(duplicatedType?.uniqueId, "fake-element-type-9901");
+  assert.equal(duplicatedType?.familyName, "Single-Flush");
+  assert.equal(duplicatedType?.typeName, "2510x2260");
+
+  const catalog = await bridge.catalog(
+    makeRequest(
+      "session",
+      "catalog",
+      "read",
+      {
+        kind: "familySymbols",
+        filter: { familyName: "Single-Flush", nameContains: "2510x2260" },
+        fields: ["id", "uniqueId", "class", "category", "name", "familyName", "familyId", "isActive", "placementType"],
+        includeTotalCount: true,
+      },
+      30000
+    )
+  );
+  assert.equal(catalog.ok, true);
+  if (!catalog.ok) return;
+  assert.equal(catalog.data.returnedCount, 1);
+  assert.equal(catalog.data.items[0]?.id, "9901");
+  assert.equal(catalog.data.items[0]?.uniqueId, "fake-element-type-9901");
+  assert.equal(catalog.data.items[0]?.name, "2510x2260");
+
+  const dimensionChangeSet = {
+    transactionName: "Set duplicated door dimensions",
+    operations: [
+      {
+        type: "set_parameter",
+        elementId: "9901",
+        expectedUniqueId: "fake-element-type-9901",
+        parameterName: "Width",
+        value: 2510 / 304.8,
+      },
+      {
+        type: "set_parameter",
+        elementId: "9901",
+        expectedUniqueId: "fake-element-type-9901",
+        parameterName: "Height",
+        value: 2260 / 304.8,
+      },
+    ],
+  } satisfies ChangeSetRequest;
+  const dimensionPreview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", dimensionChangeSet, 30000)
+  );
+  assert.equal(dimensionPreview.ok, true);
+  if (!dimensionPreview.ok) return;
+  assert.equal(dimensionPreview.data.ready, true);
+
+  const dimensionApply = await bridge.applyChange(
+    makeRequest(
+      "session",
+      "apply_change_set",
+      "write",
+      {
+        ...dimensionChangeSet,
+        previewId: dimensionPreview.data.previewId,
+        confirm: true,
+        documentFingerprint: dimensionPreview.data.documentFingerprint,
+        baseGeneration: dimensionPreview.data.baseGeneration,
+        changeSetHash: dimensionPreview.data.changeSetHash,
+        expiresAt: dimensionPreview.data.expiresAt,
+      },
+      60000
+    )
+  );
+  assert.equal(dimensionApply.ok, true);
+  if (!dimensionApply.ok) return;
+  assert.equal(dimensionApply.data.applied, true);
+  assert.equal(dimensionApply.data.changes[0]?.after?.value, 2510 / 304.8);
+  assert.equal(dimensionApply.data.changes[1]?.after?.value, 2260 / 304.8);
+
+  const placementChangeSet = {
+    transactionName: "Place duplicated door",
+    operations: [
+      {
+        type: "place_family_instance",
+        familySymbolId: "9901",
+        hostElementId: "501",
+        expectedHostUniqueId: "wall-501",
+        levelId: "311",
+        location: {
+          x: { value: 2000, unit: "mm", system: "metric" },
+          y: { value: 0, unit: "mm", system: "metric" },
+          z: { value: 0, unit: "mm", system: "metric" },
+        },
+      },
+    ],
+  } satisfies ChangeSetRequest;
+  const placementPreview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", placementChangeSet, 30000)
+  );
+  assert.equal(placementPreview.ok, true);
+  if (!placementPreview.ok) return;
+  assert.equal(placementPreview.data.ready, true);
+  assert.equal(placementPreview.data.changes[0]?.target?.familySymbolId, "9901");
+
+  const placementApply = await bridge.applyChange(
+    makeRequest(
+      "session",
+      "apply_change_set",
+      "write",
+      {
+        ...placementChangeSet,
+        previewId: placementPreview.data.previewId,
+        confirm: true,
+        documentFingerprint: placementPreview.data.documentFingerprint,
+        baseGeneration: placementPreview.data.baseGeneration,
+        changeSetHash: placementPreview.data.changeSetHash,
+        expiresAt: placementPreview.data.expiresAt,
+      },
+      60000
+    )
+  );
+  assert.equal(placementApply.ok, true);
+  if (!placementApply.ok) return;
+  assert.equal(placementApply.data.applied, true);
+
+  const duplicateNamePreview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", duplicateChangeSet, 30000)
+  );
+  assert.equal(duplicateNamePreview.ok, true);
+  if (!duplicateNamePreview.ok) return;
+  assert.equal(duplicateNamePreview.data.ready, false);
+  assert.equal(duplicateNamePreview.data.changes[0]?.status, "blocked");
+  assert.match(duplicateNamePreview.data.changes[0]?.message ?? "", /already exists in family 'Single-Flush'/);
+
+  const otherFamilyPreview = await bridge.previewChange(
+    makeRequest(
+      "session",
+      "preview_change_set",
+      "preview",
+      {
+        transactionName: "Same name in another family",
+        operations: [
+          {
+            type: "duplicate_element_type",
+            sourceTypeId: "9201",
+            expectedUniqueId: "family-symbol-9201",
+            newName: "2510x2260",
+          },
+        ],
+      },
+      30000
+    )
+  );
+  assert.equal(otherFamilyPreview.ok, true);
+  if (!otherFamilyPreview.ok) return;
+  assert.equal(otherFamilyPreview.data.ready, true);
+
+  const renameChangeSet = {
+    transactionName: "Rename duplicated door type",
+    operations: [
+      {
+        type: "rename_element_type",
+        elementTypeId: "9901",
+        expectedUniqueId: "fake-element-type-9901",
+        newName: "2510x2260-Renamed",
+      },
+    ],
+  } satisfies ChangeSetRequest;
+  const renamePreview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", renameChangeSet, 30000)
+  );
+  assert.equal(renamePreview.ok, true);
+  if (!renamePreview.ok) return;
+  assert.equal(renamePreview.data.ready, true);
+  const renameApply = await bridge.applyChange(
+    makeRequest(
+      "session",
+      "apply_change_set",
+      "write",
+      {
+        ...renameChangeSet,
+        previewId: renamePreview.data.previewId,
+        confirm: true,
+        documentFingerprint: renamePreview.data.documentFingerprint,
+        baseGeneration: renamePreview.data.baseGeneration,
+        changeSetHash: renamePreview.data.changeSetHash,
+        expiresAt: renamePreview.data.expiresAt,
+      },
+      60000
+    )
+  );
+  assert.equal(renameApply.ok, true);
+  if (!renameApply.ok) return;
+  assert.equal(renameApply.data.changes[0]?.after?.id, "9901");
+  assert.equal(renameApply.data.changes[0]?.after?.uniqueId, "fake-element-type-9901");
+  assert.equal(renameApply.data.changes[0]?.after?.typeName, "2510x2260-Renamed");
+
+  const isolatedBridge = new FakeRevitBridgeClient();
+  const isolatedCatalog = await isolatedBridge.catalog(
+    makeRequest(
+      "session",
+      "catalog",
+      "read",
+      { kind: "familySymbols", filter: { nameContains: "2510x2260" }, includeTotalCount: true },
+      30000
+    )
+  );
+  assert.equal(isolatedCatalog.ok, true);
+  if (!isolatedCatalog.ok) return;
+  assert.equal(isolatedCatalog.data.returnedCount, 0);
+});
+
+test("fake bridge blocks invalid type names and stale element type identities", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const operations = [
+    {
+      type: "rename_element_type",
+      elementTypeId: "9200",
+      expectedUniqueId: "stale-family-symbol-9200",
+      newName: "Valid Name",
+    },
+    {
+      type: "duplicate_element_type",
+      sourceTypeId: "9200",
+      expectedUniqueId: "family-symbol-9200",
+      newName: "Invalid:Name",
+    },
+    {
+      type: "duplicate_element_type",
+      sourceTypeId: "9200",
+      expectedUniqueId: "family-symbol-9200",
+      newName: "Invalid`Name",
+    },
+    {
+      type: "duplicate_element_type",
+      sourceTypeId: "9200",
+      expectedUniqueId: "family-symbol-9200",
+      newName: "Invalid~Name",
+    },
+  ] satisfies ChangeSetRequest["operations"];
+  const preview = await bridge.previewChange(
+    makeRequest(
+      "session",
+      "preview_change_set",
+      "preview",
+      { transactionName: "Blocked element type edits", operations },
+      30000
+    )
+  );
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.equal(preview.data.ready, false);
+  assert.match(preview.data.changes[0]?.message ?? "", /uniqueId did not match expectedUniqueId/);
+  assert.match(preview.data.changes[1]?.message ?? "", /contains invalid Revit characters/);
+  assert.match(preview.data.changes[2]?.message ?? "", /contains invalid Revit characters/);
+  assert.match(preview.data.changes[3]?.message ?? "", /contains invalid Revit characters/);
+});
+
+test("fake bridge resolves stable parameter references before legacy names and validates typed values", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const validChangeSet = {
+    transactionName: "Stable parameter writes",
+    operations: [
+      {
+        id: "built-in-wins",
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "ALL_MODEL_MARK" },
+        parameterName: "Code",
+        value: "A-201",
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "definitionId", definitionId: "-1001205" },
+        value: "A-202",
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: {
+          kind: "sharedParameterGuid",
+          sharedParameterGuid: "11111111-2222-4333-8444-555555555555",
+        },
+        value: "ASSET-1",
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "name", name: "Asset Code" },
+        value: "ASSET-2",
+      },
+      {
+        type: "set_parameter",
+        elementId: "9200",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "DOOR_WIDTH" },
+        value: { value: 2510, unit: "mm", system: "metric" },
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "WALL_BASE_CONSTRAINT" },
+        value: "311",
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "WALL_ATTR_ROOM_BOUNDING" },
+        value: true,
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterName: "Mark",
+        value: "legacy-raw-scalar",
+      },
+    ],
+  } satisfies ChangeSetRequest;
+
+  const preview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", validChangeSet, 30000)
+  );
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.equal(preview.data.ready, true);
+  assert.equal(preview.data.changes[0]?.target?.parameterName, "Mark");
+  assert.match(JSON.stringify(preview.data.changes[0]?.target?.resolvedParameter), /ALL_MODEL_MARK/);
+  assert.equal(preview.data.changes[2]?.target?.parameterName, "Asset Code");
+  assert.match(JSON.stringify(preview.data.changes[4]?.target?.resolvedParameter), /length/);
+  assert.match(JSON.stringify(preview.data.changes[5]?.target?.resolvedParameter), /ElementId/);
+  assert.match(JSON.stringify(preview.data.changes[6]?.target?.resolvedParameter), /yesNo/);
+  assert.equal(preview.data.changes[7]?.target?.parameterName, "Mark");
+
+  const invalidChangeSet = {
+    transactionName: "Invalid stable parameter writes",
+    operations: [
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "name", name: "Code" },
+        value: "ambiguous",
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "ALL_MODEL_MARK" },
+        value: { value: 10, unit: "mm", system: "metric" },
+      },
+      {
+        type: "set_parameter",
+        elementId: "9200",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "DOOR_WIDTH" },
+        value: { value: 90, unit: "degrees", system: "revit-internal" },
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "WALL_BASE_CONSTRAINT" },
+        value: false,
+      },
+      {
+        type: "set_parameter",
+        elementId: "501",
+        parameterRef: { kind: "builtInParameter", builtInParameter: "WALL_ATTR_ROOM_BOUNDING" },
+        value: 2,
+      },
+    ],
+  } satisfies ChangeSetRequest;
+  const invalidPreview = await bridge.previewChange(
+    makeRequest("session", "preview_change_set", "preview", invalidChangeSet, 30000)
+  );
+  assert.equal(invalidPreview.ok, true);
+  if (!invalidPreview.ok) return;
+  assert.equal(invalidPreview.data.ready, false);
+  assert.match(invalidPreview.data.changes[0]?.message ?? "", /ambiguous/);
+  assert.match(invalidPreview.data.changes[1]?.message ?? "", /UnitValue is not compatible/);
+  assert.match(invalidPreview.data.changes[2]?.message ?? "", /not compatible with length/);
+  assert.match(invalidPreview.data.changes[3]?.message ?? "", /numeric Revit element ID/);
+  assert.match(invalidPreview.data.changes[4]?.message ?? "", /boolean or integer 0\/1/);
 });

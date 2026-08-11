@@ -63,6 +63,8 @@ namespace RevitMcpNext.Addin.Revit
         private readonly SemaphoreSlim _accepted = new SemaphoreSlim(0);
         private int _acceptedCount;
 
+        public event Action<BridgeRequestEnvelope> RequestStarted;
+
         public int AcceptedCount => Volatile.Read(ref _acceptedCount);
 
         public async Task<BridgeResponseEnvelope> EnqueueAsync(
@@ -71,6 +73,7 @@ namespace RevitMcpNext.Addin.Revit
         {
             Interlocked.Increment(ref _acceptedCount);
             _accepted.Release();
+            RequestStarted?.Invoke(envelope);
 
             if (string.Equals(envelope.Operation, "hold", StringComparison.Ordinal))
             {
@@ -111,7 +114,12 @@ namespace RevitMcpNext.Addin.Revit
                 Ok = true,
                 RequestId = envelope.RequestId,
                 Data = data,
-                Metrics = new BridgeMetrics { ElapsedMs = 1 }
+                Metrics = new BridgeMetrics
+                {
+                    ElapsedMs = 1,
+                    QueueWaitMs = 2,
+                    RevitExecutionMs = 3
+                }
             };
         }
 
@@ -135,6 +143,23 @@ namespace RevitMcpNext.Addin.Revit
             {
                 release.TrySetResult(true);
             }
+        }
+
+        public bool TryCancelQueued(string requestId, string reason, string sessionId = null)
+        {
+            return !string.IsNullOrWhiteSpace(requestId) &&
+                   _held.TryGetValue(requestId, out TaskCompletionSource<bool> release) &&
+                   release.TrySetCanceled();
+        }
+
+        public Dictionary<string, object> GetDiagnosticsSnapshot()
+        {
+            return new Dictionary<string, object>
+            {
+                ["pendingCount"] = _held.Count,
+                ["hasPending"] = !_held.IsEmpty,
+                ["acceptedCount"] = AcceptedCount
+            };
         }
 
         private static BridgeResponseEnvelope Failure(

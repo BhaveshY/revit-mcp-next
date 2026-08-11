@@ -73,6 +73,24 @@ namespace RevitMcpNext.Addin
 
         private static string ExecuteEnvelope(UIApplication app, BridgeRequestEnvelope request)
         {
+            BridgeProtocolStatus protocolStatus = BridgeProtocolGuard.Classify(request?.ProtocolVersion);
+            if (protocolStatus == BridgeProtocolStatus.Missing)
+            {
+                return SerializeResponse(Failure(
+                    request,
+                    "PROTOCOL_VERSION_REQUIRED",
+                    "Bridge request is missing protocolVersion.",
+                    "Update the in-process caller so every request includes the current protocol version."));
+            }
+            if (protocolStatus == BridgeProtocolStatus.Mismatch)
+            {
+                return SerializeResponse(Failure(
+                    request,
+                    "PROTOCOL_VERSION_MISMATCH",
+                    "Bridge protocol " + request.ProtocolVersion + " does not match add-in protocol " + BridgeProtocol.Version + ".",
+                    "Rebuild the in-process integration against the installed Revit MCP Next version."));
+            }
+
             if (app == null)
             {
                 return SerializeResponse(Failure(
@@ -204,7 +222,7 @@ namespace RevitMcpNext.Addin
 
             return new BridgeRequestEnvelope
             {
-                ProtocolVersion = GetString(root, "protocolVersion") ?? BridgeProtocol.Version,
+                ProtocolVersion = GetString(root, "protocolVersion"),
                 RequestId = requestId,
                 SessionId = GetString(root, "sessionId") ?? "in-process",
                 AuthToken = GetString(root, "authToken"),
@@ -325,6 +343,8 @@ namespace RevitMcpNext.Addin
             {
                 ["elapsedMs"] = metrics?.ElapsedMs ?? 0
             };
+            if (metrics?.QueueWaitMs != null) body["queueWaitMs"] = metrics.QueueWaitMs.Value;
+            if (metrics?.RevitExecutionMs != null) body["revitExecutionMs"] = metrics.RevitExecutionMs.Value;
             if (metrics?.CollectorElapsedMs != null) body["collectorElapsedMs"] = metrics.CollectorElapsedMs.Value;
             if (metrics?.CacheHit != null) body["cacheHit"] = metrics.CacheHit.Value;
             if (metrics?.ReturnedCount != null) body["returnedCount"] = metrics.ReturnedCount.Value;

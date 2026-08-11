@@ -25,6 +25,7 @@ The Revit add-in is loaded in-process by Revit. It owns:
 - Revit API reads/writes.
 - Transaction and failure handling.
 - Queue, ExternalEvent, and preview-token diagnostics surfaced through `revit.status`.
+- A bounded session request-outcome ledger for at-most-once write handling and response recovery.
 
 The add-in never writes to stdout and never opens modal dialogs for automation paths.
 
@@ -39,18 +40,23 @@ utf8_json_payload
 
 The broker and add-in exchange the canonical camelCase bridge envelope over this framing. The add-in preserves request IDs, validates protocol version, and returns compact structured data or structured bridge errors.
 
+Each install exposes a normal worker pipe and a reserved `<pipe>-control` pipe. `revit.bridge_health`, queued cancellation, and request-result lookup use the control pipe, so they remain available when normal workers are occupied or stalled. Mutation requests are fingerprinted and tracked per session and request ID. If the broker loses a mutation response, it asks the ledger for the terminal result and never replays the original write. The guarantee is bounded to the lifetime of the current add-in process and ledger retention window.
+
+Queued Revit responses expose optional `queueWaitMs` and `revitExecutionMs` phase metrics. These separate queue pressure from time spent on the Revit external-event thread while preserving the existing operation-local `elapsedMs`.
+
 Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The generated MCP launcher reads that file and exports `REVIT_MCP_NEXT_AUTH_TOKEN` before starting the broker. The broker forwards the token in the bridge envelope, and the add-in enforces it when `REVIT_MCP_NEXT_AUTH_TOKEN`, `REVIT_MCP_NEXT_AUTH_CONFIG`, or the default auth config is available. The token must not be logged.
 
 ## Safety Boundaries
 
 - All writes must go through preview/apply.
+- Preview tokens are bound to the originating MCP session, active document generation, and canonical typed operation payload.
 - Reads need no transaction.
 - Writes use one explicit named transaction or a transaction group.
 - No arbitrary code execution in normal mode.
 - Large current-contract results are paginated and bounded. MCP resource handles are reserved for future large export surfaces.
 - Read/analysis tools return bounded structured data for current views, sheets, schedules, active-view elements, selection, model statistics, model-readiness preflights, material quantities, catalogs, rooms, and custom queries.
-- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `create_room`, `place_family_instance`, guarded `load_family`, `create_sheet`, `place_view_on_sheet`, `create_schedule`, `add_schedule_field`, `place_schedule_on_sheet`, `create_text_note`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `set_element_pinned`, and guarded `delete_element`. The direct `revit.create_project_from_template` setup tool creates disposable `.rvt` projects from local `.rte` templates for smoke fixtures; it is intentionally outside the preview/apply edit path.
-- `revit.cancel_request` can cancel queued requests that have not reached the Revit API yet. It reports a safe no-op for already in-flight Revit API work, because interrupting active Revit transactions is not safe.
+- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `create_room`, `place_family_instance`, guarded `load_family`, `create_sheet`, `place_view_on_sheet`, `create_schedule`, `add_schedule_field`, `place_schedule_on_sheet`, `create_text_note`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `rename_element_type`, `duplicate_element_type`, `set_element_pinned`, and guarded `delete_element`. The direct `revit.create_project_from_template` setup tool creates disposable `.rvt` projects from local `.rte` templates for smoke fixtures; it is intentionally outside the preview/apply edit path.
+- `revit.cancel_request` uses the reserved control pipe and atomically cancels only requests that are still queued. Running Revit API work is reconciled through the request-outcome ledger because interrupting an active Revit transaction is not safe.
 
 ## External Automation Integrations
 

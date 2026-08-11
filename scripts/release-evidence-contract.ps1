@@ -418,7 +418,7 @@ try {
             generation = 42
         }
         documentFingerprint = "doc-synthetic-evidence-contract"
-        coveredTools = @("revit.status", "revit.cancel_request", "revitctl.operation_kind_mismatch", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
+        coveredTools = @("revit.bridge_health", "revit.get_request_result", "revit.status", "revit.cancel_request", "revitctl.operation_kind_mismatch", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level", "create_wall", "create_room", "tag_room", "tag_element")
         skippedOperations = @()
         operationKindGuard = [ordered] @{
@@ -486,7 +486,7 @@ try {
         revit = @{ version = "2024"; build = "synthetic" }
         activeDocument = @{ title = "Synthetic Evidence Contract.rvt"; fingerprint = "doc-synthetic-evidence-contract"; generation = 42 }
         documentFingerprint = "doc-synthetic-evidence-contract"
-        coveredTools = @("revit.status", "revit.cancel_request", "revit.preview_change_set", "revit.apply_change_set")
+        coveredTools = @("revit.bridge_health", "revit.get_request_result", "revit.status", "revit.cancel_request", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level")
         skippedOperations = @(
             @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },
@@ -505,7 +505,7 @@ try {
         addinAssembly = @{ assemblyPath = $installedAddinPath; assemblySha256 = ("0" * 64) }
         activeDocument = @{ title = "Synthetic Evidence Contract.rvt"; fingerprint = "doc-synthetic-evidence-contract"; generation = 42 }
         documentFingerprint = "doc-synthetic-evidence-contract"
-        coveredTools = @("revit.status", "revit.cancel_request", "revit.preview_change_set", "revit.apply_change_set")
+        coveredTools = @("revit.bridge_health", "revit.get_request_result", "revit.status", "revit.cancel_request", "revit.preview_change_set", "revit.apply_change_set")
         coveredOperations = @("create_level")
         skippedOperations = @(
             @{ type = "tag_room"; reason = "Synthetic evidence contract does not load room tag families." },

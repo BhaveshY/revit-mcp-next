@@ -1,5 +1,6 @@
 import net from "node:net";
 import type {
+  BridgeHealthResult,
   BridgeRequest,
   BridgeResponse,
   CancelRequest,
@@ -29,6 +30,8 @@ import type {
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  RequestResultRequest,
+  RequestResultResult,
   RoomsRequest,
   RoomsResult,
   ScheduleFieldsRequest,
@@ -45,12 +48,18 @@ import type {
   WarningsResult,
 } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
+import {
+  validateBridgeResponse,
+  validateRequestResult,
+} from "./BridgeResponseValidation.js";
 
 const MAX_BRIDGE_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_TIMER_MS = 2_147_483_647;
 const INITIAL_CONNECT_RETRY_DELAY_MS = 25;
 const MAX_CONNECT_RETRY_DELAY_MS = 250;
 const CONNECT_RETRY_JITTER_RATIO = 0.2;
+const MAX_WRITE_RECOVERY_MS = 15_000;
+const WRITE_RECOVERY_POLL_MS = 100;
 const RETRYABLE_CONNECT_ERROR_CODES = new Set([
   "EAGAIN",
   "EBUSY",
@@ -63,6 +72,7 @@ const RETRYABLE_CONNECT_ERROR_CODES = new Set([
 
 export interface NamedPipeBridgeClientOptions {
   pipeName: string;
+  controlPipeName?: string;
   sessionId: string;
   defaultTimeoutMs: number;
   authToken?: string;
@@ -70,17 +80,43 @@ export interface NamedPipeBridgeClientOptions {
 
 export class NamedPipeBridgeClient implements RevitBridgeClient {
   private readonly pipePath: string;
+  private readonly controlPipePath: string;
   private readonly authToken?: string;
   private readonly defaultTimeoutMs: number;
   private readonly pendingRequests = new Set<() => void>();
   private disposed = false;
 
   constructor(private readonly options: NamedPipeBridgeClientOptions) {
-    this.pipePath = options.pipeName.startsWith("\\\\")
-      ? options.pipeName
-      : `\\\\.\\pipe\\${options.pipeName}`;
+    this.pipePath = resolvePipePath(options.pipeName);
+    this.controlPipePath = resolvePipePath(options.controlPipeName ?? `${options.pipeName}-control`);
     this.authToken = resolveAuthToken(options);
     this.defaultTimeoutMs = validateTimeoutMs(options.defaultTimeoutMs, "defaultTimeoutMs");
+  }
+
+  bridgeHealth(
+    request: BridgeRequest<Record<string, never>>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<BridgeHealthResult>> {
+    return this.send(request, options);
+  }
+
+  async getRequestResult<TData = unknown>(
+    request: BridgeRequest<RequestResultRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<RequestResultResult<TData>>> {
+    const response = await this.send<unknown>(request, options);
+    if (!response.ok) return response;
+
+    const validation = validateRequestResult<TData>(response.data, request.payload.requestId);
+    if (!validation.valid) {
+      return errorResponse(
+        request,
+        validation.code,
+        validation.message,
+        "Restart the MCP client after confirming the installed broker and add-in versions match."
+      );
+    }
+    return { ...response, data: validation.result };
   }
 
   status(
@@ -259,6 +295,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
   private send<T>(request: BridgeRequest, options?: BridgeCallOptions): Promise<BridgeResponse<T>> {
     const timeoutMs = validTimeoutMs(request.timeoutMs) ? request.timeoutMs : this.defaultTimeoutMs;
+    const pipePath = isControlOperation(request.operation) ? this.controlPipePath : this.pipePath;
     if (this.disposed) {
       return Promise.resolve(
         errorResponse<T>(request, "BRIDGE_DISPOSED", "The Revit bridge client is shutting down.")
@@ -278,6 +315,8 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       let currentSocket: net.Socket | undefined;
       let connectAttempt = 0;
       let phase = "connecting to Revit add-in pipe";
+      let requestBytesMayHaveBeenSent = false;
+      let recoveryStarted = false;
 
       const finish = (response: BridgeResponse<T>) => {
         if (settled) return;
@@ -290,16 +329,62 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
         resolve(response);
       };
 
-      const abortHandler = () => {
-        finish(errorResponse<T>(request, "REQUEST_CANCELLED", "The MCP client cancelled the request."));
+      const disposeHandler = () => {
+        const failure = errorResponse<T>(
+          request,
+          "BRIDGE_DISPOSED",
+          "The Revit bridge client is shutting down."
+        );
+        if (requestBytesMayHaveBeenSent && isMutationRequest(request)) {
+          finish(
+            writeOutcomeUnknownResponse(
+              request,
+              failure,
+              "The bridge client was disposed before the sent mutation could be reconciled."
+            )
+          );
+          return;
+        }
+        finish(failure);
       };
 
-      const disposeHandler = () => {
-        finish(errorResponse<T>(request, "BRIDGE_DISPOSED", "The Revit bridge client is shutting down."));
+      const finishAmbiguous = (failure: BridgeResponse<T>) => {
+        if (!requestBytesMayHaveBeenSent || !isMutationRequest(request)) {
+          finish(failure);
+          return;
+        }
+        if (recoveryStarted) return;
+        recoveryStarted = true;
+        if (timer) clearTimeout(timer);
+        if (retryTimer) clearTimeout(retryTimer);
+        currentSocket?.destroy();
+        void this.reconcileAmbiguousWrite(request, failure).then(finish);
+      };
+
+      const abortHandler = () => {
+        const failure = errorResponse<T>(request, "REQUEST_CANCELLED", "The MCP client cancelled the request.");
+        if (!requestBytesMayHaveBeenSent) {
+          finish(failure);
+          return;
+        }
+
+        if (isMutationRequest(request)) {
+          if (recoveryStarted) return;
+          recoveryStarted = true;
+          if (timer) clearTimeout(timer);
+          if (retryTimer) clearTimeout(retryTimer);
+          currentSocket?.destroy();
+          void this.cancelThenReconcileMutation(request, failure).then(finish);
+          return;
+        }
+
+        currentSocket?.destroy();
+        void this.sendBestEffortCancel(request);
+        finish(failure);
       };
 
       const disconnected = (message: string) => {
-        finish(
+        finishAmbiguous(
           errorResponse<T>(
             request,
             "BRIDGE_DISCONNECTED",
@@ -323,7 +408,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
             errorResponse<T>(
               request,
               "BRIDGE_UNAVAILABLE",
-              `Could not connect to Revit add-in pipe ${this.pipePath}: ${error?.message ?? "connection closed"}`,
+              `Could not connect to Revit add-in pipe ${pipePath}: ${error?.message ?? "connection closed"}`,
               "Open Revit, load the add-in, and run revit.status again."
             )
           );
@@ -338,12 +423,10 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
         if (settled) return;
         connectAttempt++;
         phase = "connecting to Revit add-in pipe";
-        const socket = net.createConnection(this.pipePath);
+        const socket = net.createConnection(pipePath);
         currentSocket = socket;
         let attemptFinished = false;
         let connected = false;
-        let requestBytesMayHaveBeenSent = false;
-
         const finishAttempt = () => {
           if (attemptFinished) return false;
           attemptFinished = true;
@@ -411,7 +494,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
               expectedLength = responseHeader.readUInt32BE(0);
               if (expectedLength > MAX_BRIDGE_FRAME_BYTES) {
-                finish(
+                finishAmbiguous(
                   errorResponse<T>(
                     request,
                     "BRIDGE_FRAME_TOO_LARGE",
@@ -433,9 +516,22 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
             if (payloadBytes === expectedLength) {
               const payload = Buffer.concat(responseChunks, expectedLength).toString("utf8");
               try {
-                finish(JSON.parse(payload) as BridgeResponse<T>);
+                const parsed: unknown = JSON.parse(payload);
+                const validation = validateBridgeResponse<T>(parsed, request.requestId);
+                if (validation.valid) {
+                  finish(validation.response);
+                } else {
+                  finishAmbiguous(
+                    errorResponse<T>(
+                      request,
+                      validation.code,
+                      validation.message,
+                      "Restart the MCP client after confirming the installed broker and add-in versions match."
+                    )
+                  );
+                }
               } catch (error) {
-                finish(
+                finishAmbiguous(
                   errorResponse<T>(
                     request,
                     "BRIDGE_PARSE_ERROR",
@@ -475,7 +571,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       options?.signal?.addEventListener("abort", abortHandler, { once: true });
       this.pendingRequests.add(disposeHandler);
       timer = setTimeout(() => {
-        finish(
+        finishAmbiguous(
           errorResponse<T>(
             request,
             "BRIDGE_TIMEOUT",
@@ -493,6 +589,71 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     });
   }
 
+  private async reconcileAmbiguousWrite<T>(
+    request: BridgeRequest,
+    transportFailure: BridgeResponse<T>
+  ): Promise<BridgeResponse<T>> {
+    const recoveryDeadline = Date.now() + Math.min(MAX_WRITE_RECOVERY_MS, this.defaultTimeoutMs);
+    let lastReason = "The request-result lookup did not return a final response.";
+
+    while (!this.disposed && Date.now() < recoveryDeadline) {
+      const timeoutMs = Math.max(1, recoveryDeadline - Date.now());
+      const lookupRequest: BridgeRequest<RequestResultRequest> = {
+        protocolVersion: request.protocolVersion,
+        requestId: `${request.requestId}-result-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        sessionId: request.sessionId,
+        operation: "get_request_result",
+        operationKind: "debug",
+        timeoutMs,
+        payload: { requestId: request.requestId },
+      };
+      const lookupResponse = await this.getRequestResult<T>(lookupRequest);
+      if (!lookupResponse.ok) {
+        lastReason = `${lookupResponse.error.code}: ${lookupResponse.error.message}`;
+        break;
+      }
+
+      const lookup = lookupResponse.data;
+      if (!lookup.found) {
+        lastReason = "The add-in has not recorded the original request yet.";
+      } else if (lookup.state === "committed" || lookup.state === "rolledBack" || lookup.state === "failed") {
+        return appendRecoveryWarning(lookup.response, lookup.state);
+      } else {
+        lastReason = `The original request is still ${lookup.state}.`;
+      }
+      const remainingMs = recoveryDeadline - Date.now();
+      if (remainingMs <= WRITE_RECOVERY_POLL_MS) break;
+      await delay(WRITE_RECOVERY_POLL_MS);
+    }
+
+    return writeOutcomeUnknownResponse(request, transportFailure, lastReason);
+  }
+
+  private async cancelThenReconcileMutation<T>(
+    request: BridgeRequest,
+    cancellationFailure: BridgeResponse<T>
+  ): Promise<BridgeResponse<T>> {
+    await this.sendBestEffortCancel(request);
+    return this.reconcileAmbiguousWrite(request, cancellationFailure);
+  }
+
+  private async sendBestEffortCancel(request: BridgeRequest): Promise<void> {
+    const timeoutMs = Math.min(1000, this.defaultTimeoutMs);
+    const cancellationRequest: BridgeRequest<CancelRequest> = {
+      protocolVersion: request.protocolVersion,
+      requestId: `${request.requestId}-cancel-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      sessionId: request.sessionId,
+      operation: "cancel_request",
+      operationKind: "debug",
+      timeoutMs,
+      payload: {
+        requestId: request.requestId,
+        reason: "The MCP client aborted the original request.",
+      },
+    };
+    await this.send<CancelResult>(cancellationRequest);
+  }
+
   private prepareRequest<TPayload>(request: BridgeRequest<TPayload>): BridgeRequest<TPayload> {
     if (!this.authToken) return request;
     return {
@@ -504,6 +665,14 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
 function validTimeoutMs(value: number): boolean {
   return Number.isFinite(value) && Number.isInteger(value) && value > 0 && value <= MAX_TIMER_MS;
+}
+
+function resolvePipePath(pipeName: string): string {
+  return pipeName.startsWith("\\\\") ? pipeName : `\\\\.\\pipe\\${pipeName}`;
+}
+
+function isControlOperation(operation: string): boolean {
+  return operation === "bridge_health" || operation === "cancel_request" || operation === "get_request_result";
 }
 
 function validateTimeoutMs(value: number, name: string): number {
@@ -553,4 +722,55 @@ function errorResponse<T>(
       elapsedMs: 0,
     },
   };
+}
+
+function writeOutcomeUnknownResponse<T>(
+  request: BridgeRequest,
+  transportFailure: BridgeResponse<T>,
+  recoveryReason: string
+): BridgeResponse<T> {
+  const transportCode = transportFailure.ok ? "UNKNOWN" : transportFailure.error.code;
+  return {
+    ok: false,
+    requestId: request.requestId,
+    error: {
+      code: "BRIDGE_WRITE_OUTCOME_UNKNOWN",
+      message: `The bridge lost the response after sending write request ${request.requestId}, and reconciliation could not prove its outcome.`,
+      recoverable: false,
+      details: {
+        requestId: request.requestId,
+        operation: request.operation,
+        transportCode,
+        recoveryReason,
+      },
+      suggestedNextAction:
+        "Do not retry this write. Inspect the model and run revit.status before creating a new preview.",
+    },
+    warnings: [],
+    metrics: { elapsedMs: 0 },
+  };
+}
+
+function appendRecoveryWarning<T>(
+  response: BridgeResponse<T>,
+  state: "committed" | "rolledBack" | "failed"
+): BridgeResponse<T> {
+  return {
+    ...response,
+    warnings: [
+      ...response.warnings,
+      {
+        code: "BRIDGE_RESPONSE_RECOVERED",
+        message: `The original pipe response was lost. The broker recovered the recorded ${state} result without replaying the write.`,
+      },
+    ],
+  };
+}
+
+function isMutationRequest(request: BridgeRequest): boolean {
+  return request.operationKind === "write" || request.operationKind === "destructive";
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }

@@ -11,6 +11,9 @@ const DEFAULT_WALL_LENGTH_MM = 4000;
 const DEFAULT_MOVE_Y_MM = 250;
 const DEFAULT_WALL_HEIGHT_MM = 3000;
 const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
+const ELEMENT_TYPE_ACCEPTANCE_NAME = "2510x2260";
+const ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM = 2510;
+const ELEMENT_TYPE_ACCEPTANCE_HEIGHT_MM = 2260;
 const RETRYABLE_BUSY_ERROR_CODES = new Set(["REVIT_EXTERNAL_EVENT_TIMEOUT", "BRIDGE_TIMEOUT"]);
 const RETRYABLE_TOOLS = new Set([
   "revit.status",
@@ -32,10 +35,14 @@ const RETRYABLE_TOOLS = new Set([
   "revit.catalog",
   "revit.query",
   "revit.describe_parameters",
+  "revit.bridge_health",
+  "revit.get_request_result",
   "revit.cancel_request",
 ]);
 const retryEvidence = [];
 const REQUIRED_TOOLS = [
+  "revit.bridge_health",
+  "revit.get_request_result",
   "revit.status",
   "revit.read_bundle",
   "revit.get_levels",
@@ -98,6 +105,8 @@ async function main() {
     console.log(`Bridge timeout: ${process.env.REVIT_MCP_NEXT_TIMEOUT_MS} ms`);
   }
   console.log(`Require type change: ${options.requireTypeChange ? "yes" : "no"}`);
+  console.log(`Require element type edit: ${options.requireElementTypeEdit ? "yes" : "no"}`);
+  console.log(`Disposable-model acknowledgement: ${options.acknowledgeDisposableModel ? "yes" : "no"}`);
   console.log(`Require room tag: ${options.requireRoomTag ? "yes" : "no"}`);
   console.log(`Require element tag: ${options.requireElementTag ? "yes" : "no"}`);
   const roomTagSelector = makeTagTypeSelector(options.roomTagTypeId, options.roomTagTypeNameContains);
@@ -158,6 +167,7 @@ async function main() {
     tagPreflight: null,
     requiredCoverage: {
       typeChange: options.requireTypeChange,
+      elementTypeEdit: options.requireElementTypeEdit,
       roomTag: options.requireRoomTag,
       elementTag: options.requireElementTag,
     },
@@ -176,6 +186,28 @@ async function main() {
 
     await verifyRequiredTools(client);
 
+    const bridgeHealth = await callRequiredTool(client, "revit.bridge_health", {});
+    summary.coveredTools.push("revit.bridge_health");
+    summary.bridgeHealth = compactObject(bridgeHealth);
+    assert(bridgeHealth.healthy === true, "revit.bridge_health did not report a healthy bridge host.");
+    assert(
+      typeof bridgeHealth.controlPipeName === "string" && bridgeHealth.controlPipeName.endsWith("-control"),
+      "revit.bridge_health did not report the reserved control pipe."
+    );
+    assert(bridgeHealth.queue && typeof bridgeHealth.queue === "object", "revit.bridge_health did not return queue diagnostics.");
+    assert(
+      bridgeHealth.requestOutcomes && typeof bridgeHealth.requestOutcomes === "object",
+      "revit.bridge_health did not return request-outcome diagnostics."
+    );
+    console.log(`Bridge health OK: ${bridgeHealth.controlPipeName}`);
+
+    const missingRequestResult = await callRequiredTool(client, "revit.get_request_result", {
+      requestId: `live-smoke-missing-${Date.now()}`,
+    });
+    summary.coveredTools.push("revit.get_request_result");
+    assert(missingRequestResult.found === false, "revit.get_request_result did not return a controlled missing result.");
+    assert(missingRequestResult.state === "failed", "A missing retained request result must report state=failed.");
+
     const status = await callRequiredTool(client, "revit.status", {});
     summary.coveredTools.push("revit.status");
     assert(status.connected === true, "revit.status did not report a connected Revit bridge.");
@@ -183,6 +215,7 @@ async function main() {
     summary.revit = status.revit ?? null;
     summary.addinAssembly = status.addinAssembly ? compactObject(status.addinAssembly) : null;
     assertExpectedRevitYear(status, options.expectedRevitYear);
+    if (options.requireElementTypeEdit) assertExpectedRevitYear(status, "2024");
 
     const activeDocument = status.activeDocument;
     summary.activeDocument = compactObject({
@@ -282,7 +315,13 @@ async function main() {
 
     if (options.statusOnly) {
       summary.status = "passed";
-      summary.coveredTools = ["revit.status", "revit.read_bundle", "revit.cancel_request", "revitctl.operation_kind_mismatch"];
+      summary.coveredTools = [
+        "revit.bridge_health",
+        "revit.status",
+        "revit.read_bundle",
+        "revit.cancel_request",
+        "revitctl.operation_kind_mismatch",
+      ];
       console.log("Status-only smoke passed.");
       return;
     }
@@ -663,17 +702,37 @@ async function main() {
     assert(Array.isArray(wallParameters.items[0].parameters), "revit.describe_parameters did not return parameter metadata.");
     console.log(`Parameter discovery OK: wall ${wallId} has ${wallParameters.items[0].parameterCount} described parameter(s)`);
 
-    const familyPlacementResult = await tryPlaceFamilyInstance(client, {
-      documentFingerprint,
-      expectedGeneration: numericOrUndefined(createApply.generation),
-      transactionPrefix: options.transactionPrefix,
-      runId,
-      wallId,
-      wallUniqueId,
-      levelId: placementLevelId,
-      levelElevationMm: placementLevelElevationMm,
-      wallLengthMm: options.wallLengthMm,
-    });
+    const elementTypeEditResult = options.requireElementTypeEdit
+      ? await runElementTypeEditAcceptance(client, {
+          documentFingerprint,
+          expectedGeneration: numericOrUndefined(createApply.generation),
+          transactionPrefix: options.transactionPrefix,
+          runId,
+          wallId,
+          wallUniqueId,
+          levelId: placementLevelId,
+          levelElevationMm: placementLevelElevationMm,
+          wallLengthMm: options.wallLengthMm,
+        })
+      : undefined;
+    const familyPlacementResult = elementTypeEditResult
+      ? {
+          apply: elementTypeEditResult.placementApply,
+          tried: 1,
+          symbol: elementTypeEditResult.catalogItem,
+          reason: undefined,
+        }
+      : await tryPlaceFamilyInstance(client, {
+          documentFingerprint,
+          expectedGeneration: numericOrUndefined(createApply.generation),
+          transactionPrefix: options.transactionPrefix,
+          runId,
+          wallId,
+          wallUniqueId,
+          levelId: placementLevelId,
+          levelElevationMm: placementLevelElevationMm,
+          wallLengthMm: options.wallLengthMm,
+        });
     const familyPlacementApply = familyPlacementResult.apply;
     const familyInstanceId = familyPlacementApply ? getCreatedElementId(findChange(familyPlacementApply, "place_family_instance")) : undefined;
     if (familyPlacementApply) {
@@ -1100,6 +1159,7 @@ async function main() {
       "create_floor",
       "create_wall",
       ...(familyPlacementApply ? ["place_family_instance"] : []),
+      ...(elementTypeEditResult ? ["duplicate_element_type"] : []),
       "create_room",
       ...(sheetApply ? ["create_sheet"] : []),
       ...(placedViewApply ? ["place_view_on_sheet"] : []),
@@ -1140,6 +1200,7 @@ async function main() {
         floor: floorId,
         wall: wallId,
         familyInstance: familyInstanceId,
+        duplicatedElementType: elementTypeEditResult?.elementTypeId,
         roomBoundaryWalls: roomBoundaryWallIds,
         room: roomId,
         sheet: createdSheetId,
@@ -1171,6 +1232,21 @@ async function main() {
             }
           : undefined,
       },
+      elementTypeEdit: elementTypeEditResult
+        ? {
+            sourceTypeId: elementTypeEditResult.sourceTypeId,
+            elementTypeId: elementTypeEditResult.elementTypeId,
+            uniqueId: elementTypeEditResult.uniqueId,
+            familyName: elementTypeEditResult.familyName,
+            typeName: elementTypeEditResult.typeName,
+            widthParameterName: elementTypeEditResult.widthParameterName,
+            heightParameterName: elementTypeEditResult.heightParameterName,
+            widthMm: ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM,
+            heightMm: ELEMENT_TYPE_ACCEPTANCE_HEIGHT_MM,
+            duplicateNameBlocked: true,
+            placedInstanceId: familyInstanceId,
+          }
+        : undefined,
       finalGeneration: numericOrUndefined(deleteApply.generation),
     });
     console.log("Live smoke passed.");
@@ -1200,6 +1276,8 @@ function parseArgs(args) {
     expectedRevitYear: undefined,
     summaryPath: undefined,
     requireTypeChange: false,
+    requireElementTypeEdit: false,
+    acknowledgeDisposableModel: false,
     requireRoomTag: false,
     requireElementTag: false,
     roomTagFamilyPath: undefined,
@@ -1264,6 +1342,15 @@ function parseArgs(args) {
         break;
       case "--skip-type-change":
         options.requireTypeChange = false;
+        break;
+      case "--require-element-type-edit":
+        options.requireElementTypeEdit = true;
+        break;
+      case "--skip-element-type-edit":
+        options.requireElementTypeEdit = false;
+        break;
+      case "--acknowledge-disposable-model":
+        options.acknowledgeDisposableModel = true;
         break;
       case "--require-room-tag":
         options.requireRoomTag = true;
@@ -1365,6 +1452,16 @@ function validateOptions(options) {
   assert(options.wallLengthMm > 0, "--wall-length-mm must be greater than zero.");
   assert(options.wallHeightMm > 0, "--wall-height-mm must be greater than zero.");
   assert(options.moveYMm !== 0, "--move-y-mm must be non-zero because Revit rejects zero-length moves.");
+  if (options.requireElementTypeEdit) {
+    assert(
+      options.acknowledgeDisposableModel,
+      "--require-element-type-edit requires --acknowledge-disposable-model because it commits multiple model-changing transactions."
+    );
+    assert(
+      options.wallLengthMm >= ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM + 1200,
+      `--require-element-type-edit requires --wall-length-mm of at least ${ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM + 1200}.`
+    );
+  }
   assert(
     typeof options.transactionPrefix === "string" && options.transactionPrefix.trim().length >= 3,
     "--transaction-prefix must contain at least 3 non-whitespace characters."
@@ -1622,6 +1719,21 @@ async function catalog(client, args) {
   return callRequiredTool(client, "revit.catalog", args);
 }
 
+async function catalogAll(client, args) {
+  const items = [];
+  const seenCursors = new Set();
+  let cursor;
+  let firstPage;
+  do {
+    const page = await catalog(client, compactObject({ ...args, cursor }));
+    assertCatalogPage(page, args.kind);
+    firstPage ??= page;
+    items.push(...page.items);
+    cursor = checkedNextCursor(page.cursor, seenCursors, "revit.catalog");
+  } while (cursor);
+  return { ...firstPage, items, returnedCount: items.length, cursor: undefined, truncated: false };
+}
+
 function assertCatalogPage(result, expectedKind) {
   assert(result?.kind === expectedKind, `revit.catalog returned kind ${String(result?.kind)}, expected ${expectedKind}.`);
   assert(Array.isArray(result.items), "revit.catalog did not return an items array.");
@@ -1744,6 +1856,265 @@ async function applyFirstReadySetParameter(
       blockedMessages.join("\n"),
     ].join("\n")
   );
+}
+
+async function runElementTypeEditAcceptance(
+  client,
+  { documentFingerprint, expectedGeneration, transactionPrefix, runId, wallId, wallUniqueId, levelId, levelElevationMm, wallLengthMm }
+) {
+  const doorTypes = await catalogAll(client, {
+    kind: "familySymbols",
+    filter: { categories: ["OST_Doors"] },
+    fields: [
+      "id",
+      "uniqueId",
+      "class",
+      "category",
+      "builtInCategory",
+      "name",
+      "familyName",
+      "familyId",
+      "isActive",
+      "placementType",
+    ],
+    limit: 200,
+    includeTotalCount: true,
+  });
+
+  const candidates = doorTypes.items.filter(isWallHostedPlacementSymbol);
+  const rejected = [];
+  let selected;
+  for (const candidate of candidates) {
+    const described = await callRequiredTool(client, "revit.describe_parameters", {
+      documentFingerprint,
+      expectedGeneration,
+      filter: { elementIds: [String(candidate.id)] },
+      preset: "full",
+      limit: 1,
+      parameterLimit: 120,
+      includeTotalCount: true,
+    });
+    const parameters = described?.items?.[0]?.parameters;
+    if (!Array.isArray(parameters)) {
+      rejected.push(`${candidate.familyName ?? candidate.name}: no parameter metadata`);
+      continue;
+    }
+
+    const width = findWritableDimensionParameter(parameters, "width");
+    const height = findWritableDimensionParameter(parameters, "height");
+    if (width && height) {
+      selected = { candidate, width, height };
+      break;
+    }
+    rejected.push(`${candidate.familyName ?? candidate.name}: writable Width/Height parameters were not both available`);
+  }
+
+  assert(
+    selected,
+    `Element type edit acceptance requires a wall-hosted door type with writable Width and Height parameters. ${rejected.join(" | ")}`
+  );
+
+  const source = selected.candidate;
+  const sourceTypeId = String(source.id);
+  const sourceUniqueId = stringOrUndefined(source.uniqueId);
+  assert(sourceUniqueId, `Door FamilySymbol ${sourceTypeId} did not include a uniqueId.`);
+
+  const duplicateChangeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration,
+    transactionName: makeTransactionName(transactionPrefix, "duplicate door type", runId),
+    operations: [
+      {
+        id: "duplicate-door-element-type",
+        type: "duplicate_element_type",
+        sourceTypeId,
+        expectedUniqueId: sourceUniqueId,
+        newName: ELEMENT_TYPE_ACCEPTANCE_NAME,
+      },
+    ],
+  });
+  const duplicatePreview = await previewChangeSet(client, duplicateChangeSet, "duplicate_element_type");
+  const duplicateApply = await applyChangeSet(client, duplicateChangeSet, duplicatePreview, "duplicate_element_type");
+  const duplicateChange = findChange(duplicateApply, "duplicate_element_type");
+  const elementTypeId = stringOrUndefined(duplicateChange?.after?.elementTypeId ?? duplicateChange?.after?.id);
+  const uniqueId = stringOrUndefined(duplicateChange?.after?.uniqueId);
+  const familyName = stringOrUndefined(duplicateChange?.after?.familyName);
+  const typeName = stringOrUndefined(duplicateChange?.after?.typeName ?? duplicateChange?.after?.name);
+  assert(elementTypeId && elementTypeId !== sourceTypeId, "duplicate_element_type did not return a distinct new type ID.");
+  assert(uniqueId, "duplicate_element_type did not return the new type UniqueId.");
+  assert(familyName, "duplicate_element_type did not return the family name.");
+  assert(typeName === ELEMENT_TYPE_ACCEPTANCE_NAME, `duplicate_element_type returned typeName=${typeName ?? "(missing)"}.`);
+
+  const duplicateNamePreview = await previewBlockedChangeSet(
+    client,
+    compactObject({
+      documentFingerprint,
+      expectedGeneration: numericOrUndefined(duplicateApply.generation),
+      transactionName: makeTransactionName(transactionPrefix, "duplicate door type name conflict", runId),
+      operations: [
+        {
+          id: "duplicate-door-element-type-conflict",
+          type: "duplicate_element_type",
+          sourceTypeId,
+          expectedUniqueId: sourceUniqueId,
+          newName: ELEMENT_TYPE_ACCEPTANCE_NAME,
+        },
+      ],
+    }),
+    "duplicate_element_type duplicate-name validation"
+  );
+  assert(
+    duplicateNamePreview.changes.some((change) => /already exists/i.test(String(change.message ?? ""))),
+    `Duplicate-name preview did not return a controlled existing-name message:\n${formatChanges(duplicateNamePreview.changes)}`
+  );
+
+  const widthInternal = millimetersToInternalFeet(ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM);
+  const heightInternal = millimetersToInternalFeet(ELEMENT_TYPE_ACCEPTANCE_HEIGHT_MM);
+  const dimensionChangeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration: numericOrUndefined(duplicateApply.generation),
+    transactionName: makeTransactionName(transactionPrefix, "set duplicated door dimensions", runId),
+    operations: [
+      {
+        id: "set-duplicated-door-width",
+        type: "set_parameter",
+        elementId: elementTypeId,
+        expectedUniqueId: uniqueId,
+        parameterRef: strongestParameterRef(selected.width),
+        parameterName: selected.width.name,
+        value: unitMm(ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM),
+      },
+      {
+        id: "set-duplicated-door-height",
+        type: "set_parameter",
+        elementId: elementTypeId,
+        expectedUniqueId: uniqueId,
+        parameterRef: strongestParameterRef(selected.height),
+        parameterName: selected.height.name,
+        value: unitMm(ELEMENT_TYPE_ACCEPTANCE_HEIGHT_MM),
+      },
+    ],
+  });
+  const dimensionPreview = await previewChangeSet(client, dimensionChangeSet, "duplicated door Width/Height");
+  const widthPreviewChange = findChangeByOperationId(
+    dimensionPreview,
+    "set-duplicated-door-width",
+    "set_parameter"
+  );
+  assert(widthPreviewChange?.target?.requestedParameterRef, "Stable Width parameter identity was not returned by preview.");
+  assert(
+    Number(widthPreviewChange?.after?.inputValue?.value) === ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM &&
+      widthPreviewChange?.after?.inputValue?.unit === "mm",
+    "Width preview did not preserve the typed millimetre input."
+  );
+  const dimensionApply = await applyChangeSet(client, dimensionChangeSet, dimensionPreview, "duplicated door Width/Height");
+  assertParameterValue(findChangeByOperationId(dimensionApply, "set-duplicated-door-width", "set_parameter"), widthInternal);
+  assertParameterValue(findChangeByOperationId(dimensionApply, "set-duplicated-door-height", "set_parameter"), heightInternal);
+
+  const catalogResult = await catalog(client, {
+    kind: "familySymbols",
+    filter: { familyName, nameContains: ELEMENT_TYPE_ACCEPTANCE_NAME },
+    fields: [
+      "id",
+      "uniqueId",
+      "class",
+      "category",
+      "name",
+      "familyName",
+      "familyId",
+      "isActive",
+      "placementType",
+      `param:${selected.width.name}`,
+      `param:${selected.height.name}`,
+    ],
+    limit: 10,
+    includeTotalCount: true,
+  });
+  assertCatalogPage(catalogResult, "familySymbols");
+  const catalogItem = catalogResult.items.find((item) => String(item.id) === elementTypeId);
+  assert(catalogItem, `revit.catalog did not return duplicated door type ${elementTypeId}.`);
+  assert(catalogItem.name === ELEMENT_TYPE_ACCEPTANCE_NAME, "revit.catalog returned the wrong duplicated type name.");
+  assertApproximatelyEqual(
+    Number(catalogItem.fields?.[selected.width.name]),
+    widthInternal,
+    "revit.catalog Width readback"
+  );
+  assertApproximatelyEqual(
+    Number(catalogItem.fields?.[selected.height.name]),
+    heightInternal,
+    "revit.catalog Height readback"
+  );
+
+  const placementChangeSet = compactObject({
+    documentFingerprint,
+    expectedGeneration: numericOrUndefined(dimensionApply.generation),
+    transactionName: makeTransactionName(transactionPrefix, "place duplicated door type", runId),
+    operations: [
+      {
+        id: "place-duplicated-door-type",
+        type: "place_family_instance",
+        familySymbolId: elementTypeId,
+        hostElementId: wallId,
+        expectedHostUniqueId: wallUniqueId,
+        levelId,
+        location: pointMm(Math.max(600, Math.min(wallLengthMm / 2, wallLengthMm - 600)), 0, levelElevationMm),
+        rotation: { value: 0, unit: "degrees" },
+      },
+    ],
+  });
+  const placementPreview = await previewChangeSet(client, placementChangeSet, "place_family_instance duplicated door");
+  const placementApply = await applyChangeSet(client, placementChangeSet, placementPreview, "place_family_instance duplicated door");
+
+  console.log(
+    `Element type edit OK: duplicated ${familyName}:${ELEMENT_TYPE_ACCEPTANCE_NAME} as ${elementTypeId}, set ${selected.width.name}/${selected.height.name}, and placed it.`
+  );
+  return {
+    sourceTypeId,
+    elementTypeId,
+    uniqueId,
+    familyName,
+    typeName,
+    widthParameterName: selected.width.name,
+    heightParameterName: selected.height.name,
+    catalogItem,
+    placementApply,
+  };
+}
+
+function findWritableDimensionParameter(parameters, dimension) {
+  const aliases =
+    dimension === "width"
+      ? ["width", "breite", "largeur", "anchura", "larghezza", "breedte"]
+      : ["height", "höhe", "hauteur", "altura", "altezza", "hoogte"];
+  return parameters.find(
+    (parameter) =>
+      parameter?.isReadOnly === false &&
+      String(parameter?.storageType).toLowerCase() === "double" &&
+      aliases.includes(String(parameter?.name ?? "").trim().toLowerCase())
+  );
+}
+
+function strongestParameterRef(parameter) {
+  if (parameter?.builtInParameter) {
+    return { kind: "builtInParameter", builtInParameter: String(parameter.builtInParameter) };
+  }
+  if (parameter?.guid) {
+    return { kind: "sharedParameterGuid", sharedParameterGuid: String(parameter.guid) };
+  }
+  if (parameter?.definitionId) {
+    return { kind: "definitionId", definitionId: String(parameter.definitionId) };
+  }
+  assert(parameter?.name, "Parameter metadata did not include a stable identity or display name.");
+  return { kind: "name", name: String(parameter.name) };
+}
+
+function millimetersToInternalFeet(value) {
+  return value / 304.8;
+}
+
+function assertApproximatelyEqual(actual, expected, label, tolerance = 1e-9) {
+  assert(Number.isFinite(actual), `${label} did not return a finite number.`);
+  assert(Math.abs(actual - expected) <= tolerance, `${label} expected ${expected}, observed ${actual}.`);
 }
 
 async function tryPlaceFamilyInstance(
@@ -3087,29 +3458,30 @@ Runs a live Revit MCP smoke against the active Revit project:
   9. preview/apply create_wall
   10. revit.query and revit.describe_parameters for created elements
   11. blocked preview for mismatched expectedUniqueId
-  12. preview/apply place_family_instance with expectedHostUniqueId for hosted symbols or levelId-only for level-based symbols
-  13. preview/apply room boundary walls
-  14. preview/apply create_room, then revit.get_rooms read-back with positive area
-  15. preview/apply create_sheet and read it back with revit.get_sheets
-  16. preview/apply place_view_on_sheet when an unplaced printable view exists
-  17. preview/apply create_text_note when the current view supports annotations
-  18. optional preview/apply load_family for vetted local tag .rfa files
-  19. preview/apply tag_room with expectedUniqueId when a room tag type, room, and plan/section view are available
-  20. preview/apply tag_element with expectedUniqueId when a wall/multi-category tag type and visible wall are available
-  21. preview/apply guarded set_parameter on the created wall
-  22. revit.catalog for compatible wall type changes
-  23. preview/apply guarded change_element_type when an alternate valid type exists
-  24. preview/apply guarded move_element
-  25. assert the wall Y location changed by --move-y-mm
-  26. preview/apply guarded rotate_element
-  27. preview/apply guarded copy_element
-  28. preview/apply guarded set_element_pinned true
-  29. blocked preview for moving a pinned element
-  30. rejected apply for mismatched changeSetHash
-  31. preview/apply guarded set_element_pinned false
-  32. preview/apply guarded delete_element for the copied smoke wall
-  33. revit.cancel_request no-op probe
-  34. revitctl direct bridge probe proving apply_change_set cannot be mislabeled as operationKind=read
+  12. optional required Revit 2024 door type duplication, Width/Height update, catalog readback, duplicate-name block, and placement
+  13. preview/apply place_family_instance with expectedHostUniqueId for hosted symbols or levelId-only for level-based symbols
+  14. preview/apply room boundary walls
+  15. preview/apply create_room, then revit.get_rooms read-back with positive area
+  16. preview/apply create_sheet and read it back with revit.get_sheets
+  17. preview/apply place_view_on_sheet when an unplaced printable view exists
+  18. preview/apply create_text_note when the current view supports annotations
+  19. optional preview/apply load_family for vetted local tag .rfa files
+  20. preview/apply tag_room with expectedUniqueId when a room tag type, room, and plan/section view are available
+  21. preview/apply tag_element with expectedUniqueId when a wall/multi-category tag type and visible wall are available
+  22. preview/apply guarded set_parameter on the created wall
+  23. revit.catalog for compatible wall type changes
+  24. preview/apply guarded change_element_type when an alternate valid type exists
+  25. preview/apply guarded move_element
+  26. assert the wall Y location changed by --move-y-mm
+  27. preview/apply guarded rotate_element
+  28. preview/apply guarded copy_element
+  29. preview/apply guarded set_element_pinned true
+  30. blocked preview for moving a pinned element
+  31. rejected apply for mismatched changeSetHash
+  32. preview/apply guarded set_element_pinned false
+  33. preview/apply guarded delete_element for the copied smoke wall
+  34. revit.cancel_request no-op probe
+  35. revitctl direct bridge probe proving apply_change_set cannot be mislabeled as operationKind=read
 
 Options:
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
@@ -3123,6 +3495,9 @@ Options:
   --summary-path <path>           Write machine-readable smoke-summary.json evidence.
   --require-type-change           Fail when no alternate valid wall type is available for change_element_type.
   --skip-type-change              Allow type-change coverage to be skipped when no alternate type exists. Default.
+  --require-element-type-edit     On Revit 2024, require door FamilySymbol duplication to 2510x2260, dimension readback, duplicate-name blocking, and placement.
+  --skip-element-type-edit        Skip element-type edit acceptance. Default.
+  --acknowledge-disposable-model  Confirm the active project is disposable. Required with --require-element-type-edit.
   --require-room-tag              Fail when tag_room cannot be applied.
   --require-element-tag           Fail when tag_element cannot be applied.
   --require-tags                  Require both tag_room and tag_element coverage.

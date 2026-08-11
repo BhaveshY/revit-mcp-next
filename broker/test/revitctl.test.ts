@@ -210,7 +210,7 @@ test("revitctl read-bundle composes compact guarded bridge reads", async () => {
             data: {
               connected: true,
               brokerVersion: "test",
-              protocolVersion: "2026-06-23",
+              protocolVersion: "2026-08-11",
               activeDocument: { title: "fixture.rvt", fingerprint: "doc-fingerprint", generation: 42 },
               capabilities: ["status"],
               warnings: [],
@@ -440,7 +440,8 @@ test("revitctl routes write-control commands through guarded bridge operations",
           ])
         );
         assert.equal(result.exitCode, 0);
-      }
+      },
+      true
     );
 
     await withPipeServer(
@@ -452,7 +453,8 @@ test("revitctl routes write-control commands through guarded bridge operations",
       async (pipeName) => {
         const result = await runRevitCtl(parseArgs(["cancel-request", "--pipe", pipeName, "--payload", '{"requestId":"request-2"}']));
         assert.equal(result.exitCode, 0);
-      }
+      },
+      true
     );
 
     await withPipeServer(
@@ -491,10 +493,11 @@ test("revitctl help lists write-control and raw call support", async () => {
 
 async function withPipeServer(
   onRequest: (request: CapturedRequest) => PipeResponseOverride | void,
-  runClient: (pipeName: string) => Promise<void>
+  runClient: (pipeName: string) => Promise<void>,
+  controlPipe = false
 ) {
   const pipeName = `revitctl-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const pipePath = `\\\\.\\pipe\\${pipeName}`;
+  const pipePath = `\\\\.\\pipe\\${pipeName}${controlPipe ? "-control" : ""}`;
   const server = net.createServer((socket) => {
     let buffer = Buffer.alloc(0);
     socket.on("data", (chunk) => {
@@ -515,7 +518,7 @@ async function withPipeServer(
             {
               connected: true,
               brokerVersion: "test",
-              protocolVersion: "2026-06-23",
+              protocolVersion: "2026-08-11",
               capabilities: ["status"],
               warnings: [],
             },

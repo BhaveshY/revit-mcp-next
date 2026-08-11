@@ -20,6 +20,7 @@ namespace RevitMcpNext.Addin.Revit
     {
         private const string AddinVersion = "0.1.0";
         private const int MaxItemsPerExternalEvent = 16;
+        private const int MaxExternalEventElapsedMs = 100;
         private const int MaxQueryLimit = 500;
         private const int MaxViewLimit = 500;
         private const int MaxSheetLimit = 500;
@@ -87,10 +88,15 @@ namespace RevitMcpNext.Addin.Revit
         public void Execute(UIApplication app)
         {
             int processed = 0;
-            while (processed < MaxItemsPerExternalEvent && _queue.TryDequeue(out RevitRequestQueue.WorkItem item))
+            var elapsed = Stopwatch.StartNew();
+            while (processed < MaxItemsPerExternalEvent && _queue.TryDequeue(out QueuedRevitWorkItem item))
             {
                 processed++;
-                item.TrySetResult(Handle(app, item.Envelope));
+                var execution = Stopwatch.StartNew();
+                BridgeResponseEnvelope response = Handle(app, item.Envelope);
+                execution.Stop();
+                item.TrySetResult(response, execution.ElapsedMilliseconds);
+                if (elapsed.ElapsedMilliseconds >= MaxExternalEventElapsedMs) break;
             }
 
             if (_queue.HasPending)
@@ -1439,7 +1445,9 @@ namespace RevitMcpNext.Addin.Revit
                     string.Equals(operationType, "tag_room", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "tag_element", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "copy_element", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase))
+                    string.Equals(operationType, "change_element_type", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "rename_element_type", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(operationType, "duplicate_element_type", StringComparison.OrdinalIgnoreCase))
                 {
                     riskLevel = "medium";
                 }
@@ -1454,6 +1462,7 @@ namespace RevitMcpNext.Addin.Revit
             string changeSetHash = ComputePreviewChangeSetHash(documentFingerprint, generation, transactionName, operationsHash, changesHash);
             PreviewToken token = _previewTokens.Issue(
                 previewId,
+                request.SessionId,
                 documentFingerprint,
                 generation,
                 transactionName,
@@ -1677,6 +1686,7 @@ namespace RevitMcpNext.Addin.Revit
 
             PreviewTokenValidation metadataValidation = _previewTokens.ValidateMetadata(
                 providedPreviewId,
+                request.SessionId,
                 documentFingerprint,
                 generation,
                 providedChangeSetHash);
@@ -1695,6 +1705,7 @@ namespace RevitMcpNext.Addin.Revit
 
             PreviewTokenValidation tokenValidation = _previewTokens.Validate(
                 providedPreviewId,
+                request.SessionId,
                 documentFingerprint,
                 generation,
                 transactionName,
@@ -1706,7 +1717,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, tokenValidation.Code, tokenValidation.Message, sw);
             }
 
-            _previewTokens.Consume(providedPreviewId);
+            _previewTokens.Consume(request.SessionId, providedPreviewId);
             List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
             {
                 var results = new List<Dictionary<string, object>>();
@@ -1781,6 +1792,10 @@ namespace RevitMcpNext.Addin.Revit
                     return PreviewCopyElement(document, operation, index);
                 case "change_element_type":
                     return PreviewChangeElementType(document, operation, index);
+                case "rename_element_type":
+                    return PreviewRenameElementType(document, operation, index, validationContext);
+                case "duplicate_element_type":
+                    return PreviewDuplicateElementType(document, operation, index, validationContext);
                 case "set_element_pinned":
                     return PreviewSetElementPinned(document, operation, index);
                 case "create_grid":
@@ -1835,6 +1850,10 @@ namespace RevitMcpNext.Addin.Revit
                     return ApplyCopyElement(document, operation, index);
                 case "change_element_type":
                     return ApplyChangeElementType(document, operation, index);
+                case "rename_element_type":
+                    return ApplyRenameElementType(document, operation, index);
+                case "duplicate_element_type":
+                    return ApplyDuplicateElementType(document, operation, index);
                 case "set_element_pinned":
                     return ApplySetElementPinned(document, operation, index);
                 case "create_grid":
@@ -1874,8 +1893,17 @@ namespace RevitMcpNext.Addin.Revit
         {
             string elementId = GetString(operation, "elementId");
             string parameterName = GetString(operation, "parameterName");
+            bool hasParameterRef = operation != null && operation.ContainsKey("parameterRef");
+            Dictionary<string, object> parameterRef = GetDictionary(operation, "parameterRef");
             if (string.IsNullOrWhiteSpace(elementId)) return BlockedChange(operation, index, "set_parameter requires elementId.");
-            if (string.IsNullOrWhiteSpace(parameterName)) return BlockedChange(operation, index, "set_parameter requires parameterName.");
+            if (hasParameterRef && parameterRef == null)
+            {
+                return BlockedChange(operation, index, "set_parameter parameterRef must be an object. Legacy parameterName is not used when parameterRef is present.");
+            }
+            if (!hasParameterRef && string.IsNullOrWhiteSpace(parameterName))
+            {
+                return BlockedChange(operation, index, "set_parameter requires parameterRef or legacy parameterName.");
+            }
             if (!operation.TryGetValue("value", out object value)) return BlockedChange(operation, index, "set_parameter requires value.");
 
             Element element = ResolveElement(document, elementId);
@@ -1883,17 +1911,37 @@ namespace RevitMcpNext.Addin.Revit
             string uniqueIdError = ValidateExpectedUniqueId(operation, element, elementId);
             if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
 
-            Parameter parameter = element.LookupParameter(parameterName);
-            if (parameter == null) return BlockedChange(operation, index, "Parameter '" + parameterName + "' was not found on element " + elementId + ".");
-            if (parameter.IsReadOnly) return BlockedChange(operation, index, "Parameter '" + parameterName + "' is read-only.");
+            ParameterResolution resolution = ResolveParameter(element, parameterRef, parameterName);
+            if (!resolution.Ok) return BlockedChange(operation, index, resolution.Error);
 
-            return Change(operation, index, "ready", ElementTarget(element, parameterName),
+            Dictionary<string, object> target = ParameterTarget(element, resolution);
+            Parameter parameter = resolution.Parameter;
+            if (parameter.IsReadOnly)
+            {
+                return Change(operation, index, "blocked", target, ParameterSnapshot(parameter), null,
+                    "Parameter '" + resolution.ResolvedName + "' on element " + elementId + " is read-only.");
+            }
+
+            string editabilityError = OwnedByOtherUserError(target, "Element " + elementId);
+            if (!string.IsNullOrWhiteSpace(editabilityError))
+            {
+                return Change(operation, index, "blocked", target, ParameterSnapshot(parameter), null, editabilityError);
+            }
+
+            PreparedParameterValue prepared;
+            try
+            {
+                prepared = PrepareParameterValue(document, parameter, value, resolution.IsStable);
+            }
+            catch (Exception ex)
+            {
+                return Change(operation, index, "blocked", target, ParameterSnapshot(parameter), null,
+                    "Parameter '" + resolution.ResolvedName + "' on element " + elementId + " rejected the requested value: " + ex.Message);
+            }
+
+            return Change(operation, index, "ready", target,
                 before: ParameterSnapshot(parameter),
-                after: new Dictionary<string, object>
-                {
-                    ["value"] = value,
-                    ["storageType"] = parameter.StorageType.ToString()
-                });
+                after: prepared.PreviewSnapshot(parameter));
         }
 
         private static Dictionary<string, object> ApplySetParameter(Document document, Dictionary<string, object> operation, int index)
@@ -1906,23 +1954,24 @@ namespace RevitMcpNext.Addin.Revit
 
             string elementId = GetString(operation, "elementId");
             string parameterName = GetString(operation, "parameterName");
+            Dictionary<string, object> parameterRef = GetDictionary(operation, "parameterRef");
             Element element = ResolveElement(document, elementId);
-            Parameter parameter = element.LookupParameter(parameterName);
-            object before = ParameterValue(parameter);
-            SetParameterValue(parameter, operation["value"]);
-            object after = ParameterValue(parameter);
+            ParameterResolution resolution = ResolveParameter(element, parameterRef, parameterName);
+            if (!resolution.Ok) throw new InvalidOperationException(resolution.Error);
 
-            return Change(operation, index, "applied", ElementTarget(element, parameterName),
-                before: new Dictionary<string, object>
-                {
-                    ["value"] = before,
-                    ["storageType"] = parameter.StorageType.ToString()
-                },
-                after: new Dictionary<string, object>
-                {
-                    ["value"] = after,
-                    ["storageType"] = parameter.StorageType.ToString()
-                });
+            Parameter parameter = resolution.Parameter;
+            PreparedParameterValue prepared = PrepareParameterValue(document, parameter, operation["value"], resolution.IsStable);
+            Dictionary<string, object> before = ParameterSnapshot(parameter);
+            SetPreparedParameterValue(parameter, prepared);
+            Dictionary<string, object> after = ParameterSnapshot(parameter);
+            if (prepared.IsUnitValue)
+            {
+                after["inputValue"] = prepared.InputValue;
+                after["internalValue"] = after["value"];
+                AddIfNotBlank(after, "requestedUnitTypeId", prepared.RequestedUnitTypeId);
+            }
+
+            return Change(operation, index, "applied", ParameterTarget(element, resolution), before, after);
         }
 
         private static Dictionary<string, object> PreviewCreateLevel(
@@ -3921,6 +3970,13 @@ namespace RevitMcpNext.Addin.Revit
             if (element is ElementType) return BlockedChange(operation, index, "Element " + elementId + " is already an element type and cannot change type.");
             if (element.Pinned) return BlockedChange(operation, index, "Element " + elementId + " is pinned and cannot change type.");
 
+            Dictionary<string, object> target = ElementTarget(element, null);
+            string editabilityError = OwnedByOtherUserError(target, "Element " + elementId);
+            if (!string.IsNullOrWhiteSpace(editabilityError))
+            {
+                return Change(operation, index, "blocked", target, TypeSnapshot(document, element), null, editabilityError);
+            }
+
             ElementType targetType = ResolveElement(document, typeId) as ElementType;
             if (targetType == null) return BlockedChange(operation, index, "Type " + typeId + " was not found.");
 
@@ -3935,7 +3991,7 @@ namespace RevitMcpNext.Addin.Revit
                 return BlockedChange(operation, index, "Type " + typeId + " is not valid for element " + elementId + ".");
             }
 
-            return Change(operation, index, "ready", ElementTarget(element, null),
+            return Change(operation, index, "ready", target,
                 before: TypeSnapshot(document, element),
                 after: TypeSnapshot(document, targetType));
         }
@@ -3958,6 +4014,200 @@ namespace RevitMcpNext.Addin.Revit
             return Change(operation, index, "applied", ElementTarget(changedElement, null),
                 before: before,
                 after: TypeSnapshot(document, changedElement));
+        }
+
+        private static Dictionary<string, object> PreviewRenameElementType(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
+        {
+            string elementTypeId = GetString(operation, "elementTypeId");
+            string newName = NormalizeOptionalText(GetString(operation, "newName"));
+            if (string.IsNullOrWhiteSpace(elementTypeId))
+            {
+                return BlockedChange(operation, index, "rename_element_type requires elementTypeId.");
+            }
+            if (string.IsNullOrWhiteSpace(newName))
+            {
+                return BlockedChange(operation, index, "rename_element_type requires a non-empty newName.");
+            }
+
+            ElementType elementType = ResolveElement(document, elementTypeId) as ElementType;
+            if (elementType == null)
+            {
+                return BlockedChange(operation, index, "Element " + elementTypeId + " is not an ElementType.");
+            }
+
+            string uniqueIdError = ValidateExpectedUniqueId(
+                operation,
+                elementType,
+                elementTypeId,
+                "expectedUniqueId",
+                "ElementType");
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
+
+            Dictionary<string, object> target = ElementTypeTarget(elementType);
+            string editabilityError = OwnedByOtherUserError(target, "ElementType " + elementTypeId);
+            if (!string.IsNullOrWhiteSpace(editabilityError))
+            {
+                return Change(operation, index, "blocked", target, ElementTypeSnapshot(elementType), null, editabilityError);
+            }
+            if (!elementType.CanBeRenamed)
+            {
+                return BlockedChange(operation, index, "ElementType " + elementTypeId + " cannot be renamed.");
+            }
+            if (!NamingUtils.IsValidName(newName))
+            {
+                return BlockedChange(operation, index, "newName contains characters that Revit does not allow in an ElementType name.");
+            }
+
+            string currentName = SafeElementName(elementType);
+            if (ElementTypeNamesEqual(currentName, newName))
+            {
+                return BlockedChange(operation, index, "ElementType " + elementTypeId + " is already named '" + newName + "'.");
+            }
+
+            ElementType conflict = FindElementTypeNameConflict(document, elementType, newName, elementType.Id);
+            if (conflict != null)
+            {
+                return BlockedChange(operation, index, ElementTypeNameConflictMessage(newName, conflict));
+            }
+            if (validationContext != null && !validationContext.TryAddElementTypeName(elementType, newName))
+            {
+                return BlockedChange(
+                    operation,
+                    index,
+                    "The change set requests duplicate ElementType name '" + newName + "' in family '" + GetFamilyName(elementType) + "'.");
+            }
+
+            return Change(
+                operation,
+                index,
+                "ready",
+                target,
+                before: ElementTypeSnapshot(elementType),
+                after: ElementTypeSnapshot(elementType, newName, includeIdentity: true));
+        }
+
+        private static Dictionary<string, object> ApplyRenameElementType(
+            Document document,
+            Dictionary<string, object> operation,
+            int index)
+        {
+            Dictionary<string, object> preview = PreviewRenameElementType(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "rename_element_type preview failed.");
+            }
+
+            ElementType elementType = ResolveElement(document, GetString(operation, "elementTypeId")) as ElementType;
+            Dictionary<string, object> before = ElementTypeSnapshot(elementType);
+            elementType.Name = NormalizeOptionalText(GetString(operation, "newName"));
+
+            return Change(
+                operation,
+                index,
+                "applied",
+                ElementTypeTarget(elementType),
+                before: before,
+                after: ElementTypeSnapshot(elementType));
+        }
+
+        private static Dictionary<string, object> PreviewDuplicateElementType(
+            Document document,
+            Dictionary<string, object> operation,
+            int index,
+            PreviewValidationContext validationContext = null)
+        {
+            string sourceTypeId = GetString(operation, "sourceTypeId");
+            string newName = NormalizeOptionalText(GetString(operation, "newName"));
+            if (string.IsNullOrWhiteSpace(sourceTypeId))
+            {
+                return BlockedChange(operation, index, "duplicate_element_type requires sourceTypeId.");
+            }
+            if (string.IsNullOrWhiteSpace(newName))
+            {
+                return BlockedChange(operation, index, "duplicate_element_type requires a non-empty newName.");
+            }
+
+            ElementType sourceType = ResolveElement(document, sourceTypeId) as ElementType;
+            if (sourceType == null)
+            {
+                return BlockedChange(operation, index, "Element " + sourceTypeId + " is not an ElementType.");
+            }
+
+            string uniqueIdError = ValidateExpectedUniqueId(
+                operation,
+                sourceType,
+                sourceTypeId,
+                "expectedUniqueId",
+                "Source ElementType");
+            if (!string.IsNullOrWhiteSpace(uniqueIdError)) return BlockedChange(operation, index, uniqueIdError);
+
+            Dictionary<string, object> target = ElementTypeTarget(sourceType);
+            string editabilityError = OwnedByOtherUserError(target, "Source ElementType " + sourceTypeId);
+            if (!string.IsNullOrWhiteSpace(editabilityError))
+            {
+                return Change(operation, index, "blocked", target, ElementTypeSnapshot(sourceType), null, editabilityError);
+            }
+            if (!sourceType.CanBeCopied)
+            {
+                return BlockedChange(operation, index, "ElementType " + sourceTypeId + " cannot be duplicated.");
+            }
+            if (!NamingUtils.IsValidName(newName))
+            {
+                return BlockedChange(operation, index, "newName contains characters that Revit does not allow in an ElementType name.");
+            }
+
+            ElementType conflict = FindElementTypeNameConflict(document, sourceType, newName, excludedElementTypeId: null);
+            if (conflict != null)
+            {
+                return BlockedChange(operation, index, ElementTypeNameConflictMessage(newName, conflict));
+            }
+            if (validationContext != null && !validationContext.TryAddElementTypeName(sourceType, newName))
+            {
+                return BlockedChange(
+                    operation,
+                    index,
+                    "The change set requests duplicate ElementType name '" + newName + "' in family '" + GetFamilyName(sourceType) + "'.");
+            }
+
+            return Change(
+                operation,
+                index,
+                "ready",
+                target,
+                before: ElementTypeSnapshot(sourceType),
+                after: ElementTypeSnapshot(sourceType, newName, includeIdentity: false));
+        }
+
+        private static Dictionary<string, object> ApplyDuplicateElementType(
+            Document document,
+            Dictionary<string, object> operation,
+            int index)
+        {
+            Dictionary<string, object> preview = PreviewDuplicateElementType(document, operation, index);
+            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GetString(preview, "message") ?? "duplicate_element_type preview failed.");
+            }
+
+            ElementType sourceType = ResolveElement(document, GetString(operation, "sourceTypeId")) as ElementType;
+            Dictionary<string, object> before = ElementTypeSnapshot(sourceType);
+            ElementType newType = sourceType.Duplicate(NormalizeOptionalText(GetString(operation, "newName")));
+            if (newType == null)
+            {
+                throw new InvalidOperationException("Revit did not return the duplicated ElementType.");
+            }
+
+            return Change(
+                operation,
+                index,
+                "applied",
+                ElementTypeTarget(newType),
+                before: before,
+                after: ElementTypeSnapshot(newType));
         }
 
         private static Dictionary<string, object> PreviewSetElementPinned(Document document, Dictionary<string, object> operation, int index)
@@ -4279,6 +4529,7 @@ namespace RevitMcpNext.Addin.Revit
             private readonly HashSet<string> _gridNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             private readonly HashSet<string> _roomNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             private readonly HashSet<string> _sheetNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<string> _elementTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             public bool TryAddLevelName(string name)
             {
@@ -4298,6 +4549,12 @@ namespace RevitMcpNext.Addin.Revit
             public bool TryAddSheetNumber(string number)
             {
                 return _sheetNumbers.Add((number ?? string.Empty).Trim());
+            }
+
+            public bool TryAddElementTypeName(ElementType elementType, string name)
+            {
+                string key = GetElementTypeNameScopeKey(elementType) + "|name:" + NormalizeOptionalText(name);
+                return _elementTypeNames.Add(key);
             }
         }
 
@@ -4430,6 +4687,236 @@ namespace RevitMcpNext.Addin.Revit
             public bool AllowPinnedHost { get; }
         }
 
+        private sealed class ParameterResolution
+        {
+            private ParameterResolution(
+                Parameter parameter,
+                bool isStable,
+                string requestedKind,
+                string requestedValue,
+                Dictionary<string, object> requestedReference,
+                string error)
+            {
+                Parameter = parameter;
+                IsStable = isStable;
+                RequestedKind = requestedKind;
+                RequestedValue = requestedValue;
+                RequestedReference = requestedReference;
+                Error = error;
+            }
+
+            public Parameter Parameter { get; }
+            public bool IsStable { get; }
+            public string RequestedKind { get; }
+            public string RequestedValue { get; }
+            public Dictionary<string, object> RequestedReference { get; }
+            public string Error { get; }
+            public bool Ok => Parameter != null && string.IsNullOrWhiteSpace(Error);
+            public string ResolvedName => Parameter?.Definition?.Name ?? RequestedValue ?? "(unnamed)";
+
+            public static ParameterResolution Success(
+                Parameter parameter,
+                bool isStable,
+                string requestedKind,
+                string requestedValue,
+                Dictionary<string, object> requestedReference)
+            {
+                return new ParameterResolution(parameter, isStable, requestedKind, requestedValue, requestedReference, null);
+            }
+
+            public static ParameterResolution Failure(
+                bool isStable,
+                string requestedKind,
+                string requestedValue,
+                Dictionary<string, object> requestedReference,
+                string error)
+            {
+                return new ParameterResolution(null, isStable, requestedKind, requestedValue, requestedReference, error);
+            }
+        }
+
+        private sealed class PreparedParameterValue
+        {
+            public object InputValue { get; set; }
+            public object StorageValue { get; set; }
+            public bool IsUnitValue { get; set; }
+            public string SpecTypeId { get; set; }
+            public string RequestedUnitTypeId { get; set; }
+            public string ParameterUnitTypeId { get; set; }
+            public Element ReferencedElement { get; set; }
+
+            public Dictionary<string, object> PreviewSnapshot(Parameter parameter)
+            {
+                var snapshot = new Dictionary<string, object>
+                {
+                    ["value"] = SerializeStorageValue(StorageValue),
+                    ["storageType"] = parameter.StorageType.ToString()
+                };
+
+                if (IsUnitValue)
+                {
+                    snapshot["inputValue"] = InputValue;
+                    snapshot["internalValue"] = StorageValue;
+                }
+                AddIfNotBlank(snapshot, "specTypeId", SpecTypeId);
+                AddIfNotBlank(snapshot, "requestedUnitTypeId", RequestedUnitTypeId);
+                AddIfNotBlank(snapshot, "unitTypeId", ParameterUnitTypeId);
+                if (ReferencedElement != null)
+                {
+                    snapshot["referencedElement"] = ElementSummary(ReferencedElement.Document, ReferencedElement);
+                }
+                return snapshot;
+            }
+        }
+
+        private static ParameterResolution ResolveParameter(
+            Element element,
+            Dictionary<string, object> parameterRef,
+            string legacyParameterName)
+        {
+            if (element == null)
+            {
+                return ParameterResolution.Failure(parameterRef != null, null, null, parameterRef, "A target element is required.");
+            }
+
+            if (parameterRef == null)
+            {
+                string legacyName = NormalizeOptionalText(legacyParameterName);
+                Parameter legacyParameter = string.IsNullOrWhiteSpace(legacyName) ? null : element.LookupParameter(legacyName);
+                return legacyParameter == null
+                    ? ParameterResolution.Failure(false, "legacyName", legacyName, null,
+                        "Parameter '" + legacyName + "' was not found on element " + ToElementIdString(element.Id) + ".")
+                    : ParameterResolution.Success(legacyParameter, false, "legacyName", legacyName, null);
+            }
+
+            string kind = NormalizeOptionalText(GetString(parameterRef, "kind"));
+            Dictionary<string, object> requestedReference = CloneDictionary(parameterRef);
+            if (string.Equals(kind, "builtInParameter", StringComparison.OrdinalIgnoreCase))
+            {
+                string requested = NormalizeOptionalText(GetString(parameterRef, "builtInParameter"));
+                if (string.IsNullOrWhiteSpace(requested) ||
+                    !Enum.TryParse(requested, true, out BuiltInParameter builtInParameter) ||
+                    !Enum.IsDefined(typeof(BuiltInParameter), builtInParameter))
+                {
+                    return ParameterResolution.Failure(true, kind, requested, requestedReference,
+                        "Unknown builtInParameter '" + (requested ?? string.Empty) + "' for element " + ToElementIdString(element.Id) + ".");
+                }
+
+                Parameter parameter = element.get_Parameter(builtInParameter);
+                return parameter == null
+                    ? ParameterResolution.Failure(true, kind, requested, requestedReference,
+                        "Built-in parameter '" + requested + "' was not found on element " + ToElementIdString(element.Id) + ".")
+                    : ParameterResolution.Success(parameter, true, kind, requested, requestedReference);
+            }
+
+            if (string.Equals(kind, "definitionId", StringComparison.OrdinalIgnoreCase))
+            {
+                string requested = NormalizeOptionalText(GetString(parameterRef, "definitionId"));
+                if (!long.TryParse(requested, NumberStyles.Integer, CultureInfo.InvariantCulture, out long requestedId) || requestedId == -1)
+                {
+                    return ParameterResolution.Failure(true, kind, requested, requestedReference,
+                        "definitionId must be a valid Revit parameter id for element " + ToElementIdString(element.Id) + ".");
+                }
+
+                List<Parameter> matches = EnumerateParameters(element)
+                    .Where(parameter => GetParameterIdValue(parameter) == requestedId)
+                    .ToList();
+                return ResolveUniqueParameterMatch(element, matches, kind, requested, requestedReference);
+            }
+
+            if (string.Equals(kind, "sharedParameterGuid", StringComparison.OrdinalIgnoreCase))
+            {
+                string requested = NormalizeOptionalText(GetString(parameterRef, "sharedParameterGuid"));
+                if (!Guid.TryParse(requested, out Guid requestedGuid))
+                {
+                    return ParameterResolution.Failure(true, kind, requested, requestedReference,
+                        "sharedParameterGuid '" + (requested ?? string.Empty) + "' is invalid for element " + ToElementIdString(element.Id) + ".");
+                }
+
+                List<Parameter> matches = EnumerateParameters(element)
+                    .Where(parameter => TryGetSharedParameterGuid(parameter, out Guid parameterGuid) && parameterGuid == requestedGuid)
+                    .ToList();
+                return ResolveUniqueParameterMatch(element, matches, kind, requestedGuid.ToString("D"), requestedReference);
+            }
+
+            if (string.Equals(kind, "name", StringComparison.OrdinalIgnoreCase))
+            {
+                string requested = NormalizeOptionalText(GetString(parameterRef, "name"));
+                if (string.IsNullOrWhiteSpace(requested))
+                {
+                    return ParameterResolution.Failure(true, kind, requested, requestedReference,
+                        "parameterRef name cannot be empty for element " + ToElementIdString(element.Id) + ".");
+                }
+
+                List<Parameter> matches = EnumerateParameters(element)
+                    .Where(parameter => string.Equals(parameter?.Definition?.Name, requested, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                return ResolveUniqueParameterMatch(element, matches, kind, requested, requestedReference);
+            }
+
+            return ParameterResolution.Failure(true, kind, null, requestedReference,
+                "Unsupported parameterRef kind '" + (kind ?? string.Empty) + "' for element " + ToElementIdString(element.Id) + ".");
+        }
+
+        private static ParameterResolution ResolveUniqueParameterMatch(
+            Element element,
+            List<Parameter> matches,
+            string kind,
+            string requested,
+            Dictionary<string, object> requestedReference)
+        {
+            int matchCount = matches?.Count ?? 0;
+            string identity = kind + " '" + (requested ?? string.Empty) + "'";
+            if (matchCount == 0)
+            {
+                return ParameterResolution.Failure(true, kind, requested, requestedReference,
+                    "Parameter " + identity + " was not found on element " + ToElementIdString(element.Id) + ".");
+            }
+            if (matchCount > 1)
+            {
+                return ParameterResolution.Failure(true, kind, requested, requestedReference,
+                    "Parameter " + identity + " is ambiguous on element " + ToElementIdString(element.Id) +
+                    "; " + matchCount.ToString(CultureInfo.InvariantCulture) + " parameters matched.");
+            }
+            return ParameterResolution.Success(matches[0], true, kind, requested, requestedReference);
+        }
+
+        private static IEnumerable<Parameter> EnumerateParameters(Element element)
+        {
+            if (element?.Parameters == null) return Enumerable.Empty<Parameter>();
+            return element.Parameters.Cast<Parameter>();
+        }
+
+        private static long GetParameterIdValue(Parameter parameter)
+        {
+            try
+            {
+                return parameter == null ? long.MinValue : GetElementIdValue(parameter.Id);
+            }
+            catch
+            {
+                return long.MinValue;
+            }
+        }
+
+        private static bool TryGetSharedParameterGuid(Parameter parameter, out Guid guid)
+        {
+            guid = Guid.Empty;
+            try
+            {
+                if (parameter == null || !parameter.IsShared) return false;
+                guid = parameter.GUID;
+                return guid != Guid.Empty;
+            }
+            catch
+            {
+                ExternalDefinition definition = parameter?.Definition as ExternalDefinition;
+                if (definition == null) return false;
+                guid = definition.GUID;
+                return guid != Guid.Empty;
+            }
+        }
+
         private static Dictionary<string, object> ElementTarget(Element element, string parameterName)
         {
             var target = new Dictionary<string, object>
@@ -4441,47 +4928,362 @@ namespace RevitMcpNext.Addin.Revit
             };
             if (element.Category != null) target["category"] = element.Category.Name;
             if (!string.IsNullOrWhiteSpace(parameterName)) target["parameterName"] = parameterName;
+            target["editability"] = BuildEditabilityEvidence(element);
+            return target;
+        }
+
+        private static Dictionary<string, object> ParameterTarget(Element element, ParameterResolution resolution)
+        {
+            Dictionary<string, object> target = ElementTarget(element, resolution.ResolvedName);
+            if (resolution.RequestedReference != null)
+            {
+                target["requestedParameterRef"] = CloneDictionary(resolution.RequestedReference);
+            }
+            else
+            {
+                target["legacyParameterName"] = resolution.RequestedValue;
+            }
+
+            Dictionary<string, object> resolvedParameter = BuildParameterSummary(resolution.Parameter, null, false);
+            resolvedParameter.Remove("source");
+            target["resolvedParameter"] = resolvedParameter;
+            return target;
+        }
+
+        private static Dictionary<string, object> ElementTypeTarget(ElementType elementType)
+        {
+            Dictionary<string, object> target = ElementTypeSnapshot(elementType);
+            target["elementId"] = ToElementIdString(elementType.Id);
+            target["editability"] = BuildEditabilityEvidence(elementType);
             return target;
         }
 
         private static Dictionary<string, object> ParameterSnapshot(Parameter parameter)
         {
-            return new Dictionary<string, object>
-            {
-                ["value"] = ParameterValue(parameter),
-                ["storageType"] = parameter.StorageType.ToString(),
-                ["isReadOnly"] = parameter.IsReadOnly
-            };
+            Dictionary<string, object> snapshot = BuildParameterSummary(parameter, null, true);
+            snapshot.Remove("source");
+            return snapshot;
         }
 
-        private static void SetParameterValue(Parameter parameter, object value)
+        private static PreparedParameterValue PrepareParameterValue(
+            Document document,
+            Parameter parameter,
+            object value,
+            bool stableReference)
         {
             if (parameter.IsReadOnly) throw new InvalidOperationException("Parameter is read-only.");
+
+            ForgeTypeId dataType = GetParameterDataType(parameter);
+            string specTypeId = GetForgeTypeIdString(dataType);
+            string parameterUnitTypeId = GetForgeTypeIdString(GetParameterUnitTypeId(parameter));
+            Dictionary<string, object> unitValue = value as Dictionary<string, object>;
+            if (unitValue != null)
+            {
+                if (parameter.StorageType != StorageType.Double)
+                {
+                    throw new InvalidOperationException("UnitValue is only valid for Double parameters.");
+                }
+                if (dataType == null || dataType.Empty() || !UnitUtils.IsMeasurableSpec(dataType))
+                {
+                    throw new InvalidOperationException("The Double parameter does not expose a measurable Revit spec.");
+                }
+
+                if (!unitValue.TryGetValue("value", out object numericValue) || numericValue == null || numericValue is bool)
+                {
+                    throw new InvalidOperationException("UnitValue.value must be a finite number.");
+                }
+                double input = Convert.ToDouble(numericValue, CultureInfo.InvariantCulture);
+                EnsureFinite(input, "UnitValue.value");
+                string unit = NormalizeOptionalText(GetString(unitValue, "unit"));
+                if (string.IsNullOrWhiteSpace(unit)) throw new InvalidOperationException("UnitValue.unit is required.");
+
+                double internalValue;
+                string requestedUnitTypeId = null;
+                if (IsInternalUnitToken(unit))
+                {
+                    internalValue = input;
+                }
+                else
+                {
+                    ForgeTypeId requestedUnit = ResolveUnitTypeId(unit);
+                    if (!UnitUtils.IsUnit(requestedUnit) || !UnitUtils.IsValidUnit(dataType, requestedUnit))
+                    {
+                        throw new InvalidOperationException(
+                            "Unit '" + unit + "' is not compatible with parameter spec '" + specTypeId + "'.");
+                    }
+                    internalValue = UnitUtils.ConvertToInternalUnits(input, requestedUnit);
+                    requestedUnitTypeId = GetForgeTypeIdString(requestedUnit);
+                }
+                EnsureFinite(internalValue, "Converted internal value");
+
+                return new PreparedParameterValue
+                {
+                    InputValue = CloneDictionary(unitValue),
+                    StorageValue = internalValue,
+                    IsUnitValue = true,
+                    SpecTypeId = specTypeId,
+                    RequestedUnitTypeId = requestedUnitTypeId,
+                    ParameterUnitTypeId = parameterUnitTypeId
+                };
+            }
+
+            var prepared = new PreparedParameterValue
+            {
+                InputValue = value,
+                SpecTypeId = specTypeId,
+                ParameterUnitTypeId = parameterUnitTypeId
+            };
 
             switch (parameter.StorageType)
             {
                 case StorageType.String:
-                    parameter.Set(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty);
+                    prepared.StorageValue = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
                     break;
                 case StorageType.Integer:
-                    if (value is bool booleanValue)
+                    if (IsYesNoDataType(dataType))
                     {
-                        parameter.Set(booleanValue ? 1 : 0);
+                        prepared.StorageValue = NormalizeYesNoValue(value, stableReference);
                     }
                     else
                     {
-                        parameter.Set(Convert.ToInt32(value, CultureInfo.InvariantCulture));
+                        if (stableReference && value is bool)
+                        {
+                            throw new InvalidOperationException("Boolean values are only valid for Yes/No integer parameters.");
+                        }
+                        prepared.StorageValue = NormalizeIntegerValue(value, stableReference);
                     }
                     break;
                 case StorageType.Double:
-                    parameter.Set(Convert.ToDouble(value, CultureInfo.InvariantCulture));
+                    if (value is bool) throw new InvalidOperationException("Boolean values are not valid for Double parameters.");
+                    double doubleValue = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+                    EnsureFinite(doubleValue, "Double parameter value");
+                    prepared.StorageValue = doubleValue;
                     break;
                 case StorageType.ElementId:
-                    parameter.Set(CreateElementId(Convert.ToString(value, CultureInfo.InvariantCulture)));
+                    ElementId elementId = NormalizeElementIdValue(value);
+                    prepared.StorageValue = elementId;
+                    if (GetElementIdValue(elementId) >= 0)
+                    {
+                        prepared.ReferencedElement = document.GetElement(elementId);
+                        if (prepared.ReferencedElement == null)
+                        {
+                            throw new InvalidOperationException("Referenced element " + ToElementIdString(elementId) + " was not found.");
+                        }
+                    }
                     break;
                 default:
                     throw new InvalidOperationException("Unsupported parameter storage type: " + parameter.StorageType);
             }
+
+            return prepared;
+        }
+
+        private static void SetPreparedParameterValue(Parameter parameter, PreparedParameterValue prepared)
+        {
+            bool changed;
+            switch (parameter.StorageType)
+            {
+                case StorageType.String:
+                    changed = parameter.Set((string)prepared.StorageValue);
+                    break;
+                case StorageType.Integer:
+                    changed = parameter.Set((int)prepared.StorageValue);
+                    break;
+                case StorageType.Double:
+                    changed = parameter.Set((double)prepared.StorageValue);
+                    break;
+                case StorageType.ElementId:
+                    changed = parameter.Set((ElementId)prepared.StorageValue);
+                    break;
+                default:
+                    throw new InvalidOperationException("Unsupported parameter storage type: " + parameter.StorageType);
+            }
+
+            if (!changed && !ParameterMatchesPreparedValue(parameter, prepared.StorageValue))
+            {
+                throw new InvalidOperationException("Revit rejected the parameter value.");
+            }
+        }
+
+        private static bool ParameterMatchesPreparedValue(Parameter parameter, object preparedValue)
+        {
+            switch (parameter.StorageType)
+            {
+                case StorageType.String:
+                    return string.Equals(parameter.AsString() ?? string.Empty, (string)preparedValue ?? string.Empty, StringComparison.Ordinal);
+                case StorageType.Integer:
+                    return parameter.AsInteger() == (int)preparedValue;
+                case StorageType.Double:
+                    double expected = (double)preparedValue;
+                    double tolerance = Math.Max(0.000000001, Math.Abs(expected) * 0.000000001);
+                    return Math.Abs(parameter.AsDouble() - expected) <= tolerance;
+                case StorageType.ElementId:
+                    return GetElementIdValue(parameter.AsElementId()) == GetElementIdValue((ElementId)preparedValue);
+                default:
+                    return false;
+            }
+        }
+
+        private static int NormalizeYesNoValue(object value, bool stableReference)
+        {
+            if (value is bool booleanValue) return booleanValue ? 1 : 0;
+            if (!stableReference) return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            if (!IsNumeric(value)) throw new InvalidOperationException("Yes/No parameters accept only true, false, 0, or 1.");
+
+            double numeric = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            if (Math.Abs(numeric) < 0.000000001) return 0;
+            if (Math.Abs(numeric - 1.0) < 0.000000001) return 1;
+            throw new InvalidOperationException("Yes/No parameters accept only true, false, 0, or 1.");
+        }
+
+        private static int NormalizeIntegerValue(object value, bool stableReference)
+        {
+            if (!stableReference) return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            if (!IsNumeric(value)) throw new InvalidOperationException("Integer parameters require an integer numeric value.");
+
+            double numeric = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            EnsureFinite(numeric, "Integer parameter value");
+            if (numeric < int.MinValue || numeric > int.MaxValue || Math.Abs(numeric - Math.Round(numeric)) > 0.000000001)
+            {
+                throw new InvalidOperationException("Integer parameters require a whole number in the Int32 range.");
+            }
+            return Convert.ToInt32(numeric, CultureInfo.InvariantCulture);
+        }
+
+        private static ElementId NormalizeElementIdValue(object value)
+        {
+            if (value == null || value is bool) throw new InvalidOperationException("ElementId parameters require a numeric element id.");
+            if (IsNumeric(value))
+            {
+                double numeric = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+                EnsureFinite(numeric, "ElementId parameter value");
+                if (Math.Abs(numeric - Math.Round(numeric)) > 0.000000001)
+                {
+                    throw new InvalidOperationException("ElementId parameters require a whole numeric id.");
+                }
+            }
+
+            string text = Convert.ToString(value, CultureInfo.InvariantCulture);
+            if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed))
+            {
+                throw new InvalidOperationException("ElementId parameters require a numeric element id.");
+            }
+            return CreateElementId(parsed.ToString(CultureInfo.InvariantCulture));
+        }
+
+        private static ForgeTypeId GetParameterDataType(Parameter parameter)
+        {
+            try
+            {
+                return parameter?.Definition?.GetDataType();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static ForgeTypeId GetParameterUnitTypeId(Parameter parameter)
+        {
+            try
+            {
+                return parameter?.StorageType == StorageType.Double ? parameter.GetUnitTypeId() : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsYesNoDataType(ForgeTypeId dataType)
+        {
+            return ParameterWriteContract.IsYesNoDataType(dataType);
+        }
+
+        private static string GetForgeTypeIdString(ForgeTypeId typeId)
+        {
+            return ParameterWriteContract.GetForgeTypeIdString(typeId);
+        }
+
+        private static bool IsInternalUnitToken(string unit)
+        {
+            return ParameterWriteContract.IsInternalUnitToken(unit);
+        }
+
+        private static ForgeTypeId ResolveUnitTypeId(string unit)
+        {
+            return ParameterWriteContract.ResolveUnitTypeId(unit);
+        }
+
+        private static void EnsureFinite(double value, string label)
+        {
+            ParameterWriteContract.EnsureFinite(value, label);
+        }
+
+        private static object SerializeStorageValue(object value)
+        {
+            return value is ElementId elementId ? ToElementIdString(elementId) : value;
+        }
+
+        private static Dictionary<string, object> BuildEditabilityEvidence(Element element)
+        {
+            var evidence = new Dictionary<string, object>();
+            Document document = element?.Document;
+            bool isWorkshared = document?.IsWorkshared == true;
+            evidence["isWorkshared"] = isWorkshared;
+            if (!isWorkshared)
+            {
+                evidence["checkoutStatus"] = "NotApplicable";
+                evidence["isEditable"] = true;
+                evidence["ownedByOtherUser"] = false;
+                return evidence;
+            }
+
+            try
+            {
+                string owner;
+                CheckoutStatus status = WorksharingUtils.GetCheckoutStatus(document, element.Id, out owner);
+                evidence["checkoutStatus"] = status.ToString();
+                evidence["isEditable"] = status != CheckoutStatus.OwnedByOtherUser;
+                evidence["ownedByOtherUser"] = status == CheckoutStatus.OwnedByOtherUser;
+                AddIfNotBlank(evidence, "owner", owner);
+
+                if (string.IsNullOrWhiteSpace(owner) && status == CheckoutStatus.OwnedByOtherUser)
+                {
+                    using (WorksharingTooltipInfo tooltip = WorksharingUtils.GetWorksharingTooltipInfo(document, element.Id))
+                    {
+                        AddIfNotBlank(evidence, "owner", tooltip?.Owner);
+                        AddIfNotBlank(evidence, "lastChangedBy", tooltip?.LastChangedBy);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                evidence["checkoutStatus"] = "Unknown";
+                evidence["isEditable"] = null;
+                evidence["ownedByOtherUser"] = false;
+                evidence["evidenceError"] = ex.Message;
+            }
+            return evidence;
+        }
+
+        private static string OwnedByOtherUserError(Dictionary<string, object> target, string label)
+        {
+            Dictionary<string, object> editability = GetDictionary(target, "editability");
+            if (!GetBool(editability, "isWorkshared", false) || GetBool(editability, "isEditable", false)) return null;
+
+            string owner = GetString(editability, "owner");
+            if (GetBool(editability, "ownedByOtherUser", false))
+            {
+                return label + " is owned by another Revit user" +
+                       (string.IsNullOrWhiteSpace(owner) ? "." : " ('" + owner + "').") +
+                       " Synchronize or request ownership before previewing this edit.";
+            }
+
+            string evidenceError = GetString(editability, "evidenceError");
+            return label + " editability could not be verified in this workshared document." +
+                   (string.IsNullOrWhiteSpace(evidenceError) ? string.Empty : " Revit reported: " + evidenceError) +
+                   " Refresh worksharing state before previewing this edit.";
         }
 
         private static Element ResolveElement(Document document, string elementId)
@@ -4494,6 +5296,60 @@ namespace RevitMcpNext.Addin.Revit
             {
                 return null;
             }
+        }
+
+        private static ElementType FindElementTypeNameConflict(
+            Document document,
+            ElementType sourceType,
+            string requestedName,
+            ElementId excludedElementTypeId)
+        {
+            string scopeKey = GetElementTypeNameScopeKey(sourceType);
+            string excludedId = IsValidElementId(excludedElementTypeId)
+                ? ToElementIdString(excludedElementTypeId)
+                : null;
+
+            return new FilteredElementCollector(document)
+                .WhereElementIsElementType()
+                .OfType<ElementType>()
+                .FirstOrDefault(candidate =>
+                    (string.IsNullOrWhiteSpace(excludedId) ||
+                     !string.Equals(ToElementIdString(candidate.Id), excludedId, StringComparison.Ordinal)) &&
+                    string.Equals(GetElementTypeNameScopeKey(candidate), scopeKey, StringComparison.OrdinalIgnoreCase) &&
+                    ElementTypeNamesEqual(SafeElementName(candidate), requestedName));
+        }
+
+        private static string GetElementTypeNameScopeKey(ElementType elementType)
+        {
+            if (elementType is FamilySymbol symbol && symbol.Family != null && IsValidElementId(symbol.Family.Id))
+            {
+                return "FamilySymbol|familyId:" + ToElementIdString(symbol.Family.Id);
+            }
+
+            return (elementType?.GetType().FullName ?? typeof(ElementType).FullName) +
+                   "|familyName:" + (GetFamilyName(elementType) ?? string.Empty);
+        }
+
+        private static bool ElementTypeNamesEqual(string left, string right)
+        {
+            try
+            {
+                return NamingUtils.CompareNames(left ?? string.Empty, right ?? string.Empty) == 0;
+            }
+            catch
+            {
+                return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private static string ElementTypeNameConflictMessage(string requestedName, ElementType conflict)
+        {
+            string familyName = GetFamilyName(conflict);
+            string familyDescription = string.IsNullOrWhiteSpace(familyName)
+                ? "the same ElementType family scope"
+                : "family '" + familyName + "'";
+            return "An ElementType named '" + requestedName + "' already exists in " + familyDescription +
+                   " (elementTypeId " + ToElementIdString(conflict.Id) + ").";
         }
 
         private static bool LevelNameExists(Document document, string name)
@@ -5252,6 +6108,46 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return summary;
+        }
+
+        private static Dictionary<string, object> ElementTypeSnapshot(
+            ElementType elementType,
+            string proposedName = null,
+            bool includeIdentity = true)
+        {
+            if (elementType == null)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["available"] = false
+                };
+            }
+
+            string typeName = proposedName ?? SafeElementName(elementType);
+            var snapshot = new Dictionary<string, object>
+            {
+                ["class"] = elementType.GetType().Name,
+                ["name"] = typeName,
+                ["typeName"] = typeName,
+                ["familyName"] = GetFamilyName(elementType) ?? string.Empty,
+                ["canBeRenamed"] = elementType.CanBeRenamed,
+                ["canBeCopied"] = elementType.CanBeCopied
+            };
+
+            if (includeIdentity)
+            {
+                string elementTypeId = ToElementIdString(elementType.Id);
+                snapshot["id"] = elementTypeId;
+                snapshot["elementTypeId"] = elementTypeId;
+                snapshot["uniqueId"] = elementType.UniqueId;
+            }
+
+            if (elementType.Category != null) snapshot["category"] = elementType.Category.Name;
+
+            string familyId = GetFamilyIdString(elementType);
+            if (!string.IsNullOrWhiteSpace(familyId)) snapshot["familyId"] = familyId;
+
+            return snapshot;
         }
 
         private static Dictionary<string, object> SheetSnapshot(Document document, ViewSheet sheet)
@@ -6045,27 +6941,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static string Canonicalize(object value)
         {
-            if (value == null) return "null";
-            if (value is Dictionary<string, object> dictionary)
-            {
-                return "{" + string.Join(",", dictionary.Keys.OrderBy(key => key, StringComparer.Ordinal)
-                    .Select(key => key + ":" + Canonicalize(dictionary[key]))) + "}";
-            }
-            if (value is IEnumerable<Dictionary<string, object>> dictionaryEnumerable)
-            {
-                return "[" + string.Join(",", dictionaryEnumerable.Select(Canonicalize)) + "]";
-            }
-            if (value is object[] array)
-            {
-                return "[" + string.Join(",", array.Select(Canonicalize)) + "]";
-            }
-            if (value is ArrayList list)
-            {
-                return "[" + string.Join(",", list.Cast<object>().Select(Canonicalize)) + "]";
-            }
-            if (value is bool boolean) return boolean ? "true" : "false";
-            if (IsNumeric(value)) return Convert.ToString(value, CultureInfo.InvariantCulture);
-            return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            return CanonicalJson.Serialize(value);
         }
 
         private static string HashString(string raw)
@@ -6728,6 +7604,8 @@ namespace RevitMcpNext.Addin.Revit
                 },
                 ["capabilities"] = new[]
                 {
+                    "revit.bridge_health",
+                    "revit.get_request_result",
                     "revit.status",
                     "revit.list_documents",
                     "revit.create_project_from_template",
@@ -8118,9 +8996,9 @@ namespace RevitMcpNext.Addin.Revit
             {
                 ["name"] = name,
                 ["storageType"] = parameter == null ? "None" : parameter.StorageType.ToString(),
-                ["source"] = source,
                 ["isReadOnly"] = parameter?.IsReadOnly ?? true
             };
+            if (!string.IsNullOrWhiteSpace(source)) summary["source"] = source;
 
             if (parameter == null) return summary;
 
@@ -8136,10 +9014,18 @@ namespace RevitMcpNext.Addin.Revit
 
             try
             {
-                object idValue = typeof(Parameter).GetProperty("Id")?.GetValue(parameter, null);
-                if (idValue is ElementId parameterId && IsValidElementId(parameterId))
+                long parameterId = GetParameterIdValue(parameter);
+                if (parameterId != long.MinValue && parameterId != GetElementIdValue(ElementId.InvalidElementId))
                 {
-                    summary["definitionId"] = GetElementIdValue(parameterId).ToString(CultureInfo.InvariantCulture);
+                    summary["definitionId"] = parameterId.ToString(CultureInfo.InvariantCulture);
+                    if (parameterId >= int.MinValue && parameterId <= int.MaxValue)
+                    {
+                        var builtInParameter = (BuiltInParameter)Convert.ToInt32(parameterId, CultureInfo.InvariantCulture);
+                        if (parameterId < 0 && Enum.IsDefined(typeof(BuiltInParameter), builtInParameter))
+                        {
+                            summary["builtInParameter"] = builtInParameter.ToString();
+                        }
+                    }
                 }
             }
             catch
@@ -8149,18 +9035,30 @@ namespace RevitMcpNext.Addin.Revit
 
             try
             {
-                object isShared = typeof(Parameter).GetProperty("IsShared")?.GetValue(parameter, null);
-                if (isShared is bool isSharedBool) summary["isShared"] = isSharedBool;
+                summary["isShared"] = parameter.IsShared;
             }
             catch
             {
                 // Not all parameter sources expose shared state.
             }
 
-            ExternalDefinition externalDefinition = parameter.Definition as ExternalDefinition;
-            if (externalDefinition != null)
+            if (TryGetSharedParameterGuid(parameter, out Guid sharedGuid))
             {
-                summary["guid"] = externalDefinition.GUID.ToString("D");
+                summary["guid"] = sharedGuid.ToString("D");
+            }
+
+            ForgeTypeId dataType = GetParameterDataType(parameter);
+            string specTypeId = GetForgeTypeIdString(dataType);
+            if (!string.IsNullOrWhiteSpace(specTypeId))
+            {
+                summary["specTypeId"] = specTypeId;
+                summary["isYesNo"] = IsYesNoDataType(dataType);
+            }
+
+            string unitTypeId = GetForgeTypeIdString(GetParameterUnitTypeId(parameter));
+            if (!string.IsNullOrWhiteSpace(unitTypeId))
+            {
+                summary["unitTypeId"] = unitTypeId;
             }
 
             if (includeValues)
@@ -8692,12 +9590,14 @@ namespace RevitMcpNext.Addin.Revit
 
         private Dictionary<string, object> BuildDocumentSummary(Document document, Document activeDocument)
         {
+            string fingerprint = ComputeDocumentFingerprint(document);
+            string activeFingerprint = activeDocument == null ? null : ComputeDocumentFingerprint(activeDocument);
             var summary = new Dictionary<string, object>
             {
                 ["documentId"] = GetDocumentId(document),
                 ["title"] = document.Title,
-                ["fingerprint"] = ComputeDocumentFingerprint(document),
-                ["isActive"] = ReferenceEquals(document, activeDocument),
+                ["fingerprint"] = fingerprint,
+                ["isActive"] = string.Equals(fingerprint, activeFingerprint, StringComparison.OrdinalIgnoreCase),
                 ["isWorkshared"] = document.IsWorkshared,
                 ["isModified"] = document.IsModified,
                 ["generation"] = _generations.GetGeneration(document)

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS8632</NoWarn>
+    <ImplicitUsings>false</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\addin\RevitMcpNext.Contracts\BridgeContracts.cs" Link="Production\BridgeContracts.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Integration\RevitMcpInProcessBridge.cs" Link="Production\RevitMcpInProcessBridge.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\BridgeProtocolGuard.cs" Link="Production\BridgeProtocolGuard.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\JsonWireCodec.cs" Link="Production\JsonWireCodec.cs" />
+  </ItemGroup>
+</Project>

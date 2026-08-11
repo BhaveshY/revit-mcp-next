@@ -646,7 +646,7 @@ $clientDiscoveryContent = [ordered] @{
     product = "revit-mcp-next"
     version = $releaseVersion
     installRoot = (Get-FullPath $InstallRoot)
-    protocolVersion = "2026-06-23"
+    protocolVersion = "2026-08-11"
     pipeName = "revit-mcp-next"
     addinClientId = $addinClientId
     launcherPath = (Get-FullPath $launcher)
@@ -661,6 +661,8 @@ $clientDiscoveryContent = [ordered] @{
     pythonInProcessHelperPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_inprocess.py"))
     contractSchemasPath = (Get-FullPath (Join-Path $installedContracts "schemas"))
     tools = @(
+        "revit.bridge_health",
+        "revit.get_request_result",
         "revit.status",
         "revit.read_bundle",
         "revit.list_documents",
@@ -708,6 +710,8 @@ $clientDiscoveryContent = [ordered] @{
         "rotate_element",
         "copy_element",
         "change_element_type",
+        "rename_element_type",
+        "duplicate_element_type",
         "set_element_pinned",
         "delete_element"
     )

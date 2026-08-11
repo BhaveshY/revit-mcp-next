@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = "2026-06-23" as const;
+export const PROTOCOL_VERSION = "2026-08-11" as const;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
 export type ElementId = string;
@@ -70,6 +70,8 @@ export interface BridgeError {
 
 export interface BridgeMetrics {
   elapsedMs: number;
+  queueWaitMs?: number;
+  revitExecutionMs?: number;
   collectorElapsedMs?: number;
   cacheHit?: boolean;
   returnedCount?: number;
@@ -133,6 +135,71 @@ export interface RevitDocumentSummary {
   generation: number;
 }
 
+export interface BridgeQueueDiagnostics {
+  pendingCount: number;
+  hasPending: boolean;
+  enqueuedCount: number;
+  dequeuedCount: number;
+  cancelledCount: number;
+  raiseCount: number;
+  raiseNotAcceptedCount: number;
+  lastRaiseResult?: string;
+  externalEventAttached?: boolean;
+  lastEnqueuedAtUtc?: string;
+  lastDequeuedAtUtc?: string;
+  lastCancelledAtUtc?: string;
+  lastRaiseAtUtc?: string;
+  oldestPendingRequestId?: string;
+  oldestPendingOperation?: string;
+  oldestPendingAgeMs?: number;
+}
+
+export interface RequestOutcomeDiagnostics {
+  activeCount: number;
+  inFlightCount: number;
+  completedCount: number;
+  capacity: number;
+  ttlSeconds: number;
+}
+
+export type RequestResultState = "accepted" | "running" | "committed" | "rolledBack" | "failed";
+
+export interface RequestResultRequest {
+  requestId: string;
+}
+
+interface FoundRequestResultBase {
+  found: true;
+  requestId: string;
+  operation: string;
+  acceptedAtUtc: string;
+}
+
+export type RequestResultResult<TData = unknown> =
+  | { found: false; state: "failed" }
+  | (FoundRequestResultBase & { state: "accepted" | "running" })
+  | (FoundRequestResultBase & {
+      state: "committed" | "rolledBack" | "failed";
+      completedAtUtc: string;
+      response: BridgeResponse<TData>;
+    });
+
+export interface BridgeHealthResult {
+  healthy: boolean;
+  pipeName: string;
+  controlPipeName: string;
+  waitingListeners: number;
+  activeConnections: number;
+  acceptedConnections: number;
+  completedConnections: number;
+  clientFaults: number;
+  listenerFaults: number;
+  queue: BridgeQueueDiagnostics;
+  requestOutcomes: RequestOutcomeDiagnostics;
+  lastAcceptedAtUtc?: string;
+  lastFaultAtUtc?: string;
+}
+
 export interface RevitStatus {
   connected: boolean;
   brokerVersion: string;
@@ -155,24 +222,7 @@ export interface RevitStatus {
     count: number;
   };
   diagnostics?: {
-    queue?: {
-      pendingCount: number;
-      hasPending: boolean;
-      enqueuedCount: number;
-      dequeuedCount: number;
-      cancelledCount: number;
-      raiseCount: number;
-      raiseNotAcceptedCount: number;
-      lastRaiseResult?: string;
-      externalEventAttached?: boolean;
-      lastEnqueuedAtUtc?: string;
-      lastDequeuedAtUtc?: string;
-      lastCancelledAtUtc?: string;
-      lastRaiseAtUtc?: string;
-      oldestPendingRequestId?: string;
-      oldestPendingOperation?: string;
-      oldestPendingAgeMs?: number;
-    };
+    queue?: BridgeQueueDiagnostics;
     previewTokens?: {
       activeCount: number;
       readyCount: number;
@@ -249,6 +299,8 @@ export interface QueryFilter {
 export type QueryPreset = "idOnly" | "summary" | "schedule" | "geometrySummary";
 
 export interface QueryRequest {
+  documentFingerprint?: string;
+  expectedGeneration?: number;
   filter: QueryFilter;
   fields?: string[];
   preset?: QueryPreset;
@@ -295,9 +347,13 @@ export interface ParameterSummary {
   value?: string | number | boolean | null;
   valueString?: string;
   elementIdValue?: ElementId;
+  builtInParameter?: string;
   definitionId?: string;
   isShared?: boolean;
   guid?: string;
+  specTypeId?: string;
+  unitTypeId?: string;
+  isYesNo?: boolean;
 }
 
 export interface ParameterTargetSummary {
@@ -1008,6 +1064,8 @@ export type ChangeOperationType =
   | "rotate_element"
   | "copy_element"
   | "change_element_type"
+  | "rename_element_type"
+  | "duplicate_element_type"
   | "set_element_pinned"
   | "create_grid"
   | "create_floor"
@@ -1016,6 +1074,12 @@ export type ChangeOperationType =
 export type ChangeOperationStatus = "ready" | "warning" | "blocked" | "applied";
 
 export type ChangeScalar = string | number | boolean;
+export type ParameterRef =
+  | { kind: "builtInParameter"; builtInParameter: string }
+  | { kind: "definitionId"; definitionId: string }
+  | { kind: "sharedParameterGuid"; sharedParameterGuid: string }
+  | { kind: "name"; name: string };
+export type ParameterWriteValue = ChangeScalar | UnitValue;
 export type RoomTagOrientation = "Horizontal" | "Vertical" | "Model";
 export type ElementTagOrientation = "Horizontal" | "Vertical" | "AnyModelDirection";
 
@@ -1024,13 +1088,26 @@ export interface ChangeOperationBase {
   type: ChangeOperationType;
 }
 
-export interface SetParameterChangeOperation extends ChangeOperationBase {
+interface SetParameterChangeOperationBase extends ChangeOperationBase {
   type: "set_parameter";
   elementId: ElementId;
   expectedUniqueId?: UniqueId;
-  parameterName: string;
-  value: ChangeScalar;
+  value: ParameterWriteValue;
 }
+
+export type SetParameterChangeOperation = SetParameterChangeOperationBase &
+  (
+    | {
+        parameterRef: ParameterRef;
+        /** Optional legacy label for readable payloads. parameterRef is authoritative when both are supplied. */
+        parameterName?: string;
+      }
+    | {
+        parameterRef?: never;
+        /** Legacy name lookup retained for backwards compatibility. */
+        parameterName: string;
+      }
+  );
 
 export interface CreateLevelChangeOperation extends ChangeOperationBase {
   type: "create_level";
@@ -1178,6 +1255,20 @@ export interface ChangeElementTypeOperation extends ChangeOperationBase {
   typeId: ElementId;
 }
 
+export interface RenameElementTypeOperation extends ChangeOperationBase {
+  type: "rename_element_type";
+  elementTypeId: ElementId;
+  expectedUniqueId?: UniqueId;
+  newName: string;
+}
+
+export interface DuplicateElementTypeOperation extends ChangeOperationBase {
+  type: "duplicate_element_type";
+  sourceTypeId: ElementId;
+  expectedUniqueId?: UniqueId;
+  newName: string;
+}
+
 export interface SetElementPinnedOperation extends ChangeOperationBase {
   type: "set_element_pinned";
   elementId: ElementId;
@@ -1241,6 +1332,8 @@ export type ChangeOperation =
   | RotateElementChangeOperation
   | CopyElementChangeOperation
   | ChangeElementTypeOperation
+  | RenameElementTypeOperation
+  | DuplicateElementTypeOperation
   | SetElementPinnedOperation
   | CreateGridOperation
   | CreateFloorOperation

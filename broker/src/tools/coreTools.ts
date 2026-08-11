@@ -59,6 +59,7 @@ const documentGuardSchema = {
 };
 
 const querySchema = {
+  ...documentGuardSchema,
   filter: queryFilterSchema.describe("Revit-native filters to apply before projection."),
   fields: z.array(boundedString).max(32).optional().describe("Fields to return. Prefer explicit fields for token efficiency."),
   preset: z
@@ -552,15 +553,51 @@ const expiresAtSchema = z
 const operationBaseSchema = z.object({
   id: boundedString.optional().describe("Optional client-supplied operation identifier for preview/apply correlation."),
 });
-const setParameterOperationSchema = operationBaseSchema
+const parameterRefSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("builtInParameter"),
+      builtInParameter: boundedString.describe("BuiltInParameter enum name, such as ALL_MODEL_MARK."),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("definitionId"),
+      definitionId: boundedId.describe("Document-scoped Revit parameter definition ElementId."),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("sharedParameterGuid"),
+      sharedParameterGuid: z.string().uuid().describe("Shared parameter GUID in canonical UUID form."),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("name"),
+      name: boundedString.describe("Exact display-name fallback. Ambiguous matches must be blocked."),
+    })
+    .strict(),
+]);
+const setParameterOperationBaseSchema = operationBaseSchema
   .extend({
     type: z.literal("set_parameter"),
     elementId: boundedId.describe("Target Revit element ID."),
     expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard to avoid editing an unexpected element if IDs changed."),
-    parameterName: boundedString.describe("Exact parameter name to set on the target element."),
-    value: changeScalarSchema.describe("New parameter value as a string, number, or boolean."),
+    value: z
+      .union([changeScalarSchema, changeUnitValueSchema])
+      .describe("Legacy raw scalar or an explicit UnitValue. UnitValue is valid only for a compatible measurable Double parameter spec."),
   })
   .strict();
+const setParameterOperationSchema = z.union([
+  setParameterOperationBaseSchema.extend({
+    parameterRef: parameterRefSchema.describe("Stable parameter identity. It is authoritative when parameterName is also supplied."),
+    parameterName: boundedString.optional().describe("Optional legacy label retained for readable or transitional payloads."),
+  }),
+  setParameterOperationBaseSchema.extend({
+    parameterName: boundedString.describe("Legacy exact parameter display name. Prefer parameterRef for new integrations."),
+  }),
+]);
 const createLevelOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("create_level"),
@@ -730,6 +767,22 @@ const changeElementTypeOperationSchema = operationBaseSchema
     typeId: boundedId.describe("New Revit element type ID. Use revit.catalog with kind=elementTypes and filter.forElementId first."),
   })
   .strict();
+const renameElementTypeOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("rename_element_type"),
+    elementTypeId: boundedId.describe("ElementType ID to rename, including a FamilySymbol ID returned by revit.catalog."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the ElementType being renamed."),
+    newName: z.string().trim().min(1).max(256).describe("New Revit type name. Leading and trailing whitespace is removed."),
+  })
+  .strict();
+const duplicateElementTypeOperationSchema = operationBaseSchema
+  .extend({
+    type: z.literal("duplicate_element_type"),
+    sourceTypeId: boundedId.describe("Source ElementType ID to duplicate, including a FamilySymbol ID returned by revit.catalog."),
+    expectedUniqueId: boundedString.optional().describe("Optional uniqueId guard for the source ElementType."),
+    newName: z.string().trim().min(1).max(256).describe("Name for the duplicated Revit type. Leading and trailing whitespace is removed."),
+  })
+  .strict();
 const setElementPinnedOperationSchema = operationBaseSchema
   .extend({
     type: z.literal("set_element_pinned"),
@@ -794,7 +847,7 @@ const deleteElementOperationSchema = operationBaseSchema
       .describe("Maximum delete-set size the preview may approve without exact expectedDeletedElementIds. Defaults to a conservative add-in limit."),
   })
   .strict();
-const changeOperationSchema = z.discriminatedUnion("type", [
+const changeOperationSchema = z.union([
   setParameterOperationSchema,
   createLevelOperationSchema,
   createWallOperationSchema,
@@ -812,6 +865,8 @@ const changeOperationSchema = z.discriminatedUnion("type", [
   rotateElementOperationSchema,
   copyElementOperationSchema,
   changeElementTypeOperationSchema,
+  renameElementTypeOperationSchema,
+  duplicateElementTypeOperationSchema,
   setElementPinnedOperationSchema,
   createGridOperationSchema,
   createFloorOperationSchema,
@@ -844,6 +899,10 @@ const cancelSchema = {
   reason: z.string().max(256).optional(),
 };
 
+const requestResultInputSchema = {
+  requestId: boundedString.describe("Original bridge request ID whose retained outcome should be queried."),
+};
+
 const warningSchema = z
   .object({
     code: z.string(),
@@ -855,6 +914,8 @@ const warningSchema = z
 const metricsSchema = z
   .object({
     elapsedMs: z.number(),
+    queueWaitMs: z.number().optional(),
+    revitExecutionMs: z.number().optional(),
     collectorElapsedMs: z.number().optional(),
     cacheHit: z.boolean().optional(),
     returnedCount: z.number().optional(),
@@ -893,6 +954,53 @@ const jsonValueSchema: z.ZodTypeAny = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(jsonValueSchema)])
 );
 const jsonObjectSchema = z.record(jsonValueSchema);
+
+const retainedBridgeResponseSchema = z.union([
+  z
+    .object({
+      ok: z.literal(true),
+      requestId: z.string(),
+      data: jsonValueSchema,
+      warnings: z.array(warningSchema),
+      metrics: metricsSchema,
+      generation: z.number().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      requestId: z.string(),
+      error: bridgeErrorSchema,
+      warnings: z.array(warningSchema),
+      metrics: metricsSchema.optional(),
+    })
+    .strict(),
+]);
+
+const foundRequestResultBaseSchema = {
+  found: z.literal(true),
+  requestId: z.string(),
+  operation: z.string(),
+  acceptedAtUtc: z.string(),
+};
+
+const requestResultDataSchema = z.union([
+  z.object({ found: z.literal(false), state: z.literal("failed") }).strict(),
+  z
+    .object({
+      ...foundRequestResultBaseSchema,
+      state: z.enum(["accepted", "running"]),
+    })
+    .strict(),
+  z
+    .object({
+      ...foundRequestResultBaseSchema,
+      state: z.enum(["committed", "rolledBack", "failed"]),
+      completedAtUtc: z.string(),
+      response: retainedBridgeResponseSchema,
+    })
+    .strict(),
+]);
 
 const changePreviewItemSchema = z
   .object({
@@ -1054,6 +1162,53 @@ const queryResultSchema = pageBaseSchema
   })
   .passthrough();
 
+const bridgeQueueDiagnosticsSchema = z
+  .object({
+    pendingCount: z.number(),
+    hasPending: z.boolean(),
+    enqueuedCount: z.number(),
+    dequeuedCount: z.number(),
+    cancelledCount: z.number(),
+    raiseCount: z.number(),
+    raiseNotAcceptedCount: z.number(),
+    lastRaiseResult: z.string().optional(),
+    externalEventAttached: z.boolean().optional(),
+    lastEnqueuedAtUtc: z.string().optional(),
+    lastDequeuedAtUtc: z.string().optional(),
+    lastCancelledAtUtc: z.string().optional(),
+    lastRaiseAtUtc: z.string().optional(),
+    oldestPendingRequestId: z.string().optional(),
+    oldestPendingOperation: z.string().optional(),
+    oldestPendingAgeMs: z.number().optional(),
+  })
+  .passthrough();
+
+const bridgeHealthDataSchema = z
+  .object({
+    healthy: z.boolean(),
+    pipeName: z.string(),
+    controlPipeName: z.string(),
+    waitingListeners: z.number(),
+    activeConnections: z.number(),
+    acceptedConnections: z.number(),
+    completedConnections: z.number(),
+    clientFaults: z.number(),
+    listenerFaults: z.number(),
+    queue: bridgeQueueDiagnosticsSchema,
+    requestOutcomes: z
+      .object({
+        activeCount: z.number(),
+        inFlightCount: z.number(),
+        completedCount: z.number(),
+        capacity: z.number(),
+        ttlSeconds: z.number(),
+      })
+      .passthrough(),
+    lastAcceptedAtUtc: z.string().optional(),
+    lastFaultAtUtc: z.string().optional(),
+  })
+  .passthrough();
+
 const statusDataSchema = z
   .object({
     connected: z.boolean(),
@@ -1074,27 +1229,7 @@ const statusDataSchema = z
     selection: z.object({ count: z.number() }).passthrough().optional(),
     diagnostics: z
       .object({
-        queue: z
-          .object({
-            pendingCount: z.number(),
-            hasPending: z.boolean(),
-            enqueuedCount: z.number(),
-            dequeuedCount: z.number(),
-            cancelledCount: z.number(),
-            raiseCount: z.number(),
-            raiseNotAcceptedCount: z.number(),
-            lastRaiseResult: z.string().optional(),
-            externalEventAttached: z.boolean().optional(),
-            lastEnqueuedAtUtc: z.string().optional(),
-            lastDequeuedAtUtc: z.string().optional(),
-            lastCancelledAtUtc: z.string().optional(),
-            lastRaiseAtUtc: z.string().optional(),
-            oldestPendingRequestId: z.string().optional(),
-            oldestPendingOperation: z.string().optional(),
-            oldestPendingAgeMs: z.number().optional(),
-          })
-          .passthrough()
-          .optional(),
+        queue: bridgeQueueDiagnosticsSchema.optional(),
         previewTokens: z
           .object({
             activeCount: z.number(),
@@ -1418,6 +1553,13 @@ const parameterSummarySchema = z
     storageType: z.string(),
     source: z.string(),
     isReadOnly: z.boolean(),
+    builtInParameter: z.string().optional(),
+    definitionId: z.string().optional(),
+    isShared: z.boolean().optional(),
+    guid: z.string().optional(),
+    specTypeId: z.string().optional(),
+    unitTypeId: z.string().optional(),
+    isYesNo: z.boolean().optional(),
   })
   .passthrough();
 
@@ -1470,6 +1612,8 @@ const outputSchemas = {
     })
     .strict(),
   status: toolOutputSchema(statusDataSchema),
+  bridgeHealth: toolOutputSchema(bridgeHealthDataSchema),
+  requestResult: toolOutputSchema(requestResultDataSchema),
   documents: toolOutputSchema(z.array(documentSummarySchema)),
   createProjectFromTemplate: toolOutputSchema(createProjectFromTemplateResultSchema),
   levels: toolOutputSchema(z.array(levelSummarySchema)),
@@ -1565,6 +1709,64 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         data.connected
           ? `Revit bridge connected. Active document: ${data.activeDocument?.title ?? "(none)"}.`
           : "Revit bridge is not connected."
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.bridge_health",
+    {
+      title: "Revit Bridge Health",
+      description:
+        "Probe the reserved bridge control pipe without waiting for Revit ExternalEvent work. Returns listener, connection, queue, fault, and request-outcome diagnostics.",
+      inputSchema: {},
+      outputSchema: outputSchemas.bridgeHealth,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (_args, extra) => {
+      const request = makeRequest(context.sessionId, "bridge_health", "debug", {}, 5000);
+      const response = await context.bridge.bridgeHealth(request, { signal: extra.signal });
+      return asToolResult(
+        response,
+        (data) =>
+          `Bridge ${data.healthy ? "healthy" : "unhealthy"}. ${data.waitingListeners} listener(s), ${data.activeConnections} active connection(s), ${data.queue.pendingCount} queued request(s).`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_request_result",
+    {
+      title: "Get Revit Request Result",
+      description:
+        "Query the reserved control pipe for a retained request outcome by its original request ID. This never replays the original operation.",
+      inputSchema: requestResultInputSchema,
+      outputSchema: outputSchemas.requestResult,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args, extra) => {
+      const request = makeRequest(
+        context.sessionId,
+        "get_request_result",
+        "debug",
+        { requestId: args.requestId },
+        5000
+      );
+      const response = await context.bridge.getRequestResult(request, { signal: extra.signal });
+      return asToolResult(response, (data) =>
+        data.found
+          ? `Request ${data.requestId} is ${data.state}.`
+          : `No retained result was found for request ${args.requestId}.`
       );
     }
   );
@@ -2431,6 +2633,8 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, extra) => {
       const basePayload = {
+        documentFingerprint: args.documentFingerprint,
+        expectedGeneration: args.expectedGeneration,
         filter: args.filter,
         fields: args.fields,
         preset: args.preset,
@@ -2498,7 +2702,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_schedule, add_schedule_field, place_schedule_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_schedule, add_schedule_field, place_schedule_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, rename_element_type, duplicate_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: outputSchemas.previewChange,
       annotations: {

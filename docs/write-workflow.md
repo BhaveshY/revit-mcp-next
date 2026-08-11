@@ -25,6 +25,7 @@ Use `revit.catalog` instead of guessing type IDs:
 - `create_wall.wallTypeId`: `revit.catalog` with `kind: "elementTypes"` and filters such as `classes: ["WallType"]`, `categories: ["OST_Walls"]`.
 - `create_floor.floorTypeId`: `revit.catalog` with `kind: "elementTypes"` and filters such as `classes: ["FloorType"]`, `categories: ["OST_Floors"]`.
 - `change_element_type.typeId`: `revit.catalog` with `kind: "elementTypes"`, `filter.forElementId`, and `preset: "typeChange"` so the returned IDs come from Revit's compatible type list.
+- `rename_element_type.elementTypeId` and `duplicate_element_type.sourceTypeId`: `revit.catalog` with `kind: "elementTypes"` or `kind: "familySymbols"`. Use the returned `uniqueId` as `expectedUniqueId` when it is available.
 - Family placement discovery: `revit.catalog` supports `kind: "familySymbols"` with `preset: "placement"`. Only apply placement change sets when preview reports ready; missing symbols, missing hosts, or unsupported placement classes should be treated as blocked previews.
 - Tag and family bootstrap: check `revit.catalog kind=tagTypes` first for compatible room, wall, or multi-category tag symbols. Use `load_family` only when compatible symbols are missing and a vetted local `.rfa` path is available; include `expectedSha256` when known, then re-run catalog before `tag_room`, `tag_element`, or placement work.
 - Schedule discovery: use `revit.get_schedules` with `includeFields: true` to inspect existing schedules, then `revit.get_schedule_fields` with `scheduleId` or `category` before `create_schedule` or `add_schedule_field`.
@@ -33,11 +34,11 @@ When a previous read, preview, or apply response already returned element identi
 
 pyRevit and Dynamo scripts should use the in-process helper under `integrations/python` so they do not deadlock while waiting on an `ExternalEvent`. Plain external Python processes can use the stdio MCP client in the same folder. Do not call the named pipe directly from pyRevit or Dynamo.
 
-When a read returns `uniqueId`, keep targeting writes by `elementId` or operation-specific IDs such as `roomId`, and echo the `uniqueId` back as `expectedUniqueId` on existing-element writes. This is supported by `set_parameter`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `set_element_pinned`, and `delete_element`. For wall-hosted `place_family_instance`, keep targeting the host by `hostElementId` and echo the host wall's `uniqueId` as `expectedHostUniqueId`. Preview blocks mismatches before the apply token can be used, which protects agents from stale integer element IDs after model changes.
+When a read returns `uniqueId`, keep targeting writes by `elementId` or operation-specific IDs such as `roomId`, `elementTypeId`, or `sourceTypeId`, and echo the `uniqueId` back as `expectedUniqueId` on existing-element writes. This is supported by `set_parameter`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `rename_element_type`, `duplicate_element_type`, `set_element_pinned`, and `delete_element`. For wall-hosted `place_family_instance`, keep targeting the host by `hostElementId` and echo the host wall's `uniqueId` as `expectedHostUniqueId`. Preview blocks mismatches before the apply token can be used, which protects agents from stale integer element IDs after model changes.
 
 End-to-end supported operations:
 
-- `set_parameter`: set a writable instance parameter by element ID and parameter name, optionally guarded by `expectedUniqueId`.
+- `set_parameter`: set a writable instance parameter by element ID. Prefer a stable `parameterRef` from `revit.describe_parameters`: built-in ID, definition ID, or shared GUID. Name references must be unambiguous. Typed `UnitValue` inputs are validated against the Revit parameter spec before conversion. Legacy `parameterName` and scalar values remain supported.
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
 - `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
@@ -57,6 +58,8 @@ End-to-end supported operations:
 - `rotate_element`: rotate one non-pinned model element around `axisStart`/`axisEnd` by an explicit `angle`, optionally guarded by `expectedUniqueId`.
 - `copy_element`: copy one model element by a non-zero `translation` vector and return copied element IDs, optionally guarded by `expectedUniqueId`.
 - `change_element_type`: change one non-pinned model element to a compatible `typeId`, optionally guarded by `expectedUniqueId`.
+- `rename_element_type`: rename one `ElementType`, including a door `FamilySymbol`, by `elementTypeId` and `newName`, optionally guarded by `expectedUniqueId`.
+- `duplicate_element_type`: duplicate one `ElementType` from `sourceTypeId` with `newName`, optionally guarded by `expectedUniqueId`, and return the new type ID, unique ID, family name, and type name.
 - `set_element_pinned`: set one model element's pinned state, optionally guarded by `expectedUniqueId` and `expectedPinned`.
 - `delete_element`: delete one non-type element by `elementId`, optionally guarded by `expectedUniqueId`, `expectedPinned`, and `allowPinned`. Preview probes Revit's actual delete set in a rollback transaction and blocks dependent deletes unless `allowDependentDeletes` is true or `expectedDeletedElementIds` exactly matches the previewed IDs. Use `expectedDeletedCount` when the exact count matters.
 
@@ -72,6 +75,10 @@ Example preview payload:
       "type": "set_parameter",
       "elementId": "501",
       "expectedUniqueId": "1e7f0b6d-....-0001f5",
+      "parameterRef": {
+        "kind": "builtInParameter",
+        "builtInParameter": "ALL_MODEL_MARK"
+      },
       "parameterName": "Mark",
       "value": "A-101"
     }
@@ -96,6 +103,10 @@ Example apply payload:
       "type": "set_parameter",
       "elementId": "501",
       "expectedUniqueId": "1e7f0b6d-....-0001f5",
+      "parameterRef": {
+        "kind": "builtInParameter",
+        "builtInParameter": "ALL_MODEL_MARK"
+      },
       "parameterName": "Mark",
       "value": "A-101"
     }
@@ -104,6 +115,27 @@ Example apply payload:
 ```
 
 The add-in recomputes the preview hash before applying. If the model, transaction name, or operation list no longer match, apply fails.
+
+`duplicate_element_type` returns the new type ID only after apply. If the new type needs parameter edits, such as setting a door width and height, complete the duplication workflow first. Then build a second preview/apply change set with `set_parameter` operations targeting the returned type ID. This keeps both writes reviewed and avoids referring to an ID that did not exist during the first preview.
+
+For a duplicated door type, send dimensions as typed values instead of precomputing internal feet:
+
+```json
+{
+  "type": "set_parameter",
+  "elementId": "123456",
+  "parameterRef": {
+    "kind": "builtInParameter",
+    "builtInParameter": "DOOR_WIDTH"
+  },
+  "value": {
+    "value": 2510,
+    "unit": "mm"
+  }
+}
+```
+
+If a mutation connection drops after the request was sent, do not create a new apply request. The broker queries the control-path outcome ledger with the original request ID. On an explicit MCP abort it first attempts queued cancellation, then reconciles the outcome. A committed, rolled-back, or failed result is returned when known. An unresolved result is reported as `BRIDGE_WRITE_OUTCOME_UNKNOWN` and must be inspected with `revit.get_request_result` rather than retried.
 
 Support CLI equivalents for disposable/debug runs:
 

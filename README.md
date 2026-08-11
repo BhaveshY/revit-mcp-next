@@ -280,6 +280,8 @@ The included scripts search the auth-config install root,
 
 ## MVP Tool Surface
 
+- `revit.bridge_health`
+- `revit.get_request_result`
 - `revit.status`
 - `revit.read_bundle`
 - `revit.list_documents`
@@ -305,15 +307,19 @@ The included scripts search the auth-config install root,
 - `revit.apply_change_set`
 - `revit.cancel_request`
 
+Use `revit.bridge_health` when normal calls stall or disconnect. It runs over a reserved control pipe and reports listener, connection, queue, fault, and request-outcome state without joining the Revit work queue. Use `revit.status` for active-document and Revit API diagnostics before retrying a workflow.
+
+Use `revit.get_request_result` with the original request ID when a sent write returns `BRIDGE_WRITE_OUTCOME_UNKNOWN`. It reads the current add-in session's bounded outcome ledger and never replays the write.
+
 Read tools are intentionally compact and paginated where results can grow. Use `revit.status` diagnostics for queue health, ExternalEvent raise state, preview-token pressure, and recovery hints before retrying a stalled workflow. Use `revit.read_bundle` as the compact first MCP call when an agent needs status, levels, readiness, current view, scoped elements, selection, and a few small catalog or parameter sections for planning. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_schedules` and `revit.get_schedule_fields` for schedule inventory and exact schedulable field IDs before schedule writes, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_model_context` for phase/workset/design-option/link planning IDs, `revit.get_material_quantities` for normalized material takeoffs, `revit.get_warnings` for compact model-health warning lists, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. `revit.create_project_from_template` is a direct fixture/setup write tool, not a preview/apply model edit; it requires `confirm: true` and creates a disposable `.rvt` from a local `.rte`. For element placement work, use `preset: "geometrySummary"` on `revit.query` or scoped element reads to return compact `location` and model-space `bounds` in millimeters without dumping parameters. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects. MCP cursors are opaque continuation tokens: do not parse, increment, shorten, construct, or reuse them after changing any argument. For the next page, repeat the same tool call with the same arguments and only add `cursor` from `structuredContent.data.cursor`; if a cursor came from a `revit.read_bundle` section, continue with that section's underlying tool and the same section arguments. `revit.describe_parameters` defaults to `preset: "writableEdit"` for compact writable instance parameter metadata; use `preset: "namesOnly"` for broader name discovery without values or `preset: "full"` for legacy read-only/type/value detail.
 
 All tools return a strict MCP `structuredContent` envelope: `data`, `warnings`, `metrics`, and optional `generation`. On success, `structuredContent.data` is the typed tool payload; on bridge failure it is `{ "error": ... }`. Core read tools advertise typed output schemas through `tools/list`, including page fields such as `returnedCount`, `truncated`, `cursor`, `items`, `fields`, and `units`. `revit.read_bundle` advertises returned and failed section lists so clients can cheaply inspect partial section failures when `continueOnError` is enabled. `revit.status` also advertises diagnostics for queue depth, ExternalEvent raise state, preview-token counts, and recovery hints. Write-control tools advertise typed preview/apply/cancel output schemas with preview tokens, change-set hash/generation/expiry metadata, risk level, itemized change rows, applied counts, and cancellation status. Apply consumes a valid preview token before write execution, so every apply attempt is single-use.
 
 Write tools are intentionally bounded. End-to-end preview/apply support currently covers:
 
-For existing-element writes, keep using Revit `elementId` or operation-specific IDs such as `roomId` as the target and pass `expectedUniqueId` when a prior read returned `uniqueId`. For wall-hosted family placement, keep using `hostElementId` and pass `expectedHostUniqueId` when the host wall `uniqueId` is known. Preview blocks mismatches before apply.
+For existing-element writes, keep using Revit `elementId` or operation-specific IDs such as `roomId`, `elementTypeId`, or `sourceTypeId` as the target and pass `expectedUniqueId` when a prior read returned `uniqueId`. For wall-hosted family placement, keep using `hostElementId` and pass `expectedHostUniqueId` when the host wall `uniqueId` is known. Preview blocks mismatches before apply.
 
-- `set_parameter`: set a writable instance parameter by element ID and parameter name, optionally guarded by `expectedUniqueId`.
+- `set_parameter`: set a writable instance parameter by element ID using a stable built-in, definition-ID, shared-GUID, or unambiguous-name `parameterRef`. Typed `UnitValue` inputs convert compatible measurable values such as millimetres safely. Legacy `parameterName` and scalar values remain supported.
 - `create_level`: create a level by name and elevation.
 - `create_wall`: create a straight wall from `levelId`, `start`, `end`, optional `wallTypeId`, optional `height`, optional `structural`, and optional `flip`.
 - `create_grid`: create a straight grid line from `start` to `end`, with an optional unique name.
@@ -333,10 +339,14 @@ For existing-element writes, keep using Revit `elementId` or operation-specific 
 - `rotate_element`: rotate one non-pinned model element around an explicit axis and angle, optionally guarded by `expectedUniqueId`.
 - `copy_element`: copy one model element by an explicit 3D translation vector, optionally guarded by `expectedUniqueId`.
 - `change_element_type`: change one non-pinned model element to a compatible Revit type ID discovered through `revit.catalog`, optionally guarded by `expectedUniqueId`.
+- `rename_element_type`: rename an `ElementType`, including a door `FamilySymbol`, by `elementTypeId` and `newName`, optionally guarded by `expectedUniqueId`.
+- `duplicate_element_type`: create a new `ElementType` from `sourceTypeId` with `newName`, optionally guarded by `expectedUniqueId`; the apply result returns the new type identity.
 - `set_element_pinned`: pin or unpin one model element, with optional `expectedUniqueId` and `expectedPinned` guards.
 - `delete_element`: delete one non-type element by `elementId`, with optional `expectedUniqueId`, `expectedPinned`, `allowPinned`, dependent-delete preview, `allowDependentDeletes`, `expectedDeletedElementIds`, and `expectedDeletedCount` guards.
 
 `revit.preview_change_set` validates supported operations without mutation and returns `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt`; `revit.apply_change_set` requires those exact preview fields plus `confirm: true` and applies the full change set in one named Revit transaction.
+
+The ID created by `duplicate_element_type` is not known until apply. To edit parameters such as a door type's width and height, apply the duplication first, then use the returned type ID in a second `revit.preview_change_set` / `revit.apply_change_set` workflow.
 
 Use `revit.catalog` before writes that need Revit type IDs. It returns compact, paginated catalog records for `elementTypes`, `familySymbols`, `titleBlocks`, `viewFamilyTypes`, `textNoteTypes`, `dimensionTypes`, and `tagTypes`, including room tag types and independent tag symbols. For type changes, call it with `kind: "elementTypes"` and `filter.forElementId` so Revit's own compatible type list is used. For tag workflows, check `revit.catalog` first; use `load_family` only when compatible symbols are missing and a vetted local `.rfa` path is available, then re-run catalog and use the loaded symbol IDs.
 

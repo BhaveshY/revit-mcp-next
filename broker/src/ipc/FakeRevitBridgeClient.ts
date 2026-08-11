@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  BridgeHealthResult,
   BridgeRequest,
   BridgeResponse,
   CancelRequest,
@@ -29,11 +30,14 @@ import type {
   ModelStatisticsResult,
   ParameterDescribeRequest,
   ParameterDescribeResult,
+  ParameterWriteValue,
   QueryItem,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
   RevitStatus,
+  RequestResultRequest,
+  RequestResultResult,
   RoomSummary,
   RoomsRequest,
   RoomsResult,
@@ -209,6 +213,8 @@ const fakeSchedulableFields: NonNullable<ScheduleFieldsResult["availableFields"]
 ];
 
 const capabilities = [
+  "revit.bridge_health",
+  "revit.get_request_result",
   "revit.status",
   "revit.list_documents",
   "revit.create_project_from_template",
@@ -527,6 +533,125 @@ const catalogItems: FakeCatalogItem[] = [
   },
 ];
 
+type FakeParameterSpec = "string" | "length" | "yesNo" | "elementId";
+
+interface FakeParameterDefinition {
+  elementIds?: string[];
+  familyName?: string;
+  name: string;
+  storageType: "String" | "Double" | "Integer" | "ElementId";
+  spec: FakeParameterSpec;
+  builtInParameter?: string;
+  definitionId?: string;
+  sharedParameterGuid?: string;
+}
+
+const fakeParameterDefinitions: FakeParameterDefinition[] = [
+  {
+    elementIds: ["501"],
+    name: "Mark",
+    storageType: "String",
+    spec: "string",
+    builtInParameter: "ALL_MODEL_MARK",
+    definitionId: "-1001205",
+  },
+  {
+    elementIds: ["501"],
+    name: "Asset Code",
+    storageType: "String",
+    spec: "string",
+    definitionId: "210001",
+    sharedParameterGuid: "11111111-2222-4333-8444-555555555555",
+  },
+  {
+    elementIds: ["501"],
+    name: "Code",
+    storageType: "String",
+    spec: "string",
+    definitionId: "210002",
+  },
+  {
+    elementIds: ["501"],
+    name: "Code",
+    storageType: "String",
+    spec: "string",
+    definitionId: "210003",
+  },
+  {
+    elementIds: ["501"],
+    name: "Base Constraint",
+    storageType: "ElementId",
+    spec: "elementId",
+    builtInParameter: "WALL_BASE_CONSTRAINT",
+    definitionId: "-1001107",
+  },
+  {
+    elementIds: ["501"],
+    name: "Room Bounding",
+    storageType: "Integer",
+    spec: "yesNo",
+    builtInParameter: "WALL_ATTR_ROOM_BOUNDING",
+    definitionId: "-1001007",
+  },
+  {
+    familyName: "Single-Flush",
+    name: "Width",
+    storageType: "Double",
+    spec: "length",
+    builtInParameter: "DOOR_WIDTH",
+    definitionId: "-1001301",
+  },
+  {
+    familyName: "Single-Flush",
+    name: "Height",
+    storageType: "Double",
+    spec: "length",
+    builtInParameter: "DOOR_HEIGHT",
+    definitionId: "-1001302",
+  },
+];
+
+function cloneCatalogItem(item: FakeCatalogItem): FakeCatalogItem {
+  return {
+    ...item,
+    fields: item.fields ? { ...item.fields } : undefined,
+  };
+}
+
+function resolveFakeCatalogFields(request: CatalogRequest): string[] {
+  if (request.fields && request.fields.length > 0) return request.fields;
+  switch (request.preset) {
+    case "idOnly":
+      return ["id"];
+    case "typeChange":
+      return ["id", "class", "category", "builtInCategory", "name", "familyName", "isCurrentType", "validForTarget"];
+    case "placement":
+      return ["id", "class", "category", "builtInCategory", "name", "familyName", "familyId", "isActive", "placementType"];
+    case "sheet":
+      return ["id", "class", "category", "builtInCategory", "name", "familyName", "familyId", "isActive"];
+    case "annotation":
+      return ["id", "class", "category", "builtInCategory", "name", "familyName", "familyId"];
+    default:
+      return ["id", "class", "category", "name", "familyName"];
+  }
+}
+
+function projectFakeCatalogItem(item: FakeCatalogItem, fields: string[]): CatalogItem {
+  const projected: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field.startsWith("param:")) {
+      const parameterName = field.slice("param:".length);
+      if (item.fields && Object.prototype.hasOwnProperty.call(item.fields, parameterName)) {
+        const projectedFields = (projected.fields ??= {}) as Record<string, unknown>;
+        projectedFields[parameterName] = item.fields[parameterName];
+      }
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(item, field)) projected[field] = item[field as keyof FakeCatalogItem];
+  }
+  return projected as unknown as CatalogItem;
+}
+
 function resolveParameterDescribeOptions(payload: ParameterDescribeRequest): {
   preset: NonNullable<ParameterDescribeRequest["preset"]>;
   includeTypeParameters: boolean;
@@ -554,6 +679,53 @@ function resolveParameterDescribeOptions(payload: ParameterDescribeRequest): {
 }
 
 export class FakeRevitBridgeClient implements RevitBridgeClient {
+  private readonly mutableCatalogItems: FakeCatalogItem[] = catalogItems.map(cloneCatalogItem);
+  private nextDuplicateTypeId = 9901;
+
+  async bridgeHealth(
+    request: BridgeRequest<Record<string, never>>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<BridgeHealthResult>> {
+    maybeAbort(options);
+    return ok(request, {
+      healthy: true,
+      pipeName: "revit-mcp-next-fake",
+      controlPipeName: "revit-mcp-next-fake-control",
+      waitingListeners: 5,
+      activeConnections: 1,
+      acceptedConnections: 1,
+      completedConnections: 0,
+      clientFaults: 0,
+      listenerFaults: 0,
+      queue: {
+        pendingCount: 0,
+        hasPending: false,
+        enqueuedCount: 1,
+        dequeuedCount: 1,
+        cancelledCount: 0,
+        raiseCount: 0,
+        raiseNotAcceptedCount: 0,
+        lastRaiseResult: "fake",
+        externalEventAttached: true,
+      },
+      requestOutcomes: {
+        activeCount: 0,
+        inFlightCount: 0,
+        completedCount: 0,
+        capacity: 256,
+        ttlSeconds: 900,
+      },
+    });
+  }
+
+  async getRequestResult<TData = unknown>(
+    request: BridgeRequest<RequestResultRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<RequestResultResult<TData>>> {
+    maybeAbort(options);
+    return ok(request, { found: false, state: "failed" });
+  }
+
   async status(
     request: BridgeRequest<Record<string, never>>,
     options?: BridgeCallOptions
@@ -992,6 +1164,22 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<QueryResult>> {
     maybeAbort(options);
+    if (
+      request.payload.documentFingerprint &&
+      request.payload.documentFingerprint.toLowerCase() !== activeDocument.fingerprint.toLowerCase()
+    ) {
+      return fail(request, "NO_ACTIVE_DOCUMENT", "No open Revit document matched documentFingerprint.");
+    }
+    if (
+      request.payload.expectedGeneration !== undefined &&
+      request.payload.expectedGeneration !== activeDocument.generation
+    ) {
+      return fail(
+        request,
+        "GENERATION_MISMATCH",
+        `The document generation is ${activeDocument.generation} but the request expected ${request.payload.expectedGeneration}.`
+      );
+    }
     const limit = Math.min(request.payload.limit ?? 50, 500);
     const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
     const filter = request.payload.filter ?? {};
@@ -1048,6 +1236,9 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
           hasValue: true,
           value: "A-101",
           valueString: "A-101",
+          builtInParameter: "ALL_MODEL_MARK",
+          definitionId: "-1001205",
+          specTypeId: "autodesk.spec.aec:string.text-2.0.0",
         },
         {
           name: "Type Name",
@@ -1106,7 +1297,9 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     const limit = Math.min(request.payload.limit ?? 50, 200);
     const offset = Number.parseInt(request.payload.cursor ?? "0", 10) || 0;
     const filter = request.payload.filter ?? {};
-    let items = catalogItems.filter((item) => item.kind === request.payload.kind && matchesCatalogFilter(item, filter));
+    let items = this.mutableCatalogItems.filter(
+      (item) => item.kind === request.payload.kind && matchesCatalogFilter(item, filter)
+    );
     const target = buildCatalogTarget(filter.forElementId);
     if (filter.forElementId === "501") {
       items = items.filter((item) => item.id === "9001" || item.id === "9002");
@@ -1114,7 +1307,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       items = [];
     }
 
-    const page = items.slice(offset, offset + limit);
+    const fields = resolveFakeCatalogFields(request.payload);
+    const page = items.slice(offset, offset + limit).map((item) => projectFakeCatalogItem(item, fields));
     const truncated = offset + page.length < items.length;
 
     return ok(request, {
@@ -1126,7 +1320,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       limit,
       cursor: truncated ? String(offset + page.length) : undefined,
       truncated,
-      fields: request.payload.fields ?? ["id", "class", "category", "name", "familyName"],
+      fields,
       scope: filter.forElementId ? `typeChange:${filter.forElementId}` : "activeDocument",
       source: "fake-bridge",
       units: {},
@@ -1139,7 +1333,11 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<ChangePreviewResult>> {
     maybeAbort(options);
     const metadata = getChangeSetMetadata(request.payload);
-    const changes = request.payload.operations.map((operation, index) => getPreviewChange(operation, index, "ready"));
+    const changes = getPreviewChanges(
+      request.payload.operations,
+      this.mutableCatalogItems,
+      this.nextDuplicateTypeId
+    );
     const ready = changes.every((change) => change.status === "ready");
     return ok(request, {
       previewId: `fake-preview-${request.payload.operations.length}`,
@@ -1166,9 +1364,31 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<ChangeApplyResult>> {
     maybeAbort(options);
     const metadata = getChangeSetMetadata(request.payload);
-    const previewChanges = request.payload.operations.map((operation, index) => getPreviewChange(operation, index, "ready"));
+    const previewChanges = getPreviewChanges(
+      request.payload.operations,
+      this.mutableCatalogItems,
+      this.nextDuplicateTypeId
+    );
     const ready = previewChanges.every((change) => change.status === "ready");
     const applied = Boolean(request.payload.confirm && ready);
+    let changes = previewChanges;
+    if (applied) {
+      const stagedCatalog = this.mutableCatalogItems.map(cloneCatalogItem);
+      let nextDuplicateTypeId = this.nextDuplicateTypeId;
+      changes = request.payload.operations.map((operation, index) => {
+        if (operation.type === "rename_element_type") {
+          return applyFakeRenameElementType(operation, index, stagedCatalog);
+        }
+        if (operation.type === "duplicate_element_type") {
+          const appliedChange = applyFakeDuplicateElementType(operation, index, stagedCatalog, nextDuplicateTypeId);
+          nextDuplicateTypeId += 1;
+          return appliedChange;
+        }
+        return getPreviewChange(operation, index, "applied", stagedCatalog);
+      });
+      this.mutableCatalogItems.splice(0, this.mutableCatalogItems.length, ...stagedCatalog);
+      this.nextDuplicateTypeId = nextDuplicateTypeId;
+    }
     return ok(request, {
       previewId: request.payload.previewId,
       documentFingerprint: metadata.documentFingerprint,
@@ -1177,7 +1397,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       transactionName: request.payload.transactionName,
       applied,
       changedCount: applied ? request.payload.operations.length : 0,
-      changes: previewChanges.map((change) => (change.status === "ready" && applied ? { ...change, status: "applied" } : change)),
+      changes,
     });
   }
 
@@ -1669,15 +1889,56 @@ function hashChangeSet(payload: ChangeSetRequest, documentFingerprint: string, b
   return `sha256:${createHash("sha256").update(JSON.stringify(canonicalPayload)).digest("hex")}`;
 }
 
-function getPreviewChange(operation: ChangeOperation, index: number, readyStatus: "ready" | "applied"): ChangePreviewItem {
-  const message = getIdentityGuardFailure(operation);
+function getPreviewChanges(
+  operations: ChangeOperation[],
+  currentCatalogItems: FakeCatalogItem[],
+  firstDuplicateTypeId: number
+): ChangePreviewItem[] {
+  const stagedCatalog = currentCatalogItems.map(cloneCatalogItem);
+  let nextDuplicateTypeId = firstDuplicateTypeId;
+  return operations.map((operation, index) => {
+    const change = getPreviewChange(operation, index, "ready", stagedCatalog);
+    if (change.status !== "ready") return change;
+    if (operation.type === "rename_element_type") {
+      const elementType = findCatalogElementType(operation.elementTypeId, stagedCatalog);
+      if (elementType) {
+        stagedCatalog.push({
+          ...cloneCatalogItem(elementType),
+          id: `preview-rename-reservation-${index}`,
+          uniqueId: undefined,
+          name: operation.newName.trim(),
+        });
+      }
+    } else if (operation.type === "duplicate_element_type") {
+      const sourceType = findCatalogElementType(operation.sourceTypeId, stagedCatalog);
+      if (sourceType) {
+        stagedCatalog.push({
+          ...cloneCatalogItem(sourceType),
+          id: String(nextDuplicateTypeId),
+          uniqueId: `fake-element-type-${nextDuplicateTypeId}`,
+          name: operation.newName.trim(),
+        });
+        nextDuplicateTypeId += 1;
+      }
+    }
+    return change;
+  });
+}
+
+function getPreviewChange(
+  operation: ChangeOperation,
+  index: number,
+  readyStatus: "ready" | "applied",
+  currentCatalogItems: FakeCatalogItem[] = catalogItems
+): ChangePreviewItem {
+  const message = getOperationValidationFailure(operation, currentCatalogItems);
   if (message) {
     return {
       operationIndex: index,
       operationId: operation.id,
       type: operation.type,
       status: "blocked",
-      target: getOperationTarget(operation),
+      target: getOperationTarget(operation, currentCatalogItems),
       message,
     };
   }
@@ -1687,14 +1948,43 @@ function getPreviewChange(operation: ChangeOperation, index: number, readyStatus
     operationId: operation.id,
     type: operation.type,
     status: readyStatus,
-    target: getOperationTarget(operation),
-    after: getOperationAfter(operation),
+    target: getOperationTarget(operation, currentCatalogItems),
+    before: getOperationBefore(operation, currentCatalogItems),
+    after: getOperationAfter(operation, currentCatalogItems),
   };
 }
 
-function getIdentityGuardFailure(operation: ChangeOperation): string | undefined {
+function getOperationValidationFailure(
+  operation: ChangeOperation,
+  currentCatalogItems: FakeCatalogItem[]
+): string | undefined {
   switch (operation.type) {
-    case "set_parameter":
+    case "rename_element_type":
+      return getElementTypeEditFailure(
+        operation.elementTypeId,
+        operation.expectedUniqueId,
+        operation.newName,
+        currentCatalogItems,
+        false
+      );
+    case "duplicate_element_type":
+      return getElementTypeEditFailure(
+        operation.sourceTypeId,
+        operation.expectedUniqueId,
+        operation.newName,
+        currentCatalogItems,
+        true
+      );
+    case "set_parameter": {
+      const identityFailure = getExpectedUniqueIdFailure(
+        operation.elementId,
+        operation.expectedUniqueId,
+        "Element",
+        currentCatalogItems
+      );
+      if (identityFailure) return identityFailure;
+      return getFakeParameterWriteFailure(operation, currentCatalogItems);
+    }
     case "tag_element":
     case "move_element":
     case "rotate_element":
@@ -1702,16 +1992,22 @@ function getIdentityGuardFailure(operation: ChangeOperation): string | undefined
     case "change_element_type":
     case "set_element_pinned":
     case "delete_element":
-      return getExpectedUniqueIdFailure(operation.elementId, operation.expectedUniqueId, "Element");
+      return getExpectedUniqueIdFailure(operation.elementId, operation.expectedUniqueId, "Element", currentCatalogItems);
     case "tag_room":
-      return getExpectedUniqueIdFailure(operation.roomId, operation.expectedUniqueId, "Room");
-    case "place_family_instance":
-      return getExpectedUniqueIdFailure(
+      return getExpectedUniqueIdFailure(operation.roomId, operation.expectedUniqueId, "Room", currentCatalogItems);
+    case "place_family_instance": {
+      const hostFailure = getExpectedUniqueIdFailure(
         operation.hostElementId,
         operation.expectedHostUniqueId,
         "Host element",
+        currentCatalogItems,
         "expectedHostUniqueId"
       );
+      if (hostFailure) return hostFailure;
+      return findCatalogElementType(operation.familySymbolId, currentCatalogItems)
+        ? undefined
+        : `FamilySymbol ${operation.familySymbolId} was not found.`;
+    }
     default:
       return undefined;
   }
@@ -1721,16 +2017,20 @@ function getExpectedUniqueIdFailure(
   elementId: string | undefined,
   expectedUniqueId: string | undefined,
   label: string,
+  currentCatalogItems: FakeCatalogItem[] = catalogItems,
   fieldName = "expectedUniqueId"
 ): string | undefined {
   if (!expectedUniqueId) return undefined;
   if (!elementId) return `${label} uniqueId guard requires an element ID.`;
-  const actualUniqueId = getFakeElementUniqueId(elementId);
+  const actualUniqueId = getFakeElementUniqueId(elementId, currentCatalogItems);
   if (actualUniqueId === expectedUniqueId) return undefined;
   return `${label} ${elementId} uniqueId did not match ${fieldName}.`;
 }
 
-function getFakeElementUniqueId(elementId: string): string | undefined {
+function getFakeElementUniqueId(
+  elementId: string,
+  currentCatalogItems: FakeCatalogItem[] = catalogItems
+): string | undefined {
   return (
     fakeQueryItems.find((item) => item.id === elementId)?.uniqueId ??
     fakeRooms.find((room) => room.id === elementId)?.uniqueId ??
@@ -1738,24 +2038,333 @@ function getFakeElementUniqueId(elementId: string): string | undefined {
     fakeViews.find((view) => view.id === elementId)?.uniqueId ??
     fakeSheets.find((sheet) => sheet.id === elementId)?.uniqueId ??
     fakeSchedules.find((schedule) => schedule.id === elementId)?.uniqueId ??
-    catalogItems.find((item) => item.id === elementId)?.uniqueId
+    currentCatalogItems.find((item) => item.id === elementId)?.uniqueId
   );
 }
 
-function fakeUniqueIdField(elementId: string | undefined, fieldName = "uniqueId"): Record<string, unknown> {
+type SetParameterOperation = Extract<ChangeOperation, { type: "set_parameter" }>;
+
+interface FakeParameterResolution {
+  parameter?: FakeParameterDefinition;
+  failure?: string;
+}
+
+function getFakeParametersForElement(
+  elementId: string,
+  currentCatalogItems: FakeCatalogItem[]
+): FakeParameterDefinition[] {
+  const catalogItem = currentCatalogItems.find((item) => item.id === elementId);
+  return fakeParameterDefinitions.filter(
+    (parameter) =>
+      parameter.elementIds?.includes(elementId) === true ||
+      (parameter.familyName !== undefined && parameter.familyName === catalogItem?.familyName)
+  );
+}
+
+function resolveFakeParameter(
+  operation: SetParameterOperation,
+  currentCatalogItems: FakeCatalogItem[]
+): FakeParameterResolution {
+  const parameters = getFakeParametersForElement(operation.elementId, currentCatalogItems);
+  if (operation.parameterRef) {
+    const reference = operation.parameterRef;
+    switch (reference.kind) {
+      case "builtInParameter": {
+        const parameter = parameters.find(
+          (candidate) => candidate.builtInParameter?.toLowerCase() === reference.builtInParameter.toLowerCase()
+        );
+        return parameter
+          ? { parameter }
+          : { failure: `BuiltInParameter '${reference.builtInParameter}' was not found on element ${operation.elementId}.` };
+      }
+      case "definitionId": {
+        const parameter = parameters.find((candidate) => candidate.definitionId === reference.definitionId);
+        return parameter
+          ? { parameter }
+          : { failure: `Parameter definitionId '${reference.definitionId}' was not found on element ${operation.elementId}.` };
+      }
+      case "sharedParameterGuid": {
+        const parameter = parameters.find(
+          (candidate) => candidate.sharedParameterGuid?.toLowerCase() === reference.sharedParameterGuid.toLowerCase()
+        );
+        return parameter
+          ? { parameter }
+          : {
+              failure: `Shared parameter GUID '${reference.sharedParameterGuid}' was not found on element ${operation.elementId}.`,
+            };
+      }
+      case "name": {
+        const matches = parameters.filter((candidate) => candidate.name.toLowerCase() === reference.name.toLowerCase());
+        if (matches.length === 0) {
+          return { failure: `Parameter name '${reference.name}' was not found on element ${operation.elementId}.` };
+        }
+        if (matches.length > 1) {
+          return {
+            failure: `Parameter name '${reference.name}' is ambiguous on element ${operation.elementId}; use a stable parameterRef.`,
+          };
+        }
+        return { parameter: matches[0] };
+      }
+      default:
+        return assertNever(reference);
+    }
+  }
+
+  const legacyName = operation.parameterName;
+  const parameter = parameters.find((candidate) => candidate.name.toLowerCase() === legacyName.toLowerCase());
+  return parameter
+    ? { parameter }
+    : { failure: `Parameter '${legacyName}' was not found on element ${operation.elementId}.` };
+}
+
+function isUnitValue(value: ParameterWriteValue): value is Exclude<ParameterWriteValue, string | number | boolean> {
+  return typeof value === "object";
+}
+
+function getFakeParameterWriteFailure(
+  operation: SetParameterOperation,
+  currentCatalogItems: FakeCatalogItem[]
+): string | undefined {
+  const resolution = resolveFakeParameter(operation, currentCatalogItems);
+  if (resolution.failure) return resolution.failure;
+  const parameter = resolution.parameter;
+  if (!parameter) return `Parameter resolution failed on element ${operation.elementId}.`;
+
+  const value = operation.value;
+  if (isUnitValue(value)) {
+    if (parameter.storageType !== "Double" || parameter.spec !== "length") {
+      return `UnitValue is not compatible with ${parameter.storageType} parameter '${parameter.name}' (${parameter.spec}).`;
+    }
+    const supportedLengthUnits = new Set(["mm", "millimeters", "m", "meters", "ft", "feet", "in", "inches", "revit-internal"]);
+    if (!supportedLengthUnits.has(value.unit.toLowerCase())) {
+      return `Unit '${value.unit}' is not compatible with length parameter '${parameter.name}'.`;
+    }
+    return undefined;
+  }
+
+  if (parameter.spec === "yesNo") {
+    if (typeof value === "boolean" || value === 0 || value === 1) return undefined;
+    return `Yes/No parameter '${parameter.name}' requires a boolean or integer 0/1.`;
+  }
+
+  if (parameter.spec === "elementId") {
+    if (typeof value === "boolean") return `ElementId parameter '${parameter.name}' requires a numeric Revit element ID.`;
+    const candidate = String(value);
+    if (!/^-?\d+$/.test(candidate)) {
+      return `ElementId parameter '${parameter.name}' requires a numeric Revit element ID.`;
+    }
+  }
+
+  return undefined;
+}
+
+function fakeParameterSnapshot(parameter: FakeParameterDefinition): Record<string, unknown> {
+  return {
+    name: parameter.name,
+    storageType: parameter.storageType,
+    spec: parameter.spec,
+    ...(parameter.builtInParameter ? { builtInParameter: parameter.builtInParameter } : {}),
+    ...(parameter.definitionId ? { definitionId: parameter.definitionId } : {}),
+    ...(parameter.sharedParameterGuid ? { sharedParameterGuid: parameter.sharedParameterGuid } : {}),
+  };
+}
+
+function fakeUniqueIdField(
+  elementId: string | undefined,
+  fieldName = "uniqueId",
+  currentCatalogItems: FakeCatalogItem[] = catalogItems
+): Record<string, unknown> {
   if (!elementId) return {};
-  const uniqueId = getFakeElementUniqueId(elementId);
+  const uniqueId = getFakeElementUniqueId(elementId, currentCatalogItems);
   return uniqueId ? { [fieldName]: uniqueId } : {};
 }
 
-function getOperationTarget(operation: ChangeOperation): Record<string, unknown> {
+const invalidElementTypeNamePattern = /[\\:{}\[\]|;<>?`~\u0000-\u001f]/;
+
+function findCatalogElementType(
+  elementTypeId: string,
+  currentCatalogItems: FakeCatalogItem[]
+): FakeCatalogItem | undefined {
+  return currentCatalogItems.find((item) => item.id === elementTypeId);
+}
+
+function getElementTypeNameScope(item: FakeCatalogItem): string {
+  if (item.class === "FamilySymbol" && item.familyId) return `FamilySymbol|familyId:${item.familyId}`;
+  return `${item.class.toLowerCase()}|familyName:${(item.familyName ?? "").toLowerCase()}`;
+}
+
+function getElementTypeEditFailure(
+  elementTypeId: string,
+  expectedUniqueId: string | undefined,
+  newName: string,
+  currentCatalogItems: FakeCatalogItem[],
+  duplicate: boolean
+): string | undefined {
+  const elementType = findCatalogElementType(elementTypeId, currentCatalogItems);
+  if (!elementType) {
+    return `${duplicate ? "Source ElementType" : "ElementType"} ${elementTypeId} was not found.`;
+  }
+
+  const identityFailure = getExpectedUniqueIdFailure(
+    elementTypeId,
+    expectedUniqueId,
+    duplicate ? "Source ElementType" : "ElementType",
+    currentCatalogItems
+  );
+  if (identityFailure) return identityFailure;
+
+  const normalizedName = newName.trim();
+  if (!normalizedName) return "Element type name cannot be empty.";
+  if (invalidElementTypeNamePattern.test(normalizedName)) {
+    return `Element type name '${normalizedName}' contains invalid Revit characters.`;
+  }
+
+  const duplicateName = currentCatalogItems.find(
+    (candidate) =>
+      (duplicate || candidate.id !== elementType.id) &&
+      getElementTypeNameScope(candidate) === getElementTypeNameScope(elementType) &&
+      equalsCatalogToken(candidate.name, normalizedName)
+  );
+  if (duplicateName) {
+    return `Element type name '${normalizedName}' already exists in family '${elementType.familyName ?? ""}'.`;
+  }
+
+  if (!duplicate && equalsCatalogToken(elementType.name, normalizedName)) {
+    return `ElementType ${elementTypeId} already has type name '${normalizedName}'.`;
+  }
+
+  return undefined;
+}
+
+function elementTypeTarget(
+  elementType: FakeCatalogItem | undefined,
+  requestedId: string
+): Record<string, unknown> {
+  const elementTypeId = elementType?.id ?? requestedId;
+  return {
+    id: elementTypeId,
+    elementId: elementTypeId,
+    elementTypeId,
+    ...(elementType?.uniqueId ? { uniqueId: elementType.uniqueId } : {}),
+    ...(elementType?.class ? { class: elementType.class } : {}),
+    ...(elementType?.category ? { category: elementType.category } : {}),
+    ...(elementType?.familyId ? { familyId: elementType.familyId } : {}),
+    ...(elementType?.familyName ? { familyName: elementType.familyName } : {}),
+    ...(elementType?.name ? { name: elementType.name, typeName: elementType.name } : {}),
+    canBeRenamed: true,
+    canBeCopied: true,
+  };
+}
+
+function elementTypeSnapshot(elementType: FakeCatalogItem | undefined): Record<string, unknown> | undefined {
+  if (!elementType) return undefined;
+  return {
+    id: elementType.id,
+    elementTypeId: elementType.id,
+    uniqueId: elementType.uniqueId,
+    class: elementType.class,
+    category: elementType.category,
+    familyId: elementType.familyId,
+    familyName: elementType.familyName,
+    name: elementType.name,
+    typeName: elementType.name,
+    canBeRenamed: true,
+    canBeCopied: true,
+  };
+}
+
+function applyFakeRenameElementType(
+  operation: Extract<ChangeOperation, { type: "rename_element_type" }>,
+  index: number,
+  currentCatalogItems: FakeCatalogItem[]
+): ChangePreviewItem {
+  const failure = getElementTypeEditFailure(
+    operation.elementTypeId,
+    operation.expectedUniqueId,
+    operation.newName,
+    currentCatalogItems,
+    false
+  );
+  if (failure) throw new Error(`Fake rename_element_type apply validation failed: ${failure}`);
+
+  const elementType = findCatalogElementType(operation.elementTypeId, currentCatalogItems)!;
+  const before = elementTypeSnapshot(elementType);
+  elementType.name = operation.newName.trim();
+  return {
+    operationIndex: index,
+    operationId: operation.id,
+    type: operation.type,
+    status: "applied",
+    target: elementTypeTarget(elementType, operation.elementTypeId),
+    before,
+    after: elementTypeSnapshot(elementType),
+  };
+}
+
+function applyFakeDuplicateElementType(
+  operation: Extract<ChangeOperation, { type: "duplicate_element_type" }>,
+  index: number,
+  currentCatalogItems: FakeCatalogItem[],
+  duplicateTypeId: number
+): ChangePreviewItem {
+  const failure = getElementTypeEditFailure(
+    operation.sourceTypeId,
+    operation.expectedUniqueId,
+    operation.newName,
+    currentCatalogItems,
+    true
+  );
+  if (failure) throw new Error(`Fake duplicate_element_type apply validation failed: ${failure}`);
+
+  const sourceType = findCatalogElementType(operation.sourceTypeId, currentCatalogItems)!;
+  const id = String(duplicateTypeId);
+  const newType: FakeCatalogItem = {
+    ...cloneCatalogItem(sourceType),
+    id,
+    uniqueId: `fake-element-type-${id}`,
+    name: operation.newName.trim(),
+  };
+  currentCatalogItems.push(newType);
+  return {
+    operationIndex: index,
+    operationId: operation.id,
+    type: operation.type,
+    status: "applied",
+    target: elementTypeTarget(newType, id),
+    before: elementTypeSnapshot(sourceType),
+    after: elementTypeSnapshot(newType),
+  };
+}
+
+function getOperationTarget(
+  operation: ChangeOperation,
+  currentCatalogItems: FakeCatalogItem[] = catalogItems
+): Record<string, unknown> {
   switch (operation.type) {
-    case "set_parameter":
+    case "rename_element_type": {
+      const elementType = findCatalogElementType(operation.elementTypeId, currentCatalogItems);
+      return elementTypeTarget(elementType, operation.elementTypeId);
+    }
+    case "duplicate_element_type": {
+      const sourceType = findCatalogElementType(operation.sourceTypeId, currentCatalogItems);
+      return elementTypeTarget(sourceType, operation.sourceTypeId);
+    }
+    case "set_parameter": {
+      const parameter = resolveFakeParameter(operation, currentCatalogItems).parameter;
+      if (!operation.parameterRef) {
+        return {
+          elementId: operation.elementId,
+          ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
+          parameterName: operation.parameterName,
+        };
+      }
       return {
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
-        parameterName: operation.parameterName,
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
+        ...(parameter ? { parameterName: parameter.name, resolvedParameter: fakeParameterSnapshot(parameter) } : {}),
+        parameterRef: operation.parameterRef,
       };
+    }
     case "create_level":
       return {
         document: activeDocument.title,
@@ -1771,7 +2380,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
         document: activeDocument.title,
         familySymbolId: operation.familySymbolId,
         hostElementId: operation.hostElementId,
-        ...fakeUniqueIdField(operation.hostElementId, "hostUniqueId"),
+        ...fakeUniqueIdField(operation.hostElementId, "hostUniqueId", currentCatalogItems),
         levelId: operation.levelId,
       };
     case "create_sheet":
@@ -1794,7 +2403,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
     case "add_schedule_field":
       return {
         scheduleId: operation.scheduleId,
-        ...fakeUniqueIdField(operation.scheduleId),
+        ...fakeUniqueIdField(operation.scheduleId, "uniqueId", currentCatalogItems),
         fieldName: operation.fieldName,
         fieldId: operation.fieldId,
       };
@@ -1802,7 +2411,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         sheetId: operation.sheetId,
         scheduleId: operation.scheduleId,
-        ...fakeUniqueIdField(operation.scheduleId, "scheduleUniqueId"),
+        ...fakeUniqueIdField(operation.scheduleId, "scheduleUniqueId", currentCatalogItems),
       };
     case "create_text_note":
       return {
@@ -1820,7 +2429,7 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         document: activeDocument.title,
         roomId: operation.roomId,
-        ...fakeUniqueIdField(operation.roomId),
+        ...fakeUniqueIdField(operation.roomId, "uniqueId", currentCatalogItems),
         viewId: operation.viewId,
         tagTypeId: operation.tagTypeId,
       };
@@ -1828,35 +2437,35 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
       return {
         document: activeDocument.title,
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
         viewId: operation.viewId,
         tagTypeId: operation.tagTypeId,
       };
     case "move_element":
       return {
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
       };
     case "rotate_element":
       return {
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
       };
     case "copy_element":
       return {
         sourceElementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId, "sourceUniqueId"),
+        ...fakeUniqueIdField(operation.elementId, "sourceUniqueId", currentCatalogItems),
       };
     case "change_element_type":
       return {
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
         typeId: operation.typeId,
       };
     case "set_element_pinned":
       return {
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
       };
     case "create_grid":
       return {
@@ -1877,15 +2486,50 @@ function getOperationTarget(operation: ChangeOperation): Record<string, unknown>
     case "delete_element":
       return {
         elementId: operation.elementId,
-        ...fakeUniqueIdField(operation.elementId),
+        ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
       };
     default:
       return assertNever(operation);
   }
 }
 
-function getOperationAfter(operation: ChangeOperation): Record<string, unknown> {
+function getOperationBefore(
+  operation: ChangeOperation,
+  currentCatalogItems: FakeCatalogItem[]
+): Record<string, unknown> | undefined {
   switch (operation.type) {
+    case "rename_element_type":
+      return elementTypeSnapshot(findCatalogElementType(operation.elementTypeId, currentCatalogItems));
+    case "duplicate_element_type":
+      return elementTypeSnapshot(findCatalogElementType(operation.sourceTypeId, currentCatalogItems));
+    default:
+      return undefined;
+  }
+}
+
+function getOperationAfter(
+  operation: ChangeOperation,
+  currentCatalogItems: FakeCatalogItem[] = catalogItems
+): Record<string, unknown> {
+  switch (operation.type) {
+    case "rename_element_type": {
+      const current = elementTypeSnapshot(findCatalogElementType(operation.elementTypeId, currentCatalogItems));
+      return {
+        ...current,
+        name: operation.newName.trim(),
+        typeName: operation.newName.trim(),
+      };
+    }
+    case "duplicate_element_type": {
+      const source = findCatalogElementType(operation.sourceTypeId, currentCatalogItems);
+      return {
+        class: source?.class,
+        category: source?.category,
+        familyName: source?.familyName,
+        name: operation.newName.trim(),
+        typeName: operation.newName.trim(),
+      };
+    }
     case "set_parameter":
       return {
         value: operation.value,
@@ -2093,7 +2737,9 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
     operation.type === "create_floor" ||
     operation.type === "create_room" ||
     operation.type === "copy_element" ||
-    operation.type === "change_element_type"
+    operation.type === "change_element_type" ||
+    operation.type === "rename_element_type" ||
+    operation.type === "duplicate_element_type"
   );
 }
 

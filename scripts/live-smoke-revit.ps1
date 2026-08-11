@@ -10,6 +10,8 @@ param(
     [int]$ExpectedRevitYear = 0,
     [string]$SummaryPath = "",
     [switch]$RequireTypeChange,
+    [switch]$RequireElementTypeEdit,
+    [switch]$AcknowledgeDisposableModel,
     [switch]$RequireRoomTag,
     [switch]$RequireElementTag,
     [switch]$RequireTags,
@@ -109,6 +111,14 @@ $nodeArgs = @(
 
 if ($RequireTypeChange) {
     $nodeArgs += @("--require-type-change")
+}
+
+if ($RequireElementTypeEdit) {
+    if (-not $AcknowledgeDisposableModel) {
+        Fail-Friendly "-RequireElementTypeEdit requires -AcknowledgeDisposableModel because it commits multiple model-changing transactions."
+    }
+    $nodeArgs += @("--require-element-type-edit")
+    $nodeArgs += @("--acknowledge-disposable-model")
 }
 
 if ($RequireTags) {
