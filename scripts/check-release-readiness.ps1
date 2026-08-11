@@ -475,6 +475,43 @@ function Test-LiveSmoke($Manifest, $Inventory) {
 
     $coveredOperations = @($Manifest.liveSmoke.summary.coveredOperations)
     $requiredCoverage = $Manifest.liveSmoke.summary.requiredCoverage
+    $requiresElementTypeEditEvidence = $Profile -eq "release-candidate" -or $Profile -eq "production"
+    if ($requiresElementTypeEditEvidence) {
+        if ($requiredCoverage -and $requiredCoverage.elementTypeEdit -eq $true) {
+            Pass "liveSmoke.requiredCoverage.elementTypeEdit" "Release readiness required ElementType edit smoke coverage."
+        } else {
+            Fail "liveSmoke.requiredCoverage.elementTypeEdit" "Release-candidate and production readiness require live smoke evidence captured with required ElementType edit coverage."
+        }
+    }
+
+    if ($requiredCoverage -and $requiredCoverage.elementTypeEdit -eq $true) {
+        if ($coveredOperations -contains "duplicate_element_type" -and $coveredOperations -contains "place_family_instance") {
+            Pass "liveSmoke.elementTypeEdit.operations" "Live smoke duplicated an ElementType and placed the returned FamilySymbol."
+        } else {
+            Fail "liveSmoke.elementTypeEdit.operations" "Required ElementType edit evidence must cover duplicate_element_type and place_family_instance."
+        }
+
+        $elementTypeEdit = $Manifest.liveSmoke.summary.elementTypeEdit
+        $elementTypeIdentityIsComplete = $elementTypeEdit -and
+            -not (Test-Blank $elementTypeEdit.sourceTypeId) -and
+            -not (Test-Blank $elementTypeEdit.elementTypeId) -and
+            -not (Test-Blank $elementTypeEdit.uniqueId) -and
+            -not (Test-Blank $elementTypeEdit.familyName) -and
+            -not (Test-Blank $elementTypeEdit.placedInstanceId) -and
+            [string] $elementTypeEdit.sourceTypeId -ne [string] $elementTypeEdit.elementTypeId
+        $elementTypeValuesAreVerified = $elementTypeEdit -and
+            [string] $elementTypeEdit.typeName -eq "2510x2260" -and
+            [double] $elementTypeEdit.widthMm -eq 2510 -and
+            [double] $elementTypeEdit.heightMm -eq 2260 -and
+            $elementTypeEdit.duplicateNameBlocked -eq $true
+
+        if ($elementTypeIdentityIsComplete -and $elementTypeValuesAreVerified) {
+            Pass "liveSmoke.elementTypeEdit.result" "Live smoke recorded the duplicated type identity, 2510x2260 dimensions, duplicate-name guard, and placed instance."
+        } else {
+            Fail "liveSmoke.elementTypeEdit.result" "Required ElementType edit evidence is missing the duplicated type identity, 2510x2260 dimensions, duplicate-name guard, or placed instance."
+        }
+    }
+
     $requiresCuratedTagEvidence = $Profile -eq "release-candidate" -or $Profile -eq "production"
     if ($requiresCuratedTagEvidence) {
         if ($requiredCoverage -and $requiredCoverage.roomTag -eq $true -and $requiredCoverage.elementTag -eq $true) {

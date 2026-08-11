@@ -1,6 +1,6 @@
 # Agent Workflows
 
-These workflows assume Revit MCP Next is installed for Revit 2024 and the MCP client was configured with `npm run mcp:config`. Start most workflows with `revit.read_bundle` when the agent needs a compact preflight packet, or `revit.status` when it only needs connection and document guards. Carry the returned `activeDocument.fingerprint`/`documentFingerprint` and generation into reads and change sets so stale model state is caught early. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
+These workflows assume Revit MCP Next is installed for Revit 2024 or Revit 2027 and the MCP client was configured with `npm run mcp:config`. Start most workflows with `revit.read_bundle` when the agent needs a compact preflight packet, or `revit.status` when it only needs connection and document guards. Carry the returned `activeDocument.fingerprint`/`documentFingerprint` and generation into reads and change sets so stale model state is caught early. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
 
 ## Model Audit
 

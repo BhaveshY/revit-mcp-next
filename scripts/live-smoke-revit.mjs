@@ -215,7 +215,6 @@ async function main() {
     summary.revit = status.revit ?? null;
     summary.addinAssembly = status.addinAssembly ? compactObject(status.addinAssembly) : null;
     assertExpectedRevitYear(status, options.expectedRevitYear);
-    if (options.requireElementTypeEdit) assertExpectedRevitYear(status, "2024");
 
     const activeDocument = status.activeDocument;
     summary.activeDocument = compactObject({
@@ -3458,7 +3457,7 @@ Runs a live Revit MCP smoke against the active Revit project:
   9. preview/apply create_wall
   10. revit.query and revit.describe_parameters for created elements
   11. blocked preview for mismatched expectedUniqueId
-  12. optional required Revit 2024 door type duplication, Width/Height update, catalog readback, duplicate-name block, and placement
+  12. optional required door type duplication, Width/Height update, catalog readback, duplicate-name block, and placement
   13. preview/apply place_family_instance with expectedHostUniqueId for hosted symbols or levelId-only for level-based symbols
   14. preview/apply room boundary walls
   15. preview/apply create_room, then revit.get_rooms read-back with positive area
@@ -3495,7 +3494,7 @@ Options:
   --summary-path <path>           Write machine-readable smoke-summary.json evidence.
   --require-type-change           Fail when no alternate valid wall type is available for change_element_type.
   --skip-type-change              Allow type-change coverage to be skipped when no alternate type exists. Default.
-  --require-element-type-edit     On Revit 2024, require door FamilySymbol duplication to 2510x2260, dimension readback, duplicate-name blocking, and placement.
+  --require-element-type-edit     Require door FamilySymbol duplication to 2510x2260, dimension readback, duplicate-name blocking, and placement.
   --skip-element-type-edit        Skip element-type edit acceptance. Default.
   --acknowledge-disposable-model  Confirm the active project is disposable. Required with --require-element-type-edit.
   --require-room-tag              Fail when tag_room cannot be applied.

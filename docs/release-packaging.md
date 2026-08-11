@@ -137,7 +137,7 @@ Useful installer switches:
 
 - `-DryRun`: validate sources and print actions without writing install files.
 - `-InstallRoot <path>`: override `%LOCALAPPDATA%\RevitMcpNext`.
-- `-RevitYears 2024`: install the Revit 2024 `.addin` manifest. Other years are rejected until year-specific add-in artifacts exist.
+- `-RevitYears 2024`, `-RevitYears 2027`, or both: install each requested `.addin` manifest when the package contains its matching year-specific artifact. Revit 2025 and 2026 are rejected.
 - `-SkipDependencyInstall`: do not run npm if packaged dependencies are absent.
 - `-SkipChecksumVerification`: bypass package checksum verification only for local debugging.
 
@@ -202,25 +202,28 @@ npm run evidence:release:windows -- `
   -HostedIntegrationEvidencePath artifacts\host-integrations
 ```
 
-For release-candidate live smoke, use a curated disposable model and run the smoke with tag coverage required:
+For release-candidate live smoke, use a curated disposable model and require ElementType, type-change, and tag coverage. Run the same command against each supported year:
 
 ```powershell
-npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
+$revitYear = 2024 # or 2027
+npm run smoke:revit -- -ExpectedRevitYear $revitYear -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
 For deterministic curated runners, select the intended loaded tag symbols by id or stable name/family substring:
 
 ```powershell
-npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag" -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
+$revitYear = 2024 # or 2027
+npm run smoke:revit -- -ExpectedRevitYear $revitYear -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag" -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
-The curated model should contain at least two compatible wall types, a loaded room tag type, a loaded wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. Pass a real disposable `.rvt` project file to `-ModelPath`; templates (`.rte`) must be opened from Revit and saved as `.rvt` first because the local release smoke runner copies the source model before launch. `smoke-summary.json.requiredCoverage` records that requirement, `tagSelectors` records requested tag type selectors when supplied, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
+The curated model should contain a duplicable wall-hosted door type with writable Width and Height parameters, at least two compatible wall types, a loaded room tag type, a wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. Pass a real disposable `.rvt` project file to `-ModelPath`; templates (`.rte`) must be opened from Revit and saved as `.rvt` first because the local release smoke runner copies the source model before launch. `smoke-summary.json.requiredCoverage` records the requirements. `result.elementTypeEdit` records the duplicated type, dimensions, duplicate-name guard, and placed instance. `tagSelectors` records requested tag type selectors, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
 
-On a disposable Revit 2024 test machine, start with a copied Autodesk sample before building a fixture from templates:
+On a disposable Revit 2024 or Revit 2027 test machine, start with a copied sample for that year before building a fixture from templates:
 
 ```powershell
-Copy-Item -LiteralPath "C:\Program Files\Autodesk\Revit 2024\Samples\Snowdon Towers Sample Architectural.rvt" -Destination C:\tmp\revit-mcp-next-tag-fixture.rvt -Force
-npm run smoke:release-local -- -ModelPath C:\tmp\revit-mcp-next-tag-fixture.rvt -RequireTypeChange -RequireTags
+$revitYear = 2024 # or 2027
+Copy-Item -LiteralPath "C:\Program Files\Autodesk\Revit $revitYear\Samples\Snowdon Towers Sample Architectural.rvt" -Destination C:\tmp\revit-mcp-next-tag-fixture.rvt -Force
+npm run smoke:release-local -- -RevitYear $revitYear -ModelPath C:\tmp\revit-mcp-next-tag-fixture.rvt -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags
 ```
 
 If you need to create a real `.rvt` from an installed `.rte`, install/start the package, then use the Revit API-backed fixture helper instead of copying or renaming the template:

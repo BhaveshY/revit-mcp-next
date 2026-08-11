@@ -331,7 +331,7 @@ if (-not [string]::IsNullOrWhiteSpace($runnerImportRoot)) {
 }
 
 if ($SeedHostsCache) {
-    $hostsArgs = @()
+    $hostsArgs = @("-RevitYear", "$RevitYear")
     if ($Builds -and $Builds.Count -gt 0) {
         $hostsArgs += @("-Builds", ($Builds -join ","))
     }

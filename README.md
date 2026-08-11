@@ -31,10 +31,10 @@ Autodesk Revit API
 
 ## Current Status
 
-Revit 2024 remains the established staged-package target. Revit 2027 now has
-separate .NET 10 build/package/install support, but its full live Revit,
-pyRevit, and Dynamo smoke evidence is still pending. This is not yet a signed
-production release:
+Revit 2024 and Revit 2027 are first-class staged-package targets with separate
+framework-specific add-in artifacts. Each published package still needs live
+Revit, pyRevit, and Dynamo evidence from its matching host. This is not yet a
+signed production release:
 
 - `contracts/`: shared protocol and tool-result TypeScript types plus JSON schema.
 - `broker/`: MCP stdio server with bounded read/write tools, including view/sheet inventory, model warnings, parameter discovery, `revit.get_rooms`, guarded `create_room`, output schemas, structured errors, pipe auth token forwarding, `revitctl`, and bridge tests.
@@ -355,9 +355,10 @@ See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences 
 ## Production Readiness And Remaining Blockers
 
 This repository is ready for local development and staged Windows packaging for
-Revit 2024 and Revit 2027. Revit 2027 should be treated as a build/package
-candidate until live Revit, pyRevit, and Dynamo evidence from the exact package
-has passed and been archived. Production release hardening is still in progress.
+Revit 2024 and Revit 2027 as first-class supported targets. Treat each exact
+year-specific package as a candidate until its live Revit, pyRevit, and Dynamo
+evidence has passed and been archived. Production release hardening is still in
+progress.
 
 See [production-readiness.md](docs/production-readiness.md) for the current evidence and blocker audit, and [fork-parity.md](docs/fork-parity.md) for the old-fork capability comparison.
 
@@ -368,8 +369,7 @@ Remaining blockers:
 - Release-candidate hosted pyRevit and Dynamo evidence from the installed package, summarized in `host-integrations-summary.json` and backed by bundled raw `pyrevit.json`, `dynamo.json`, and `dynamo-preflight.json`.
 - Archived release evidence bundle for each release candidate, generated from the exact package, signing state, diagnostics, support bundle, live-smoke output, and hosted integration output for that build.
 - More real-model write-operation and failure-mode evidence before calling the mutation surface production-complete.
-- Revit 2027 live-host validation from the exact year-specific package,
-  including cold start, broker/add-in IPC, preview/apply writes, restart,
-  pyRevit, Dynamo, support, and release evidence. Revit 2025/2026 remain
-  intentionally unsupported until their own API-specific artifacts and host
-  evidence exist.
+- Live-host validation for every published year-specific package, including
+  cold start, broker/add-in IPC, preview/apply writes, restart, pyRevit, Dynamo,
+  support, and release evidence. Revit 2025/2026 remain intentionally
+  unsupported until their own API-specific artifacts and host evidence exist.

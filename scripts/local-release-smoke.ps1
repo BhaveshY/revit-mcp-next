@@ -6,6 +6,8 @@ param(
     [switch] $NoLaunch,
     [switch] $NoEvidence,
     [switch] $RequireTypeChange,
+    [switch] $RequireElementTypeEdit,
+    [switch] $AcknowledgeDisposableModel,
     [switch] $RequireRoomTag,
     [switch] $RequireElementTag,
     [switch] $RequireTags,
@@ -17,6 +19,7 @@ param(
     [string] $ElementTagFamilySha256 = "",
     [string] $ElementTagTypeId = "",
     [string] $ElementTagTypeNameContains = "",
+    [ValidateSet(2024, 2027)]
     [int] $RevitYear = 2024,
     [string] $RevitApiPath = "",
     [string] $RevitExePath = "",
@@ -85,6 +88,9 @@ Options:
   -NoLaunch                  Require Revit to already be running.
   -NoEvidence                Skip release evidence bundle collection.
   -RequireTypeChange         Require change_element_type smoke coverage.
+  -RequireElementTypeEdit    Require ElementType duplicate/rename acceptance coverage.
+  -AcknowledgeDisposableModel
+                              Confirm the active project is disposable. Required with -RequireElementTypeEdit.
   -RequireRoomTag            Require tag_room smoke coverage.
   -RequireElementTag         Require tag_element smoke coverage.
   -RequireTags               Require both tag_room and tag_element smoke coverage.
@@ -511,6 +517,9 @@ if ($StartupWaitSeconds -lt 0 -or $StartupWaitSeconds -gt 900) {
 if ($BridgeReadyTimeoutSeconds -lt 0 -or $BridgeReadyTimeoutSeconds -gt 1800) {
     throw "-BridgeReadyTimeoutSeconds must be between 0 and 1800."
 }
+if ($RequireElementTypeEdit -and -not $AcknowledgeDisposableModel) {
+    throw "-RequireElementTypeEdit requires -AcknowledgeDisposableModel because it commits multiple model-changing transactions."
+}
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
@@ -597,6 +606,8 @@ $runInputs = [ordered] @{
     noLaunch = [bool] $NoLaunch
     noEvidence = [bool] $NoEvidence
     requireTypeChange = [bool] $RequireTypeChange
+    requireElementTypeEdit = [bool] $RequireElementTypeEdit
+    acknowledgeDisposableModel = [bool] $AcknowledgeDisposableModel
     requireRoomTag = [bool] $RequireRoomTag
     requireElementTag = [bool] $RequireElementTag
     requireTags = [bool] $RequireTags
@@ -642,7 +653,7 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
 
 if (-not $SkipBuild) {
     Invoke-Logged "Build broker/contracts" (Join-Path $logsDir "npm-build.log") $npm @("run", "build")
-    Invoke-Logged "Build Revit add-in" (Join-Path $logsDir "build-addin.log") $npm @("run", "build:addin", "--", "-RevitApiPath", $revitApi)
+    Invoke-Logged "Build Revit add-in" (Join-Path $logsDir "build-addin.log") $npm @("run", "build:addin", "--", "-RevitYear", "$RevitYear", "-RevitApiPath", $revitApi)
     Invoke-Logged "Validate repository" (Join-Path $logsDir "validate-repo.log") $node @("scripts\validate-repo.mjs")
     $packageArgs = @("run", "package:windows", "--", "-OutputRoot", $packageOutputRoot, "-RevitYears", "$RevitYear")
     if ($localDevSigningEnabled) {
@@ -738,6 +749,9 @@ $smokeArgs = @(
 )
 if ($RequireTypeChange) {
     $smokeArgs += "-RequireTypeChange"
+}
+if ($RequireElementTypeEdit) {
+    $smokeArgs += @("-RequireElementTypeEdit", "-AcknowledgeDisposableModel")
 }
 if ($RequireTags) {
     $smokeArgs += "-RequireTags"

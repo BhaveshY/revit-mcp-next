@@ -6,15 +6,15 @@ release is ready for production use in that Revit host.
 
 | Revit | Runtime / target | Build and package status | Host-validation status |
 | --- | --- | --- | --- |
-| 2024 | .NET Framework 4.8 / `net48` | Supported staged-package target | Existing live-smoke workflow; release evidence is still required for each published package |
+| 2024 | .NET Framework 4.8 / `net48` | First-class staged-package target | Live-smoke workflow; exact-package release evidence is required for each published package |
 | 2025 | .NET 8 / `net8.0-windows` | Not supported | Not validated |
 | 2026 | .NET 8 / `net8.0-windows` | Not supported | Not validated |
-| 2027 | .NET 10 / `net10.0-windows` | Supported source-build, package, and per-user install target | Compile/package validation only; full Revit, pyRevit, and Dynamo live-smoke evidence is pending |
+| 2027 | .NET 10 / `net10.0-windows` | First-class staged-package target | Live-smoke workflow; exact-package release evidence is required for each published package |
 
-The 2027 implementation is intentionally described as build/package support
-until the exact packaged DLL is loaded and exercised by the self-hosted live
-smoke workflow. Do not label a 2027 package production-ready, or claim parity
-with the established 2024 host evidence, before that evidence is archived.
+Both supported years use the same broker protocol, tool surface, safety model,
+live-smoke requirements, and release-readiness gates. Do not label a package
+production-ready until its year-specific DLL and hosted integrations have passed
+the self-hosted workflows and the evidence has been archived.
 
 ## Build Inputs And Outputs
 

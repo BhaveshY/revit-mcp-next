@@ -912,6 +912,7 @@ if (-not [string]::IsNullOrWhiteSpace($LiveSmokeEvidencePath)) {
             requiredCoverage = $liveSmokeSummary.data.requiredCoverage
             tagSelectors = $liveSmokeSummary.data.tagSelectors
             tagCoverage = $liveSmokeSummary.data.result.tagCoverage
+            elementTypeEdit = ConvertTo-ShareableObject $liveSmokeSummary.data.result.elementTypeEdit
             coveredTools = $liveSmokeSummary.data.coveredTools
             coveredOperations = $liveSmokeSummary.data.coveredOperations
             skippedOperations = $liveSmokeSummary.data.skippedOperations

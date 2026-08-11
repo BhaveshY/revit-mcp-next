@@ -111,6 +111,9 @@ function validateRevitVersionConfiguration() {
   const installerPath = join(root, "installer", "install-windows.ps1");
   const matrixPath = join(root, "docs", "version-matrix.md");
   const liveWorkflowPath = join(root, ".github", "workflows", "live-revit-smoke.yml");
+  const localReleaseSmokePath = join(root, "scripts", "local-release-smoke.ps1");
+  const pyRevitSmokePath = join(root, "scripts", "run-pyrevit-host-smoke.ps1");
+  const pyRevitHostsPath = join(root, "scripts", "ensure-pyrevit-hosts-cache.ps1");
 
   const project = readFileSync(projectPath, "utf8");
   requireText(projectPath, project, [
@@ -151,7 +154,8 @@ function validateRevitVersionConfiguration() {
   const matrix = readFileSync(matrixPath, "utf8");
   requireText(matrixPath, matrix, [
     "| 2027 | .NET 10 / `net10.0-windows` |",
-    "Compile/package validation only",
+    "First-class staged-package target",
+    "Both supported years use the same broker protocol",
     "Revit 2025 and 2026 remain excluded",
   ]);
 
@@ -161,6 +165,31 @@ function validateRevitVersionConfiguration() {
     "-RevitYear $env:REVIT_YEAR",
     "expectedApiMajor",
     "revitApiAssemblyVersion",
+  ]);
+
+  const localReleaseSmoke = readFileSync(localReleaseSmokePath, "utf8");
+  requireText(localReleaseSmokePath, localReleaseSmoke, [
+    "[ValidateSet(2024, 2027)]",
+    '"build:addin", "--", "-RevitYear", "$RevitYear"',
+    "[switch] $RequireElementTypeEdit",
+    "[switch] $AcknowledgeDisposableModel",
+    "requireElementTypeEdit = [bool] $RequireElementTypeEdit",
+    "acknowledgeDisposableModel = [bool] $AcknowledgeDisposableModel",
+    '$smokeArgs += @("-RequireElementTypeEdit", "-AcknowledgeDisposableModel")',
+  ]);
+
+  const pyRevitSmoke = readFileSync(pyRevitSmokePath, "utf8");
+  requireText(pyRevitSmokePath, pyRevitSmoke, [
+    '$hostsArgs = @("-RevitYear", "$RevitYear")',
+  ]);
+
+  const pyRevitHosts = readFileSync(pyRevitHostsPath, "utf8");
+  requireText(pyRevitHostsPath, pyRevitHosts, [
+    "[ValidateSet(2024, 2027)]",
+    'if ($RevitYear -eq 2024) { "24.0.0.0" } else { "27.0.0.0" }',
+    "Revit 2027 host cache seeding requires explicit -Builds values",
+    "revitYear = $RevitYear",
+    "version = $resolvedVersion",
   ]);
 }
 

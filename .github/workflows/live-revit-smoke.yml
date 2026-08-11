@@ -88,7 +88,7 @@ on:
         type: boolean
         default: true
       require_element_type_edit:
-        description: On Revit 2024, require door FamilySymbol duplication, dimensions, catalog readback, duplicate-name blocking, and placement.
+        description: Require door FamilySymbol duplication, dimensions, catalog readback, duplicate-name blocking, and placement.
         required: true
         type: boolean
         default: false
@@ -240,6 +240,7 @@ jobs:
             signingMode = $env:SIGNING_MODE
             requireTrustedSignatures = $env:REQUIRE_TRUSTED_SIGNATURES
             requireTypeChange = $env:REQUIRE_TYPE_CHANGE
+            requireElementTypeEdit = $env:REQUIRE_ELEMENT_TYPE_EDIT
             requireRoomTag = $env:REQUIRE_ROOM_TAG
             requireElementTag = $env:REQUIRE_ELEMENT_TAG
             requireTags = $env:REQUIRE_TAGS
@@ -278,6 +279,9 @@ jobs:
             }
             if ("${{ inputs.collect_support_bundle }}" -ne "true") {
               throw "readiness_profile=$profile requires collect_support_bundle=true."
+            }
+            if ($env:REQUIRE_ELEMENT_TYPE_EDIT -ne "true") {
+              throw "readiness_profile=$profile requires require_element_type_edit=true so ElementType duplication, parameter edits, catalog readback, duplicate-name blocking, and placement are covered."
             }
             if ($env:REQUIRE_TAGS -ne "true" -and -not ($env:REQUIRE_ROOM_TAG -eq "true" -and $env:REQUIRE_ELEMENT_TAG -eq "true")) {
               throw "readiness_profile=$profile requires both tag_room and tag_element live-smoke coverage. Set require_tags=true or both individual tag requirements."
@@ -462,7 +466,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $existing = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($env:REQUIRE_ELEMENT_TYPE_EDIT -eq "true" -and [string]::IsNullOrWhiteSpace($env:REVIT_MODEL_PATH)) {
-            throw "require_element_type_edit=true requires revit_model_path for a disposable Revit 2024 project."
+            throw "require_element_type_edit=true requires revit_model_path for a disposable project matching revit_year."
           }
           if ($existing -and $env:REQUIRE_ELEMENT_TYPE_EDIT -eq "true") {
             throw "require_element_type_edit=true refuses an already-running Revit session. Close Revit so the workflow can launch the configured disposable model."
@@ -542,7 +546,7 @@ jobs:
 
           $existing = Get-Process -Name Revit -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($env:REQUIRE_ELEMENT_TYPE_EDIT -eq "true" -and [string]::IsNullOrWhiteSpace($env:REVIT_MODEL_PATH)) {
-            throw "require_element_type_edit=true requires revit_model_path for a disposable Revit 2024 project."
+            throw "require_element_type_edit=true requires revit_model_path for a disposable project matching revit_year."
           }
           if ($existing -and $env:REQUIRE_ELEMENT_TYPE_EDIT -eq "true") {
             throw "require_element_type_edit=true refuses an already-running Revit session. Close Revit so the workflow can launch the configured disposable model."

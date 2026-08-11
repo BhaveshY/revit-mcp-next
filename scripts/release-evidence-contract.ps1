@@ -419,7 +419,7 @@ try {
         }
         documentFingerprint = "doc-synthetic-evidence-contract"
         coveredTools = @("revit.bridge_health", "revit.get_request_result", "revit.status", "revit.cancel_request", "revitctl.operation_kind_mismatch", "revit.get_rooms", "revit.preview_change_set", "revit.apply_change_set")
-        coveredOperations = @("create_level", "create_wall", "create_room", "tag_room", "tag_element")
+        coveredOperations = @("create_level", "create_wall", "create_room", "duplicate_element_type", "place_family_instance", "tag_room", "tag_element")
         skippedOperations = @()
         operationKindGuard = [ordered] @{
             command = "revitctl call apply_change_set --operation-kind read"
@@ -429,6 +429,7 @@ try {
         }
         requiredCoverage = [ordered] @{
             typeChange = $false
+            elementTypeEdit = $true
             roomTag = $true
             elementTag = $true
         }
@@ -441,6 +442,19 @@ try {
             }
         }
         result = [ordered] @{
+            elementTypeEdit = [ordered] @{
+                sourceTypeId = "1500"
+                elementTypeId = "1501"
+                uniqueId = "door-type-1501"
+                familyName = "Single-Flush"
+                typeName = "2510x2260"
+                widthParameterName = "Width"
+                heightParameterName = "Height"
+                widthMm = 2510
+                heightMm = 2260
+                duplicateNameBlocked = $true
+                placedInstanceId = "1502"
+            }
             tagCoverage = [ordered] @{
                 room = [ordered] @{
                     roomId = "601"
@@ -739,6 +753,11 @@ try {
     if ($evidenceManifest.liveSmoke.summary.requiredCoverage.roomTag -ne $true -or $evidenceManifest.liveSmoke.summary.requiredCoverage.elementTag -ne $true) {
         throw "Live smoke required tag coverage flags were not recorded."
     }
+    if ($evidenceManifest.liveSmoke.summary.requiredCoverage.elementTypeEdit -ne $true -or
+        $evidenceManifest.liveSmoke.summary.elementTypeEdit.typeName -ne "2510x2260" -or
+        $evidenceManifest.liveSmoke.summary.elementTypeEdit.duplicateNameBlocked -ne $true) {
+        throw "Live smoke required ElementType edit evidence was not recorded."
+    }
     if ($evidenceManifest.liveSmoke.summary.tagSelectors.room.nameContains -ne "Room" -or $evidenceManifest.liveSmoke.summary.tagSelectors.element.nameContains -ne "Wall") {
         throw "Live smoke tag selectors were not recorded."
     }
@@ -894,6 +913,18 @@ try {
         "-Profile", "release-candidate",
         "-AllowDirty"
     ) "*Live smoke required tag_element*" "Required tag coverage readiness gate"
+
+    $tamperedElementTypeEvidenceRoot = Join-Path $runRoot "tampered-element-type-evidence"
+    Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedElementTypeEvidenceRoot -Recurse -Force
+    $tamperedElementTypeManifestPath = Join-Path $tamperedElementTypeEvidenceRoot "release-evidence-manifest.json"
+    $tamperedElementTypeManifest = Get-Content -LiteralPath $tamperedElementTypeManifestPath -Raw | ConvertFrom-Json
+    $tamperedElementTypeManifest.liveSmoke.summary.elementTypeEdit = $null
+    Set-Content -LiteralPath $tamperedElementTypeManifestPath -Value ($tamperedElementTypeManifest | ConvertTo-Json -Depth 12) -Encoding UTF8
+    Assert-ScriptFailsLike $readinessScript @(
+        "-EvidencePath", $tamperedElementTypeEvidenceRoot,
+        "-Profile", "release-candidate",
+        "-AllowDirty"
+    ) "*Required ElementType edit evidence is missing*" "Required ElementType edit evidence readiness gate"
 
     $tamperedEvidenceRoot = Join-Path $runRoot "tampered-missing-evidence-file"
     Copy-Item -LiteralPath $evidenceRoot.FullName -Destination $tamperedEvidenceRoot -Recurse -Force

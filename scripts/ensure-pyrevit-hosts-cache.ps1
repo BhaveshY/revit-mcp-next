@@ -1,9 +1,10 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [string[]] $Builds = @("20230106_1515", "20241105_1515"),
+    [string[]] $Builds = @(),
+    [ValidateSet(2024, 2027)]
     [int] $RevitYear = 2024,
     [string] $Product = "Autodesk Revit",
-    [string] $Version = "24.0.0.0",
+    [string] $Version = "",
     [string] $ReleaseLabel = "",
     [string] $SourceHostsPath = "",
     [string] $CachePath = "$env:APPDATA\pyRevit\Cache\pyrevit-hosts.json",
@@ -75,15 +76,25 @@ function New-HostEntry($Build) {
         }
         product = $Product
         release = $release
-        version = $Version
+        version = $resolvedVersion
         build = (Normalize-Build $Build)
         target = "x64"
         notes = "Added to the per-user pyRevit host cache so pyrevit run can open models whose build is newer than pyRevit's bundled metadata."
     }
 }
 
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $resolvedVersion = if ($RevitYear -eq 2024) { "24.0.0.0" } else { "27.0.0.0" }
+} else {
+    $resolvedVersion = $Version.Trim()
+}
+
 if (-not $Builds -or $Builds.Count -eq 0) {
-    throw "At least one Revit build id must be supplied."
+    if ($RevitYear -eq 2024) {
+        $Builds = @("20230106_1515", "20241105_1515")
+    } else {
+        throw "Revit 2027 host cache seeding requires explicit -Builds values from an installed Revit 2027 build. No 2027 build ids are hard-coded."
+    }
 }
 
 $normalizedRequestedBuilds = @($Builds | ForEach-Object {
@@ -146,6 +157,8 @@ if ($DryRun) {
 $result = [ordered] @{
     status = "ok"
     dryRun = [bool] $DryRun
+    revitYear = $RevitYear
+    version = $resolvedVersion
     sourceHostsPath = $sourceFull
     cachePath = $cacheFull
     totalEntries = $merged.Count

@@ -21,12 +21,12 @@ See [tooling-roadmap.md](tooling-roadmap.md) for the tracked implementation stat
 | `analyze_model_statistics` | Covered by `revit.analyze_model`. |
 | Model planning context | Better than the fork: `revit.get_model_context` returns compact project info plus phase, workset, design option, and Revit link IDs for filtered reads and guarded workflows. |
 | `get_material_quantities` | Covered by `revit.get_material_quantities` with normalized metric units. |
-| `export_room_data` | Covered by `revit.get_rooms` for compact, paginated room export/schedule data, with live smoke coverage in the Revit 2024 smoke workflow. |
+| `export_room_data` | Covered by `revit.get_rooms` for compact, paginated room export/schedule data, with live smoke coverage in the shared Revit 2024 and Revit 2027 workflow. |
 | `create_level` | Covered as guarded `create_level` preview/apply operation. |
 | `create_grid` | Covered as guarded `create_grid` preview/apply operation. |
 | Wall subset of `create_line_based_element` | Covered as guarded `create_wall` preview/apply operation. |
 | Floor subset of `create_surface_based_element` | Covered as guarded `create_floor` preview/apply operation. |
-| `create_room` | Covered as guarded `create_room` preview/apply operation with level/location input and duplicate-number protection by default, with live smoke coverage in the Revit 2024 smoke workflow. |
+| `create_room` | Covered as guarded `create_room` preview/apply operation with level/location input and duplicate-number protection by default, with live smoke coverage in the shared Revit 2024 and Revit 2027 workflow. |
 | `tag_walls` / `tag_rooms` | Covered as guarded `tag_element` and `tag_room` preview/apply operations for view-scoped wall/multi-category tags and room tags, with optional `expectedUniqueId` target protection. Tag type discovery is through `revit.catalog kind=tagTypes`. |
 | Family loading/setup | Better than the fork for deterministic agent workflows: covered as guarded `load_family` preview/apply for vetted local `.rfa` files, with optional SHA-256 and category guards before using loaded symbols through `revit.catalog`. |
 | Door/window/furniture subset of `create_point_based_element` | Covered for first production cases as guarded `place_family_instance` preview/apply operation. It supports wall-hosted doors/windows and level-based furniture/equipment/fixtures discovered through `revit.catalog kind=familySymbols preset=placement`, with symbol, host, level, pinned-host, activation, rotation, and flip validation. |
@@ -49,7 +49,7 @@ See [tooling-roadmap.md](tooling-roadmap.md) for the tracked implementation stat
 
 ## Current Priority Order
 
-1. Prove signed no-prompt loading, live Revit 2024 smoke, pyRevit smoke, and Dynamo smoke from the exact release package for each public release candidate.
+1. Prove signed no-prompt loading, live Revit smoke, pyRevit smoke, and Dynamo smoke from each exact Revit 2024 and Revit 2027 release package.
 2. Add dimension operations after robust reference discovery and preview messages.
 3. Add beam/pipe/duct/conduit and ceiling/roof operations as separate typed operations after catalog and host constraints are validated.
 4. Keep `store_project_data`, `store_room_data`, `query_stored_data`, and `send_code_to_revit` explicitly deferred unless separate designs are approved.
