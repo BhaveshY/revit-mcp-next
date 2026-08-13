@@ -49,8 +49,8 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
                 "transient listener factory faults recover",
                 TransientListenerFactoryFaultRecoversAsync).ConfigureAwait(false);
             await RunCaseAsync(
-                "protocol version is mandatory at named-pipe ingress",
-                ProtocolVersionIsMandatoryAsync).ConfigureAwait(false);
+                "bridge protocol version is mandatory at named-pipe ingress",
+                BridgeProtocolVersionIsMandatoryAsync).ConfigureAwait(false);
             await RunCaseAsync(
                 "reserved control pipe stays reachable and cancels queued work",
                 ReservedControlPipeStaysReachableAsync).ConfigureAwait(false);
@@ -62,14 +62,14 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
                 FoundationUnitInvariantsAsync).ConfigureAwait(false);
         }
 
-        private static async Task ProtocolVersionIsMandatoryAsync()
+        private static async Task BridgeProtocolVersionIsMandatoryAsync()
         {
             Assert(BridgeProtocolGuard.Classify(null) == BridgeProtocolStatus.Missing,
-                "Shared ingress protocol guard did not classify a missing version.");
+                "Shared ingress bridge protocol guard did not classify a missing version.");
             Assert(BridgeProtocolGuard.Classify("1900-01-01") == BridgeProtocolStatus.Mismatch,
-                "Shared ingress protocol guard did not classify a wrong version.");
+                "Shared ingress bridge protocol guard did not classify a wrong version.");
             Assert(BridgeProtocolGuard.Classify(BridgeProtocol.Version) == BridgeProtocolStatus.Current,
-                "Shared ingress protocol guard did not accept the current version.");
+                "Shared ingress bridge protocol guard did not accept the current version.");
 
             string pipeName = UniquePipeName("protocol");
             var queue = new RevitRequestQueue();
@@ -82,7 +82,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
                     "missing-protocol",
                     "status",
                     timeoutMs: 5000,
-                    protocolVersion: null).ConfigureAwait(false);
+                    bridgeProtocolVersion: null).ConfigureAwait(false);
                 Assert(!missing.Ok && missing.Error?.Code == "PROTOCOL_VERSION_REQUIRED",
                     "A named-pipe request without protocolVersion was not rejected explicitly.");
 
@@ -91,7 +91,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
                     "wrong-protocol",
                     "status",
                     timeoutMs: 5000,
-                    protocolVersion: "1900-01-01").ConfigureAwait(false);
+                    bridgeProtocolVersion: "1900-01-01").ConfigureAwait(false);
                 Assert(!wrong.Ok && wrong.Error?.Code == "PROTOCOL_VERSION_MISMATCH",
                     "A named-pipe request with the wrong protocolVersion did not preserve mismatch rejection.");
                 Assert(queue.AcceptedCount == 0, "Invalid protocol requests reached the Revit queue.");
@@ -511,7 +511,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
         {
             return new BridgeRequestEnvelope
             {
-                ProtocolVersion = BridgeProtocol.Version,
+                BridgeProtocolVersion = BridgeProtocol.Version,
                 RequestId = requestId,
                 SessionId = "lifecycle-harness",
                 Operation = operation,
@@ -550,7 +550,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
             string operationKind = "read",
             Dictionary<string, object> payload = null,
             string sessionId = "lifecycle-harness",
-            string protocolVersion = BridgeProtocol.Version)
+            string bridgeProtocolVersion = BridgeProtocol.Version)
         {
             using (var client = new NamedPipeClientStream(
                 ".",
@@ -559,7 +559,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
                 PipeOptions.Asynchronous))
             {
                 await ConnectAsync(client, timeoutMs).ConfigureAwait(false);
-                await WriteRequestAsync(client, requestId, operation, timeoutMs, operationKind, payload, sessionId, protocolVersion).ConfigureAwait(false);
+                await WriteRequestAsync(client, requestId, operation, timeoutMs, operationKind, payload, sessionId, bridgeProtocolVersion).ConfigureAwait(false);
                 string responseJson = await FramedPipeTransport.ReadFrameAsync(
                     client,
                     CancellationToken.None).ConfigureAwait(false);
@@ -575,7 +575,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
             string operationKind = "read",
             Dictionary<string, object> payload = null,
             string sessionId = "lifecycle-harness",
-            string protocolVersion = BridgeProtocol.Version)
+            string bridgeProtocolVersion = BridgeProtocol.Version)
         {
             var requestBody = new Dictionary<string, object>
             {
@@ -586,7 +586,7 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
                 ["timeoutMs"] = timeoutMs,
                 ["payload"] = payload ?? new Dictionary<string, object>()
             };
-            if (protocolVersion != null) requestBody["protocolVersion"] = protocolVersion;
+            if (bridgeProtocolVersion != null) requestBody["protocolVersion"] = bridgeProtocolVersion;
             string request = new JavaScriptSerializer().Serialize(requestBody);
             return FramedPipeTransport.WriteFrameAsync(
                 client,

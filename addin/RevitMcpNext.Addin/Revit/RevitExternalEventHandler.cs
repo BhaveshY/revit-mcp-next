@@ -7580,6 +7580,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["brokerVersion"] = "unknown",
                 ["addinVersion"] = AddinVersion,
                 ["addinAssembly"] = BuildAddinAssemblyIdentity(),
+                ["bridgeProtocolVersion"] = BridgeProtocol.Version,
                 ["protocolVersion"] = BridgeProtocol.Version,
                 ["revit"] = new Dictionary<string, object>
                 {

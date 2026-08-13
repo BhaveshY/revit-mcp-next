@@ -1524,8 +1524,8 @@ async function loadMcpSdk(launcherPath) {
 
   for (const root of candidateRoots) {
     try {
-      const clientPath = requireFromScript.resolve("@modelcontextprotocol/sdk/client/index.js", { paths: [root] });
-      const transportPath = requireFromScript.resolve("@modelcontextprotocol/sdk/client/stdio.js", { paths: [root] });
+      const clientPath = requireFromScript.resolve("@modelcontextprotocol/client", { paths: [root] });
+      const transportPath = requireFromScript.resolve("@modelcontextprotocol/client/stdio", { paths: [root] });
       const clientModule = await import(pathToFileURL(clientPath).href);
       const transportModule = await import(pathToFileURL(transportPath).href);
       return {
@@ -1539,7 +1539,7 @@ async function loadMcpSdk(launcherPath) {
 
   throw new Error(
     [
-      "Unable to resolve @modelcontextprotocol/sdk for the live smoke client.",
+      "Unable to resolve @modelcontextprotocol/client for the live smoke client.",
       "Run npm install in the repo, use a packaged release with broker production dependencies, or reinstall Revit MCP Next.",
       `Checked roots: ${candidateRoots.join(", ")}`,
     ].join("\n")

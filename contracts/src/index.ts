@@ -1,6 +1,12 @@
-export const PROTOCOL_VERSION = "2026-08-11" as const;
+export const BRIDGE_PROTOCOL_VERSION = "2026-08-11" as const;
 
-export type ProtocolVersion = typeof PROTOCOL_VERSION;
+export type BridgeProtocolVersion = typeof BRIDGE_PROTOCOL_VERSION;
+
+/** @deprecated Use BRIDGE_PROTOCOL_VERSION. */
+export const PROTOCOL_VERSION = BRIDGE_PROTOCOL_VERSION;
+
+/** @deprecated Use BridgeProtocolVersion. */
+export type ProtocolVersion = BridgeProtocolVersion;
 export type ElementId = string;
 export type UniqueId = string;
 
@@ -79,7 +85,8 @@ export interface BridgeMetrics {
 }
 
 export interface BridgeRequest<TPayload = unknown> {
-  protocolVersion: ProtocolVersion;
+  /** Private broker-to-Revit bridge protocol version. The JSON wire key remains stable for compatibility. */
+  protocolVersion: BridgeProtocolVersion;
   requestId: string;
   sessionId: string;
   authToken?: string;
@@ -211,7 +218,9 @@ export interface RevitStatus {
     productVersion?: string;
     assemblyIdentityError?: string;
   };
-  protocolVersion: ProtocolVersion;
+  bridgeProtocolVersion: BridgeProtocolVersion;
+  /** @deprecated Use bridgeProtocolVersion. */
+  protocolVersion?: BridgeProtocolVersion;
   revit?: {
     version: string;
     build?: string;

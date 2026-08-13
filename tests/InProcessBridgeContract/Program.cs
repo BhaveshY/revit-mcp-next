@@ -12,6 +12,7 @@ namespace RevitMcpNext.InProcessBridgeContract
         {
             try
             {
+                AssertDeprecatedProtocolAlias();
                 AssertFailure(RequestJson(null), "PROTOCOL_VERSION_REQUIRED");
                 AssertFailure(RequestJson("1900-01-01"), "PROTOCOL_VERSION_MISMATCH");
                 AssertFailure(RequestJson(BridgeProtocol.Version), "NO_UI_APPLICATION");
@@ -25,7 +26,23 @@ namespace RevitMcpNext.InProcessBridgeContract
             }
         }
 
-        private static string RequestJson(string protocolVersion)
+        private static void AssertDeprecatedProtocolAlias()
+        {
+            var alias = typeof(BridgeRequestEnvelope).GetProperty("ProtocolVersion");
+            if (alias == null || !Attribute.IsDefined(alias, typeof(ObsoleteAttribute)))
+            {
+                throw new InvalidOperationException("The deprecated ProtocolVersion compatibility alias is missing.");
+            }
+
+            var request = new BridgeRequestEnvelope();
+            alias.SetValue(request, "compatibility-test", null);
+            if (!string.Equals(request.BridgeProtocolVersion, "compatibility-test", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("ProtocolVersion does not forward to BridgeProtocolVersion.");
+            }
+        }
+
+        private static string RequestJson(string bridgeProtocolVersion)
         {
             var request = new Dictionary<string, object>
             {
@@ -36,7 +53,7 @@ namespace RevitMcpNext.InProcessBridgeContract
                 ["timeoutMs"] = 5000,
                 ["payload"] = new Dictionary<string, object>()
             };
-            if (protocolVersion != null) request["protocolVersion"] = protocolVersion;
+            if (bridgeProtocolVersion != null) request["protocolVersion"] = bridgeProtocolVersion;
             return JsonWireCodec.Serialize(request);
         }
 

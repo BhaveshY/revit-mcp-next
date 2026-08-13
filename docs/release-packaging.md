@@ -154,7 +154,7 @@ npm run mcp:config -- -Client codex
 npm run doctor:clients
 ```
 
-`npm run doctor:clients` checks generated Claude/Codex snippets, existing user config entries when present, stale launcher roots, launcher quoting, token leakage risk, and MCP `initialize` plus `tools/list` startup without requiring an active Revit connection.
+`npm run doctor:clients` checks generated Claude/Codex snippets, existing user config entries when present, stale launcher roots, launcher quoting, token leakage risk, and legacy MCP `2025-11-25` `initialize` plus `tools/list` startup without requiring an active Revit connection. The broker boundary suite validates modern MCP separately.
 
 Debug the installed bridge directly:
 

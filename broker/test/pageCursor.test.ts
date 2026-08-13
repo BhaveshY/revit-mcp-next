@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { BridgeResponse } from "@revit-mcp-next/contracts";
-import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
+import { BRIDGE_PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import { decodePageCursor, encodePageCursorResponse } from "../src/tools/pageCursor.js";
 
 const cursorOperations = [
@@ -18,7 +18,7 @@ const cursorOperations = [
 ];
 
 test("page cursors are opaque and bound for every paged read operation", () => {
-  const context = { sessionId: "cursor-test", protocolVersion: PROTOCOL_VERSION };
+  const context = { sessionId: "cursor-test", bridgeProtocolVersion: BRIDGE_PROTOCOL_VERSION };
 
   for (const operation of cursorOperations) {
     const bindingPayload = {

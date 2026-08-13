@@ -36,8 +36,8 @@ framework-specific add-in artifacts. Each published package still needs live
 Revit, pyRevit, and Dynamo evidence from its matching host. This is not yet a
 signed production release:
 
-- `contracts/`: shared protocol and tool-result TypeScript types plus JSON schema.
-- `broker/`: MCP stdio server with bounded read/write tools, including view/sheet inventory, model warnings, parameter discovery, `revit.get_rooms`, guarded `create_room`, output schemas, structured errors, pipe auth token forwarding, `revitctl`, and bridge tests.
+- `contracts/`: shared Revit bridge envelope and tool-result TypeScript types plus JSON schema.
+- `broker/`: MCP stdio server on the stable SDK v2 package split. It serves MCP `2026-07-28` and supported legacy clients, caches static discovery privately for five minutes, and exposes bounded read/write tools, structured errors, pipe auth token forwarding, `revitctl`, and bridge tests.
 - `addin/`: year-specific Revit 2024 (`net48`) and Revit 2027 (`net10.0-windows`) add-ins with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers including rooms, and preview/apply write handlers including room placement.
 - `installer/`: Windows installer that stages broker/contracts and year-specific add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes each requested Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates the Claude/Codex MCP launcher plus `revitctl.cmd` for debugging.
 - `scripts/package-release.ps1`: staged Windows release package with per-year add-in payloads, checksums, and optional bundled production dependencies.
@@ -173,7 +173,7 @@ npm run mcp:config -- -Client codex
 npm run doctor:clients
 ```
 
-Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token. `npm run doctor:clients` verifies the generated snippets, existing Claude Desktop/Codex config files when present, launcher quoting, stale install roots, raw token leakage risk, and basic MCP startup plus `tools/list` without requiring a Revit connection. See [agent-install.md](docs/agent-install.md) for the copy-paste install flow and first MCP call checklist.
+Use these generated snippets as the source of truth for Claude and Codex config. They point at the installed launcher and avoid printing or copying the local pipe auth token. `npm run doctor:clients` verifies the generated snippets, existing Claude Desktop/Codex config files when present, launcher quoting, stale install roots, raw token leakage risk, and legacy MCP `2025-11-25` startup plus `tools/list` without requiring a Revit connection. The broker boundary suite covers modern MCP separately. See [agent-install.md](docs/agent-install.md) for the copy-paste install flow and first MCP call checklist.
 
 ## Internal Debug CLI
 
@@ -195,11 +195,15 @@ The CLI reads the same installed discovery and auth config as the MCP launcher. 
 
 MCP clients can also read `revit://discovery` for compact workflow guidance and `revit://tools/{name}` for per-tool guidance. The broker exposes `revit.start_workflow` and `revit.workflow` prompts for clients that support MCP prompts.
 
+The public MCP protocol and the private Revit bridge protocol are separate. Modern clients negotiate MCP `2026-07-28`; supported older clients continue through the SDK's legacy mode. Discovery reports `bridgeProtocolVersion` for the broker-to-add-in contract. The older `protocolVersion` discovery field remains as a deprecated alias.
+
 ## pyRevit, Dynamo, And Python
 
 pyRevit and Dynamo run inside Revit, so their examples use `integrations/python/revit_mcp_next_inprocess.py`. That helper calls the add-in's in-process bridge and avoids blocking Revit while waiting for an `ExternalEvent`. It exposes `status`, typed read helpers such as `get_levels`, `get_current_view_elements`, `get_rooms`, `get_schedules`, `get_schedule_fields`, `query`, `catalog`, and `describe_parameters`, plus `execute_operation`, `preview_change_set`, `apply_change_set`, and `apply_preview` for compact hosted scripts. Plain Python outside Revit can use matching convenience methods on `RevitMcpClient`.
 
 Plain Python processes outside Revit can use `integrations/python/revit_mcp_next_client.py`. It starts the installed MCP launcher and calls normal MCP tools over stdio.
+
+This standard-library helper intentionally uses the legacy MCP `2025-11-25` initialize flow. The broker retains that flow for compatibility.
 
 The installer also writes `%LOCALAPPDATA%\RevitMcpNext\config\client-discovery.json` so clients can find the launcher, add-in assembly, schemas, and integration helpers without reading or printing the auth token.
 
@@ -309,7 +313,7 @@ The included scripts search the auth-config install root,
 
 Use `revit.bridge_health` when normal calls stall or disconnect. It runs over a reserved control pipe and reports listener, connection, queue, fault, and request-outcome state without joining the Revit work queue. Use `revit.status` for active-document and Revit API diagnostics before retrying a workflow.
 
-Use `revit.get_request_result` with the original request ID when a sent write returns `BRIDGE_WRITE_OUTCOME_UNKNOWN`. It reads the current add-in session's bounded outcome ledger and never replays the write.
+Use `revit.get_request_result` with the original request ID when a sent write returns `BRIDGE_WRITE_OUTCOME_UNKNOWN`. It reads the current add-in process's bounded outcome ledger and never replays the write.
 
 Read tools are intentionally compact and paginated where results can grow. Use `revit.status` diagnostics for queue health, ExternalEvent raise state, preview-token pressure, and recovery hints before retrying a stalled workflow. Use `revit.read_bundle` as the compact first MCP call when an agent needs status, levels, readiness, current view, scoped elements, selection, and a few small catalog or parameter sections for planning. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_schedules` and `revit.get_schedule_fields` for schedule inventory and exact schedulable field IDs before schedule writes, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_model_context` for phase/workset/design-option/link planning IDs, `revit.get_material_quantities` for normalized material takeoffs, `revit.get_warnings` for compact model-health warning lists, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. `revit.create_project_from_template` is a direct fixture/setup write tool, not a preview/apply model edit; it requires `confirm: true` and creates a disposable `.rvt` from a local `.rte`. For element placement work, use `preset: "geometrySummary"` on `revit.query` or scoped element reads to return compact `location` and model-space `bounds` in millimeters without dumping parameters. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects. MCP cursors are opaque continuation tokens: do not parse, increment, shorten, construct, or reuse them after changing any argument. For the next page, repeat the same tool call with the same arguments and only add `cursor` from `structuredContent.data.cursor`; if a cursor came from a `revit.read_bundle` section, continue with that section's underlying tool and the same section arguments. `revit.describe_parameters` defaults to `preset: "writableEdit"` for compact writable instance parameter metadata; use `preset: "namesOnly"` for broader name discovery without values or `preset: "full"` for legacy read-only/type/value detail.
 

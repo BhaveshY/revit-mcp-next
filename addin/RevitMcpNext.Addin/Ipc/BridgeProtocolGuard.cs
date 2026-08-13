@@ -12,10 +12,10 @@ namespace RevitMcpNext.Addin.Ipc
 
     internal static class BridgeProtocolGuard
     {
-        public static BridgeProtocolStatus Classify(string protocolVersion)
+        public static BridgeProtocolStatus Classify(string bridgeProtocolVersion)
         {
-            if (string.IsNullOrWhiteSpace(protocolVersion)) return BridgeProtocolStatus.Missing;
-            return string.Equals(protocolVersion, BridgeProtocol.Version, StringComparison.Ordinal)
+            if (string.IsNullOrWhiteSpace(bridgeProtocolVersion)) return BridgeProtocolStatus.Missing;
+            return string.Equals(bridgeProtocolVersion, BridgeProtocol.Version, StringComparison.Ordinal)
                 ? BridgeProtocolStatus.Current
                 : BridgeProtocolStatus.Mismatch;
         }

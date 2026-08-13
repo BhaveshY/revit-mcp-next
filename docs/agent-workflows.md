@@ -18,7 +18,7 @@ Use this sequence when the user asks what is in the model, what is selected, or 
 10. `revit.get_rooms` with `preset: "schedule"` for room numbers, names, levels, areas, and departments.
 11. `revit.get_schedule_fields` when the task needs schedule columns, exact field IDs, or a new schedule for a known category.
 
-Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed. Leave `includeTotalCount` false unless the user needs an exact total for reporting; cursor-first reads avoid full model counts on large projects. Cursors are opaque and bound to the same tool arguments/session/document state; do not parse, increment, construct, or reuse a cursor after changing filters, fields, presets, limits, document guards, or count settings.
+Keep audit prompts scoped. Prefer current view or selected elements first, then broaden to model analysis only when needed. Leave `includeTotalCount` false unless the user needs an exact total for reporting; cursor-first reads avoid full model counts on large projects. Cursors are opaque and bound to the same tool arguments, broker process session ID, and document state. Do not parse, increment, construct, or reuse a cursor after changing filters, fields, presets, limits, document guards, or count settings.
 
 ## View And Sheet Planning
 

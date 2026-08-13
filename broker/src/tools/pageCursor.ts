@@ -1,11 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import type { BridgeFailure, BridgeResponse, ProtocolVersion } from "@revit-mcp-next/contracts";
+import type { BridgeFailure, BridgeProtocolVersion, BridgeResponse } from "@revit-mcp-next/contracts";
 
 const CURSOR_PREFIX = "rvc1_";
 
 interface CursorContext {
   sessionId: string;
-  protocolVersion: ProtocolVersion;
+  bridgeProtocolVersion: BridgeProtocolVersion;
 }
 
 interface CursorEnvelope {
@@ -162,7 +162,7 @@ function cursorBinding(operation: string, payload: Record<string, unknown>): str
 }
 
 function cursorMac(context: CursorContext, envelope: Omit<CursorEnvelope, "mac">): string {
-  return createHmac("sha256", `${context.protocolVersion}:${context.sessionId}`)
+  return createHmac("sha256", `${context.bridgeProtocolVersion}:${context.sessionId}`)
     .update(String(envelope.v))
     .update("\0")
     .update(envelope.op)

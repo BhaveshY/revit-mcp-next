@@ -64,7 +64,13 @@ npm run doctor:clients
 ```
 
 This prints Claude Code, Claude Desktop, and Codex MCP config snippets from the installed `config\client-discovery.json` without printing the local auth token.
-The client doctor validates those generated snippets, launcher paths and quoting, stale install roots, existing Claude Desktop/Codex config entries when present, token leakage risk, and MCP `initialize` plus `tools/list` startup without requiring Revit to be connected.
+The client doctor validates those generated snippets, launcher paths and quoting, stale install roots, existing Claude Desktop/Codex config entries when present, token leakage risk, and legacy MCP `2025-11-25` `initialize` plus `tools/list` startup without requiring Revit to be connected. The broker boundary suite validates modern MCP separately.
+
+Protocol diagnosis:
+
+- MCP `2026-07-28` is the public client-to-broker protocol. The broker also serves supported legacy MCP clients.
+- `bridgeProtocolVersion` is the private broker-to-add-in contract. `PROTOCOL_VERSION_MISMATCH` refers to this bridge contract, not MCP negotiation.
+- The SDK bounds one stdio JSON-RPC frame at 10 MiB. Keep model reads paginated and bounded. A client that sends one larger line can lose the MCP transport before the request reaches Revit.
 
 MCP error shape:
 
@@ -87,7 +93,7 @@ Use this to separate MCP client configuration problems from Revit/add-in/named-p
 Common states:
 
 - `BRIDGE_UNAVAILABLE`: Revit is closed, the add-in did not load, or the named pipe is not listening.
-- `PROTOCOL_VERSION_MISMATCH`: rebuild and reinstall so broker and add-in contracts match.
+- `PROTOCOL_VERSION_MISMATCH`: rebuild and reinstall so the private broker-to-add-in bridge contracts match.
 - `PREVIEW_METADATA_REQUIRED` or `CHANGE_SET_HASH_REQUIRED`: call `revit.preview_change_set` again and echo `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt` into `revit.apply_change_set`.
 - `PREVIEW_ID_MISMATCH`: rerun `revit.preview_change_set`; the change set or document fingerprint no longer matches.
 - `CHANGE_SET_HASH_MISMATCH`: the apply payload does not match the reviewed preview; rebuild it from the latest preview response.

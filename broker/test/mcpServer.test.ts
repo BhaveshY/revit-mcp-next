@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createBrokerServer } from "../src/server.js";
 import { FakeRevitBridgeClient } from "../src/ipc/FakeRevitBridgeClient.js";
 
@@ -1405,7 +1404,7 @@ test("broker exposes annotated tools with output schemas and callable structured
       content: Array<{ type: "text"; text: string }>;
     };
     assert.equal(invalidPreview.isError, true);
-    assert.match(invalidPreview.content[0]?.text ?? "", /elementId/);
+    assert.match(invalidPreview.content[0]?.text ?? "", /Invalid arguments|elementId/);
 
     const elementTypePreview = (await client.callTool({
       name: "revit.preview_change_set",
@@ -1569,13 +1568,15 @@ test("broker exposes MCP discovery resources and workflow prompts", async () => 
     assert.ok("text" in discoveryResource.contents[0], "discovery resource should be text JSON");
     const discovery = JSON.parse(discoveryResource.contents[0].text) as {
       brokerVersion?: string;
+      bridgeProtocolVersion?: string;
       protocolVersion?: string;
       tools?: Array<{ name?: string; resource?: string }>;
       workflow?: string[];
       writeOperations?: string[];
     };
     assert.equal(discovery.brokerVersion, "test");
-    assert.ok(discovery.protocolVersion);
+    assert.equal(discovery.bridgeProtocolVersion, "2026-08-11");
+    assert.equal(discovery.protocolVersion, discovery.bridgeProtocolVersion);
     assert.ok(discovery.workflow?.some((step) => step.includes("revit.status")));
     assert.ok(discovery.tools?.some((tool) => tool.name === "revit.get_request_result"));
     assert.ok(discovery.tools?.some((tool) => tool.name === "revit.apply_change_set" && tool.resource === "revit://tools/revit.apply_change_set"));

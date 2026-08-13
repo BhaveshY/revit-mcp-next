@@ -43,7 +43,7 @@ namespace RevitMcpNext.Addin
                 app,
                 new BridgeRequestEnvelope
                 {
-                    ProtocolVersion = BridgeProtocol.Version,
+                    BridgeProtocolVersion = BridgeProtocol.Version,
                     RequestId = Guid.NewGuid().ToString("N"),
                     SessionId = "in-process",
                     Operation = "status",
@@ -73,7 +73,7 @@ namespace RevitMcpNext.Addin
 
         private static string ExecuteEnvelope(UIApplication app, BridgeRequestEnvelope request)
         {
-            BridgeProtocolStatus protocolStatus = BridgeProtocolGuard.Classify(request?.ProtocolVersion);
+            BridgeProtocolStatus protocolStatus = BridgeProtocolGuard.Classify(request?.BridgeProtocolVersion);
             if (protocolStatus == BridgeProtocolStatus.Missing)
             {
                 return SerializeResponse(Failure(
@@ -87,7 +87,7 @@ namespace RevitMcpNext.Addin
                 return SerializeResponse(Failure(
                     request,
                     "PROTOCOL_VERSION_MISMATCH",
-                    "Bridge protocol " + request.ProtocolVersion + " does not match add-in protocol " + BridgeProtocol.Version + ".",
+                    "Bridge protocol " + request.BridgeProtocolVersion + " does not match add-in bridge protocol " + BridgeProtocol.Version + ".",
                     "Rebuild the in-process integration against the installed Revit MCP Next version."));
             }
 
@@ -222,7 +222,7 @@ namespace RevitMcpNext.Addin
 
             return new BridgeRequestEnvelope
             {
-                ProtocolVersion = GetString(root, "protocolVersion"),
+                BridgeProtocolVersion = GetString(root, "protocolVersion"),
                 RequestId = requestId,
                 SessionId = GetString(root, "sessionId") ?? "in-process",
                 AuthToken = GetString(root, "authToken"),

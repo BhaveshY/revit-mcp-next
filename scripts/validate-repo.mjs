@@ -12,6 +12,7 @@ const failures = [];
 
 validateAddinOperationKindGuard();
 validateRevitVersionConfiguration();
+validateMcpSdkConfiguration();
 
 for (const file of walk(root)) {
   if (
@@ -155,7 +156,7 @@ function validateRevitVersionConfiguration() {
   requireText(matrixPath, matrix, [
     "| 2027 | .NET 10 / `net10.0-windows` |",
     "First-class staged-package target",
-    "Both supported years use the same broker protocol",
+    "Both supported years use the same private Revit bridge protocol",
     "Revit 2025 and 2026 remain excluded",
   ]);
 
@@ -193,10 +194,56 @@ function validateRevitVersionConfiguration() {
   ]);
 }
 
+function validateMcpSdkConfiguration() {
+  const brokerPackagePath = join(root, "broker", "package.json");
+  const brokerEntryPath = join(root, "broker", "src", "index.ts");
+  const brokerServerPath = join(root, "broker", "src", "server.ts");
+  const liveSmokePath = join(root, "scripts", "live-smoke-revit.mjs");
+
+  const brokerPackage = JSON.parse(readFileSync(brokerPackagePath, "utf8"));
+  const dependencies = brokerPackage.dependencies ?? {};
+  for (const packageName of [
+    "@modelcontextprotocol/client",
+    "@modelcontextprotocol/core",
+    "@modelcontextprotocol/server",
+  ]) {
+    if (dependencies[packageName] !== "2.0.0") {
+      failures.push(`${brokerPackagePath}: ${packageName} must be pinned to 2.0.0.`);
+    }
+  }
+  if (dependencies["@modelcontextprotocol/sdk"]) {
+    failures.push(`${brokerPackagePath}: the retired v1 SDK package must not be a dependency.`);
+  }
+
+  const brokerEntry = readFileSync(brokerEntryPath, "utf8");
+  requireText(brokerEntryPath, brokerEntry, [
+    'import { serveStdio } from "@modelcontextprotocol/server/stdio"',
+    '{ legacy: "serve" }',
+  ]);
+
+  const brokerServer = readFileSync(brokerServerPath, "utf8");
+  requireText(brokerServerPath, brokerServer, [
+    '"2026-07-28"',
+    "SUPPORTED_PROTOCOL_VERSIONS",
+    '"server/discover"',
+    '"tools/list"',
+    'cacheScope: "private"',
+  ]);
+
+  const liveSmoke = readFileSync(liveSmokePath, "utf8");
+  requireText(liveSmokePath, liveSmoke, [
+    'requireFromScript.resolve("@modelcontextprotocol/client"',
+    'requireFromScript.resolve("@modelcontextprotocol/client/stdio"',
+  ]);
+  if (liveSmoke.includes("@modelcontextprotocol/sdk")) {
+    failures.push(`${liveSmokePath}: the live smoke must resolve the SDK v2 client package.`);
+  }
+}
+
 function requireText(path, text, expectedFragments) {
   for (const fragment of expectedFragments) {
     if (!text.includes(fragment)) {
-      failures.push(`${path}: missing Revit version validation marker ${JSON.stringify(fragment)}.`);
+      failures.push(`${path}: missing required validation marker ${JSON.stringify(fragment)}.`);
     }
   }
 }

@@ -1,7 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-import type { BridgeResponse, ProtocolVersion } from "@revit-mcp-next/contracts";
+import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
+import * as z from "zod/v4";
+import type { BridgeProtocolVersion, BridgeResponse } from "@revit-mcp-next/contracts";
 import type { RevitBridgeClient } from "../ipc/RevitBridgeClient.js";
 import { makeRequest } from "../ipc/RequestFactory.js";
 import { applyDecodedPageCursor, decodePageCursor, encodePageCursorResponse } from "./pageCursor.js";
@@ -11,7 +10,7 @@ interface CoreToolContext {
   bridge: RevitBridgeClient;
   brokerVersion: string;
   sessionId: string;
-  protocolVersion: ProtocolVersion;
+  bridgeProtocolVersion: BridgeProtocolVersion;
 }
 
 const boundedString = z.string().min(1).max(128);
@@ -135,7 +134,7 @@ function preparePagedPayload<TPayload extends Record<string, unknown>>(
 ): { ok: true; payload: TPayload } | { ok: false; result: CallToolResult } {
   const decoded = decodePageCursor(
     cursor,
-    { sessionId: context.sessionId, protocolVersion: context.protocolVersion },
+    { sessionId: context.sessionId, bridgeProtocolVersion: context.bridgeProtocolVersion },
     operation,
     basePayload
   );
@@ -152,7 +151,12 @@ function withOpaqueCursor<TData>(
   operation: string,
   basePayload: Record<string, unknown>
 ): BridgeResponse<TData> {
-  return encodePageCursorResponse(response, { sessionId: context.sessionId, protocolVersion: context.protocolVersion }, operation, basePayload);
+  return encodePageCursorResponse(
+    response,
+    { sessionId: context.sessionId, bridgeProtocolVersion: context.bridgeProtocolVersion },
+    operation,
+    basePayload
+  );
 }
 
 const currentViewSchema = {
@@ -907,7 +911,7 @@ const warningSchema = z
   .object({
     code: z.string(),
     message: z.string(),
-    details: z.record(z.unknown()).optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -928,7 +932,7 @@ const bridgeErrorSchema = z
     code: z.string(),
     message: z.string(),
     recoverable: z.boolean(),
-    details: z.record(z.unknown()).optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
     suggestedNextAction: z.string().optional(),
   })
   .passthrough();
@@ -951,9 +955,9 @@ function toolOutputSchema(dataSchema: z.ZodTypeAny) {
 }
 
 const jsonValueSchema: z.ZodTypeAny = z.lazy(() =>
-  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(jsonValueSchema)])
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)])
 );
-const jsonObjectSchema = z.record(jsonValueSchema);
+const jsonObjectSchema = z.record(z.string(), jsonValueSchema);
 
 const retainedBridgeResponseSchema = z.union([
   z
@@ -1150,7 +1154,7 @@ const queryItemSchema = z
     levelId: z.string().nullable().optional(),
     location: elementLocationSchema.optional().describe("Location snapshot returned by geometrySummary or explicit location fields."),
     bounds: elementBoundsSchema.optional().describe("Model-space bounds returned by geometrySummary or explicit bounds fields."),
-    fields: z.record(z.unknown()).optional(),
+    fields: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -1158,7 +1162,7 @@ const queryResultSchema = pageBaseSchema
   .extend({
     items: z.array(queryItemSchema),
     fields: z.array(z.string()),
-    units: z.record(z.string()).describe("Unit labels for normalized result fields, including location/bounds=mm for geometrySummary."),
+    units: z.record(z.string(), z.string()).describe("Unit labels for normalized result fields, including location/bounds=mm for geometrySummary."),
   })
   .passthrough();
 
@@ -1224,7 +1228,8 @@ const statusDataSchema = z
       })
       .passthrough()
       .optional(),
-    protocolVersion: z.string().optional(),
+    bridgeProtocolVersion: z.string(),
+    protocolVersion: z.string().optional().describe("Deprecated alias for bridgeProtocolVersion."),
     activeDocument: documentSummarySchema.optional(),
     selection: z.object({ count: z.number() }).passthrough().optional(),
     diagnostics: z
@@ -1501,7 +1506,7 @@ const roomSummarySchema = z
     area: unitValueSchema.optional(),
     volume: unitValueSchema.optional(),
     location: point3Schema.optional(),
-    fields: z.record(z.unknown()).optional(),
+    fields: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -1523,7 +1528,7 @@ const catalogItemSchema = z
     builtInCategory: z.string().nullable().optional(),
     name: z.string(),
     familyName: z.string().nullable().optional(),
-    fields: z.record(z.unknown()).optional(),
+    fields: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -1543,7 +1548,7 @@ const catalogResultSchema = pageBaseSchema
     target: catalogTargetSchema.optional(),
     items: z.array(catalogItemSchema),
     fields: z.array(z.string()),
-    units: z.record(z.string()),
+    units: z.record(z.string(), z.string()),
   })
   .passthrough();
 
@@ -1596,8 +1601,8 @@ const readBundleResultSchema = z
         })
         .passthrough()
     ),
-    sections: z.record(jsonValueSchema),
-    sectionMetrics: z.record(metricsSchema).optional(),
+    sections: z.record(z.string(), jsonValueSchema),
+    sectionMetrics: z.record(z.string(), metricsSchema).optional(),
     source: z.literal("broker-composed"),
   })
   .passthrough();
@@ -1693,7 +1698,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "Revit Status",
       description:
         "Check Revit bridge health, active document/view, versions, capabilities, selection count, queue diagnostics, and preview-token health. Start every Revit workflow here.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       outputSchema: outputSchemas.status,
       annotations: {
         readOnlyHint: true,
@@ -1702,9 +1707,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (_args, extra) => {
+    async (_args, ctx) => {
       const request = makeRequest(context.sessionId, "status", "read", {}, 5000);
-      const response = await context.bridge.status(request, { signal: extra.signal });
+      const response = await context.bridge.status(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (data) =>
         data.connected
           ? `Revit bridge connected. Active document: ${data.activeDocument?.title ?? "(none)"}.`
@@ -1719,7 +1724,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "Revit Bridge Health",
       description:
         "Probe the reserved bridge control pipe without waiting for Revit ExternalEvent work. Returns listener, connection, queue, fault, and request-outcome diagnostics.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       outputSchema: outputSchemas.bridgeHealth,
       annotations: {
         readOnlyHint: true,
@@ -1728,9 +1733,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (_args, extra) => {
+    async (_args, ctx) => {
       const request = makeRequest(context.sessionId, "bridge_health", "debug", {}, 5000);
-      const response = await context.bridge.bridgeHealth(request, { signal: extra.signal });
+      const response = await context.bridge.bridgeHealth(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (data) =>
@@ -1754,7 +1759,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(
         context.sessionId,
         "get_request_result",
@@ -1762,7 +1767,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         { requestId: args.requestId },
         5000
       );
-      const response = await context.bridge.getRequestResult(request, { signal: extra.signal });
+      const response = await context.bridge.getRequestResult(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (data) =>
         data.found
           ? `Request ${data.requestId} is ${data.state}.`
@@ -1786,7 +1791,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const startedAt = Date.now();
       const bundleRequest = makeRequest(context.sessionId, "read_bundle", "read", args, 90000);
       const include = {
@@ -1833,7 +1838,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       };
 
       const statusRequest = makeRequest(context.sessionId, "status", "read", {}, 5000);
-      const statusResponse = await context.bridge.status(statusRequest, { signal: extra.signal });
+      const statusResponse = await context.bridge.status(statusRequest, { signal: ctx.mcpReq.signal });
       const statusFailure = record("status", statusResponse, { forceReturn: include.status });
       if (statusFailure) return asToolResult(statusFailure, () => "");
       if (!statusResponse.ok) return asToolResult(statusResponse, () => "");
@@ -1849,7 +1854,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (include.levels) {
         const payload = compactObject({ documentFingerprint, expectedGeneration });
         const request = makeRequest(context.sessionId, "get_levels", "read", payload, 10000);
-        const failure = record("levels", await context.bridge.getLevels(request, { signal: extra.signal }));
+        const failure = record("levels", await context.bridge.getLevels(request, { signal: ctx.mcpReq.signal }));
         if (failure) return asToolResult(failure, () => "");
       }
 
@@ -1860,7 +1865,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeHints: args.readiness?.includeHints ?? true,
         });
         const request = makeRequest(context.sessionId, "get_model_readiness", "read", payload, 30000);
-        const failure = record("readiness", await context.bridge.getModelReadiness(request, { signal: extra.signal }));
+        const failure = record("readiness", await context.bridge.getModelReadiness(request, { signal: ctx.mcpReq.signal }));
         if (failure) return asToolResult(failure, () => "");
       }
 
@@ -1870,7 +1875,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeCropBox: args.currentView?.includeCropBox ?? false,
         });
         const request = makeRequest(context.sessionId, "get_current_view", "read", payload, 10000);
-        const failure = record("currentView", await context.bridge.getCurrentView(request, { signal: extra.signal }));
+        const failure = record("currentView", await context.bridge.getCurrentView(request, { signal: ctx.mcpReq.signal }));
         if (failure) return asToolResult(failure, () => "");
       }
 
@@ -1885,7 +1890,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeTotalCount: args.currentViewElements?.includeTotalCount ?? false,
         });
         const request = makeRequest(context.sessionId, "get_current_view_elements", "read", payload, 30000);
-        const response = await context.bridge.getCurrentViewElements(request, { signal: extra.signal });
+        const response = await context.bridge.getCurrentViewElements(request, { signal: ctx.mcpReq.signal });
         const failure = record("currentViewElements", response, {
           cursorOperation: "get_current_view_elements",
           cursorPayload: payload,
@@ -1903,7 +1908,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeTotalCount: args.selection?.includeTotalCount ?? false,
         });
         const request = makeRequest(context.sessionId, "get_selection", "read", payload, 30000);
-        const response = await context.bridge.getSelection(request, { signal: extra.signal });
+        const response = await context.bridge.getSelection(request, { signal: ctx.mcpReq.signal });
         const failure = record("selection", response, {
           cursorOperation: "get_selection",
           cursorPayload: payload,
@@ -1938,7 +1943,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeTotalCount: modelContextArgs.includeTotalCount ?? false,
         });
         const request = makeRequest(context.sessionId, "get_model_context", "read", payload, 30000);
-        const failure = record("modelContext", await context.bridge.getModelContext(request, { signal: extra.signal }));
+        const failure = record("modelContext", await context.bridge.getModelContext(request, { signal: ctx.mcpReq.signal }));
         if (failure) return asToolResult(failure, () => "");
       }
 
@@ -1959,7 +1964,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeTotalCount: warningArgs.includeTotalCount ?? false,
         });
         const request = makeRequest(context.sessionId, "get_warnings", "read", payload, 30000);
-        const response = await context.bridge.getWarnings(request, { signal: extra.signal });
+        const response = await context.bridge.getWarnings(request, { signal: ctx.mcpReq.signal });
         const failure = record("warnings", response, {
           cursorOperation: "get_warnings",
           cursorPayload: payload,
@@ -1979,7 +1984,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeTotalCount: catalog.includeTotalCount ?? false,
         });
         const request = makeRequest(context.sessionId, "catalog", "read", payload, 30000);
-        const response = await context.bridge.catalog(request, { signal: extra.signal });
+        const response = await context.bridge.catalog(request, { signal: ctx.mcpReq.signal });
         const failure = record(name, response, {
           cursorOperation: "catalog",
           cursorPayload: payload,
@@ -2003,7 +2008,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           includeTotalCount: parameterRequest.includeTotalCount ?? false,
         });
         const request = makeRequest(context.sessionId, "describe_parameters", "read", payload, 30000);
-        const response = await context.bridge.describeParameters(request, { signal: extra.signal });
+        const response = await context.bridge.describeParameters(request, { signal: ctx.mcpReq.signal });
         const failure = record(name, response, {
           cursorOperation: "describe_parameters",
           cursorPayload: payload,
@@ -2048,7 +2053,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "List Revit Documents",
       description: "List open Revit documents with title, path, active flag, fingerprint, active view, and generation.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       outputSchema: outputSchemas.documents,
       annotations: {
         readOnlyHint: true,
@@ -2057,9 +2062,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (_args, extra) => {
+    async (_args, ctx) => {
       const request = makeRequest(context.sessionId, "list_documents", "read", {}, 10000);
-      const response = await context.bridge.listDocuments(request, { signal: extra.signal });
+      const response = await context.bridge.listDocuments(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (docs) => `${docs.length} Revit document(s) open.`);
     }
   );
@@ -2079,9 +2084,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "create_project_from_template", "write", args, 120000);
-      const response = await context.bridge.createProjectFromTemplate(request, { signal: extra.signal });
+      const response = await context.bridge.createProjectFromTemplate(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (result) => `Created disposable Revit project: ${result.outputPath}`);
     }
   );
@@ -2091,9 +2096,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Get Revit Levels",
       description: "Return exact Revit level IDs and elevations in normalized units.",
-      inputSchema: {
+      inputSchema: z.object({
         documentFingerprint: z.string().optional().describe("Optional document fingerprint from revit.status."),
-      },
+      }),
       outputSchema: outputSchemas.levels,
       annotations: {
         readOnlyHint: true,
@@ -2102,9 +2107,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "get_levels", "read", args, 10000);
-      const response = await context.bridge.getLevels(request, { signal: extra.signal });
+      const response = await context.bridge.getLevels(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (levels) => `${levels.length} level(s) returned with exact IDs and elevations.`);
     }
   );
@@ -2124,7 +2129,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2139,7 +2144,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_views", "read", payload, 30000);
-      const response = await context.bridge.getViews(request, { signal: extra.signal });
+      const response = await context.bridge.getViews(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_views", basePayload),
         (result) =>
@@ -2163,7 +2168,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2178,7 +2183,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_sheets", "read", payload, 30000);
-      const response = await context.bridge.getSheets(request, { signal: extra.signal });
+      const response = await context.bridge.getSheets(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_sheets", basePayload),
         (result) =>
@@ -2202,7 +2207,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2217,7 +2222,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_schedules", "read", payload, 30000);
-      const response = await context.bridge.getSchedules(request, { signal: extra.signal });
+      const response = await context.bridge.getSchedules(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_schedules", basePayload),
         (result) =>
@@ -2241,7 +2246,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2257,7 +2262,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_schedule_fields", "read", payload, 30000);
-      const response = await context.bridge.getScheduleFields(request, { signal: extra.signal });
+      const response = await context.bridge.getScheduleFields(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_schedule_fields", basePayload),
         (result) =>
@@ -2281,9 +2286,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "get_current_view", "read", args, 10000);
-      const response = await context.bridge.getCurrentView(request, { signal: extra.signal });
+      const response = await context.bridge.getCurrentView(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (result) => `Current view: ${result.view.name} (${result.view.type}).`);
     }
   );
@@ -2303,7 +2308,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2318,7 +2323,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_current_view_elements", "read", payload, 30000);
-      const response = await context.bridge.getCurrentViewElements(request, { signal: extra.signal });
+      const response = await context.bridge.getCurrentViewElements(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_current_view_elements", basePayload),
         (result) =>
@@ -2341,7 +2346,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2355,7 +2360,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_selection", "read", payload, 30000);
-      const response = await context.bridge.getSelection(request, { signal: extra.signal });
+      const response = await context.bridge.getSelection(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_selection", basePayload),
         (result) =>
@@ -2379,9 +2384,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "analyze_model", "read", args, 60000);
-      const response = await context.bridge.analyzeModel(request, { signal: extra.signal });
+      const response = await context.bridge.analyzeModel(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (result) =>
@@ -2405,7 +2410,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const payload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2413,7 +2418,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         includeHints: args.includeHints ?? true,
       };
       const request = makeRequest(context.sessionId, "get_model_readiness", "read", payload, 30000);
-      const response = await context.bridge.getModelReadiness(request, { signal: extra.signal });
+      const response = await context.bridge.getModelReadiness(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (result) => `${result.readyCount} of ${result.totalCount} Revit agent workflow scenario(s) ready.`
@@ -2436,7 +2441,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const payload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2452,7 +2457,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         includeTotalCount: args.includeTotalCount ?? false,
       };
       const request = makeRequest(context.sessionId, "get_model_context", "read", payload, 30000);
-      const response = await context.bridge.getModelContext(request, { signal: extra.signal });
+      const response = await context.bridge.getModelContext(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (result) =>
@@ -2476,7 +2481,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2491,7 +2496,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_material_quantities", "read", payload, 60000);
-      const response = await context.bridge.getMaterialQuantities(request, { signal: extra.signal });
+      const response = await context.bridge.getMaterialQuantities(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_material_quantities", basePayload),
         (result) =>
@@ -2515,7 +2520,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2529,7 +2534,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_warnings", "read", payload, 30000);
-      const response = await context.bridge.getWarnings(request, { signal: extra.signal });
+      const response = await context.bridge.getWarnings(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_warnings", basePayload),
         (result) =>
@@ -2553,7 +2558,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2568,7 +2573,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "get_rooms", "read", payload, 30000);
-      const response = await context.bridge.getRooms(request, { signal: extra.signal });
+      const response = await context.bridge.getRooms(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "get_rooms", basePayload),
         (result) =>
@@ -2592,7 +2597,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         kind: args.kind,
         documentFingerprint: args.documentFingerprint,
@@ -2607,7 +2612,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "catalog", "read", payload, 30000);
-      const response = await context.bridge.catalog(request, { signal: extra.signal });
+      const response = await context.bridge.catalog(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "catalog", basePayload),
         (result) =>
@@ -2631,7 +2636,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -2645,7 +2650,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "query", "read", payload, 30000);
-      const response = await context.bridge.query(request, { signal: extra.signal });
+      const response = await context.bridge.query(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "query", basePayload),
         (result) =>
@@ -2669,7 +2674,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const options = resolveParameterDescribeOptions(args);
       const basePayload = {
         documentFingerprint: args.documentFingerprint,
@@ -2688,7 +2693,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       if (!page.ok) return page.result;
       const payload = page.payload;
       const request = makeRequest(context.sessionId, "describe_parameters", "read", payload, 30000);
-      const response = await context.bridge.describeParameters(request, { signal: extra.signal });
+      const response = await context.bridge.describeParameters(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         withOpaqueCursor(response, context, "describe_parameters", basePayload),
         (result) =>
@@ -2712,9 +2717,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "preview_change_set", "preview", args, 30000);
-      const response = await context.bridge.previewChange(request, { signal: extra.signal });
+      const response = await context.bridge.previewChange(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (result) =>
@@ -2738,9 +2743,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "apply_change_set", "write", args, 60000);
-      const response = await context.bridge.applyChange(request, { signal: extra.signal });
+      const response = await context.bridge.applyChange(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (result) =>
@@ -2765,9 +2770,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       const request = makeRequest(context.sessionId, "cancel_request", "debug", args, 5000);
-      const response = await context.bridge.cancel(request, { signal: extra.signal });
+      const response = await context.bridge.cancel(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (result) => result.message);
     }
   );

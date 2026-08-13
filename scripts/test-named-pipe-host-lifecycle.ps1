@@ -15,12 +15,12 @@ $typescriptContracts = Get-Content -Raw (Join-Path $repoRoot "contracts\src\inde
 if ($csharpContracts -notmatch 'public const string Version = "([^"]+)"') {
     throw "Could not read the C# bridge protocol version."
 }
-$csharpProtocolVersion = $Matches[1]
-if ($typescriptContracts -notmatch 'export const PROTOCOL_VERSION = "([^"]+)"') {
+$csharpBridgeProtocolVersion = $Matches[1]
+if ($typescriptContracts -notmatch 'export const BRIDGE_PROTOCOL_VERSION = "([^"]+)"') {
     throw "Could not read the TypeScript bridge protocol version."
 }
-$typescriptProtocolVersion = $Matches[1]
-if ($csharpProtocolVersion -ne $typescriptProtocolVersion) {
-    throw "Bridge protocol versions differ. C#: $csharpProtocolVersion TypeScript: $typescriptProtocolVersion"
+$typescriptBridgeProtocolVersion = $Matches[1]
+if ($csharpBridgeProtocolVersion -ne $typescriptBridgeProtocolVersion) {
+    throw "Bridge protocol versions differ. C#: $csharpBridgeProtocolVersion TypeScript: $typescriptBridgeProtocolVersion"
 }
-Write-Host "[pass] C# and TypeScript bridge protocol versions match: $csharpProtocolVersion"
+Write-Host "[pass] C# and TypeScript bridge protocol versions match: $csharpBridgeProtocolVersion"

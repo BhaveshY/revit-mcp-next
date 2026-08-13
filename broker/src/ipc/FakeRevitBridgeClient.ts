@@ -57,7 +57,7 @@ import type {
   WarningsRequest,
   WarningsResult,
 } from "@revit-mcp-next/contracts";
-import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
+import { BRIDGE_PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import type { BridgeCallOptions, RevitBridgeClient } from "./RevitBridgeClient.js";
 
 const activeDocument: RevitDocumentSummary = {
@@ -741,7 +741,8 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         fileVersion: "0.1.0.0",
         productVersion: "0.1.0",
       },
-      protocolVersion: PROTOCOL_VERSION,
+      bridgeProtocolVersion: BRIDGE_PROTOCOL_VERSION,
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
       revit: {
         version: "2024",
         build: "fake",

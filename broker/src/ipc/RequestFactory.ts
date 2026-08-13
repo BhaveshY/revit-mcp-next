@@ -1,5 +1,5 @@
 import type { BridgeRequest } from "@revit-mcp-next/contracts";
-import { PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
+import { BRIDGE_PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 
 export function makeRequest<TPayload>(
   sessionId: string,
@@ -9,7 +9,7 @@ export function makeRequest<TPayload>(
   timeoutMs: number
 ): BridgeRequest<TPayload> {
   return {
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     requestId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     sessionId,
     operation,

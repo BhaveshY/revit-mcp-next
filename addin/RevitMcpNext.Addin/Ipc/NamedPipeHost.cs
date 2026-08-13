@@ -380,7 +380,7 @@ namespace RevitMcpNext.Addin.Ipc
                     BridgeRequestEnvelope request = parsedRequest.Request;
                     requestId = request.RequestId;
                     operation = request.Operation;
-                    BridgeProtocolStatus protocolStatus = BridgeProtocolGuard.Classify(request.ProtocolVersion);
+                    BridgeProtocolStatus protocolStatus = BridgeProtocolGuard.Classify(request.BridgeProtocolVersion);
                     if (!_authOptions.IsAuthorized(parsedRequest.AuthToken))
                     {
                         response = Failure(
@@ -402,7 +402,7 @@ namespace RevitMcpNext.Addin.Ipc
                         response = Failure(
                             request,
                             "PROTOCOL_VERSION_MISMATCH",
-                            "Broker protocol " + request.ProtocolVersion + " does not match add-in protocol " + BridgeProtocol.Version + ".",
+                            "Broker bridge protocol " + request.BridgeProtocolVersion + " does not match add-in bridge protocol " + BridgeProtocol.Version + ".",
                             "Rebuild and reinstall Revit MCP Next so the broker and add-in use the same version.");
                     }
                     else if (IsDirectOperation(request.Operation))
@@ -887,7 +887,7 @@ namespace RevitMcpNext.Addin.Ipc
             return new ParsedBridgeRequest(
                 new BridgeRequestEnvelope
                 {
-                    ProtocolVersion = GetString(root, "protocolVersion"),
+                    BridgeProtocolVersion = GetString(root, "protocolVersion"),
                     RequestId = requestId,
                     SessionId = GetString(root, "sessionId") ?? string.Empty,
                     AuthToken = GetString(root, "authToken"),

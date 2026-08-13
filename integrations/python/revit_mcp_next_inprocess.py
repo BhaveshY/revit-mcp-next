@@ -119,6 +119,7 @@ def execute(uiapp, request, addin_path=None):
 
 def make_request(operation, payload=None, operation_kind="read", document_fingerprint=None, expected_generation=None, timeout_ms=30000):
     request = {
+        # The private bridge wire key remains protocolVersion for compatibility.
         "protocolVersion": BRIDGE_PROTOCOL_VERSION,
         "requestId": uuid.uuid4().hex,
         "sessionId": "in-process-python",

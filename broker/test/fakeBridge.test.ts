@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  PROTOCOL_VERSION,
+  BRIDGE_PROTOCOL_VERSION,
   type ChangeApplyRequest,
   type ChangeSetRequest,
   type ModelReadinessRequest,
@@ -465,11 +465,21 @@ test("fake bridge returns bounded catalog result shape with compatibility paging
 
 test("request builder stamps current protocol and operation kind", () => {
   const request = makeRequest("session", "status", "read", {}, 5000);
-  assert.equal(request.protocolVersion, PROTOCOL_VERSION);
+  assert.equal(request.protocolVersion, BRIDGE_PROTOCOL_VERSION);
   assert.equal(request.operation, "status");
   assert.equal(request.operationKind, "read");
   assert.equal(request.timeoutMs, 5000);
   assert.equal(request.authToken, undefined);
+});
+
+test("status names the private bridge protocol explicitly and retains its deprecated alias", async () => {
+  const bridge = new FakeRevitBridgeClient();
+  const response = await bridge.status(makeRequest("session", "status", "read", {}, 5000));
+
+  assert.equal(response.ok, true);
+  if (!response.ok) return;
+  assert.equal(response.data.bridgeProtocolVersion, BRIDGE_PROTOCOL_VERSION);
+  assert.equal(response.data.protocolVersion, response.data.bridgeProtocolVersion);
 });
 
 test("fake bridge previews and applies a bounded change set", async () => {

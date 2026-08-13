@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { asToolResult } from "../src/tools/toolResult.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 
 test("asToolResult returns short text plus structured data on success", () => {
   const result = asToolResult(

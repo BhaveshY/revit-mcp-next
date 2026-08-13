@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createBrokerServer } from "./server.js";
 import { NamedPipeBridgeClient } from "./ipc/NamedPipeBridgeClient.js";
 
@@ -13,8 +13,10 @@ const bridge = new NamedPipeBridgeClient({
   defaultTimeoutMs: Number(process.env.REVIT_MCP_NEXT_TIMEOUT_MS ?? 30000),
 });
 
-const server = createBrokerServer({ bridge, brokerVersion, sessionId });
-const transport = new StdioServerTransport();
+const stdio = serveStdio(
+  () => createBrokerServer({ bridge, brokerVersion, sessionId }),
+  { legacy: "serve" }
+);
 let shuttingDown = false;
 
 async function shutdown(): Promise<void> {
@@ -22,7 +24,7 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   bridge.dispose();
   try {
-    await server.close();
+    await stdio.close();
   } catch (error) {
     process.stderr.write(
       `Revit MCP Next shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`
@@ -33,7 +35,5 @@ async function shutdown(): Promise<void> {
 
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-process.stdin.once("end", () => bridge.dispose());
-
-await server.connect(transport);
+process.stdin.once("end", () => void shutdown());
 

@@ -10,7 +10,15 @@ namespace RevitMcpNext.Contracts
 
     public sealed class BridgeRequestEnvelope
     {
-        public string ProtocolVersion { get; set; } = BridgeProtocol.Version;
+        public string BridgeProtocolVersion { get; set; } = BridgeProtocol.Version;
+
+        [Obsolete("Use BridgeProtocolVersion.")]
+        public string ProtocolVersion
+        {
+            get { return BridgeProtocolVersion; }
+            set { BridgeProtocolVersion = value; }
+        }
+
         public string RequestId { get; set; } = string.Empty;
         public string SessionId { get; set; } = string.Empty;
         public string? AuthToken { get; set; }

@@ -1,11 +1,15 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-import type { ProtocolVersion } from "@revit-mcp-next/contracts";
+import {
+  McpServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  ResourceTemplate,
+} from "@modelcontextprotocol/server";
+import * as z from "zod/v4";
+import type { BridgeProtocolVersion } from "@revit-mcp-next/contracts";
 
 interface DiscoveryContext {
   brokerVersion: string;
-  protocolVersion: ProtocolVersion;
+  bridgeProtocolVersion: BridgeProtocolVersion;
 }
 
 interface ToolDiscovery {
@@ -388,7 +392,11 @@ function discoveryDocument(context: DiscoveryContext): Record<string, unknown> {
   return {
     name: "revit-mcp-next",
     brokerVersion: context.brokerVersion,
-    protocolVersion: context.protocolVersion,
+    bridgeProtocolVersion: context.bridgeProtocolVersion,
+    protocolVersion: context.bridgeProtocolVersion,
+    deprecatedAliases: {
+      protocolVersion: "Use bridgeProtocolVersion. This is the private Revit bridge version, not the negotiated MCP protocol version.",
+    },
     resources: {
       discovery: "revit://discovery",
       toolTemplate: "revit://tools/{name}",
@@ -420,7 +428,11 @@ function toolDocument(tool: ToolDiscovery, context: DiscoveryContext): Record<st
   return {
     ...tool,
     brokerVersion: context.brokerVersion,
-    protocolVersion: context.protocolVersion,
+    bridgeProtocolVersion: context.bridgeProtocolVersion,
+    protocolVersion: context.bridgeProtocolVersion,
+    deprecatedAliases: {
+      protocolVersion: "Use bridgeProtocolVersion. This is the private Revit bridge version, not the negotiated MCP protocol version.",
+    },
     resource: toolUri(tool.name),
     safety: tool.destructive
       ? "This tool can mutate Revit through guarded apply. Use only after preview evidence and user intent."
@@ -485,7 +497,10 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
       const name = stringVariable(variables.name);
       const tool = findTool(name);
       if (!tool) {
-        throw new McpError(ErrorCode.InvalidParams, `Unknown Revit MCP tool resource: ${name}`);
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `Unknown Revit MCP tool resource: ${name}`
+        );
       }
 
       return {
@@ -525,9 +540,9 @@ export function registerDiscovery(server: McpServer, context: DiscoveryContext):
     {
       title: "Revit Workflow",
       description: "Workflow-specific Revit MCP call sequence guidance.",
-      argsSchema: {
+      argsSchema: z.object({
         workflow: z.enum(["audit", "selection-update", "sheet-planning", "family-placement", "room-layout"]),
-      },
+      }),
     },
     async ({ workflow }) => {
       const workflows: Record<typeof workflow, string> = {

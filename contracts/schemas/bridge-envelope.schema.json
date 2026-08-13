@@ -5,7 +5,10 @@
   "type": "object",
   "required": ["protocolVersion", "requestId", "sessionId", "operation", "operationKind", "timeoutMs", "payload"],
   "properties": {
-    "protocolVersion": { "const": "2026-08-11" },
+    "protocolVersion": {
+      "description": "Private broker-to-Revit bridge protocol version. This wire key is retained for compatibility and is not the MCP protocol version.",
+      "const": "2026-08-11"
+    },
     "requestId": { "type": "string", "minLength": 1 },
     "sessionId": { "type": "string", "minLength": 1 },
     "authToken": { "type": "string", "minLength": 1 },

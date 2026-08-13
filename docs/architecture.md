@@ -6,12 +6,14 @@
 
 The broker is launched by MCP clients over stdio. It owns:
 
-- MCP protocol.
+- MCP `2026-07-28` and supported legacy protocol negotiation through the TypeScript SDK v2 stdio server.
 - Tool registration and annotations.
 - Input validation.
 - Output shaping and token budgets.
 - Pagination. MCP resource handles are planned for larger export surfaces but are not part of the current broker contract.
 - Client-specific startup and diagnostics.
+
+Modern MCP connections are sessionless at the public protocol layer. The broker still uses explicit request IDs, preview IDs, document fingerprints, cursors, and a private bridge session ID because these values protect Revit writes and recover uncertain local IPC outcomes. Static tool, prompt, and resource discovery is deterministic and privately cacheable for five minutes. Live Revit reads and writes are never cached by this policy.
 
 The broker never references Autodesk DLLs and never calls the Revit API.
 
@@ -25,7 +27,7 @@ The Revit add-in is loaded in-process by Revit. It owns:
 - Revit API reads/writes.
 - Transaction and failure handling.
 - Queue, ExternalEvent, and preview-token diagnostics surfaced through `revit.status`.
-- A bounded session request-outcome ledger for at-most-once write handling and response recovery.
+- A bounded add-in-process request-outcome ledger for at-most-once write handling and response recovery.
 
 The add-in never writes to stdout and never opens modal dialogs for automation paths.
 
@@ -38,9 +40,9 @@ uint32_be payload_length
 utf8_json_payload
 ```
 
-The broker and add-in exchange the canonical camelCase bridge envelope over this framing. The add-in preserves request IDs, validates protocol version, and returns compact structured data or structured bridge errors.
+The broker and add-in exchange the canonical camelCase bridge envelope over this framing. The add-in preserves request IDs, validates `bridgeProtocolVersion`, and returns compact structured data or structured bridge errors. The JSON wire key remains `protocolVersion` for compatibility. This private version is independent of the negotiated MCP protocol version.
 
-Each install exposes a normal worker pipe and a reserved `<pipe>-control` pipe. `revit.bridge_health`, queued cancellation, and request-result lookup use the control pipe, so they remain available when normal workers are occupied or stalled. Mutation requests are fingerprinted and tracked per session and request ID. If the broker loses a mutation response, it asks the ledger for the terminal result and never replays the original write. The guarantee is bounded to the lifetime of the current add-in process and ledger retention window.
+Each install exposes a normal worker pipe and a reserved `<pipe>-control` pipe. `revit.bridge_health`, queued cancellation, and request-result lookup use the control pipe, so they remain available when normal workers are occupied or stalled. Mutation requests are fingerprinted and tracked by broker process session ID and request ID. If the broker loses a mutation response, it asks the ledger for the terminal result and never replays the original write. The guarantee is bounded to the lifetime of the current add-in process and ledger retention window.
 
 Queued Revit responses expose optional `queueWaitMs` and `revitExecutionMs` phase metrics. These separate queue pressure from time spent on the Revit external-event thread while preserving the existing operation-local `elapsedMs`.
 
@@ -49,7 +51,7 @@ Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\Revi
 ## Safety Boundaries
 
 - All writes must go through preview/apply.
-- Preview tokens are bound to the originating MCP session, active document generation, and canonical typed operation payload.
+- Preview tokens are bound to the originating broker process session ID, active document generation, and canonical typed operation payload.
 - Reads need no transaction.
 - Writes use one explicit named transaction or a transaction group.
 - No arbitrary code execution in normal mode.

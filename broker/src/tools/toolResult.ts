@@ -1,4 +1,4 @@
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { BridgeResponse } from "@revit-mcp-next/contracts";
 
 type ToolDataShape = {
@@ -6,10 +6,19 @@ type ToolDataShape = {
   cursor?: unknown;
 };
 
+type RevitToolResult = CallToolResult & {
+  structuredContent: {
+    data: unknown;
+    warnings: unknown;
+    metrics: unknown;
+    generation?: unknown;
+  };
+};
+
 export function asToolResult<T>(
   response: BridgeResponse<T>,
   summarize: (data: T) => string
-): CallToolResult {
+): RevitToolResult {
   if (!response.ok) {
     const suggestedNextAction = response.error.suggestedNextAction
       ? ` Next: ${response.error.suggestedNextAction}`
