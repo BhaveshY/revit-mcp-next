@@ -166,7 +166,21 @@ function validateRevitVersionConfiguration() {
     "-RevitYear $env:REVIT_YEAR",
     "expectedApiMajor",
     "revitApiAssemblyVersion",
+    "advanced_options_json",
+    'installRoot = "INSTALL_ROOT_INPUT"',
+    "advanced_options_json contains unsupported key",
+    "foreach ($environmentName in $allowed.Values)",
+    "advanced_options_json value must be a string or null",
   ]);
+  const workflowDispatchBlock = liveWorkflow.match(/workflow_dispatch:\s*\n\s+inputs:\s*\n([\s\S]*?)\npermissions:/);
+  if (!workflowDispatchBlock) {
+    failures.push(`${liveWorkflowPath}: workflow_dispatch inputs block was not found.`);
+  } else {
+    const inputCount = [...workflowDispatchBlock[1].matchAll(/^ {6}[a-zA-Z0-9_]+:/gm)].length;
+    if (inputCount > 25) {
+      failures.push(`${liveWorkflowPath}: workflow_dispatch defines ${inputCount} inputs; GitHub allows at most 25.`);
+    }
+  }
 
   const localReleaseSmoke = readFileSync(localReleaseSmokePath, "utf8");
   requireText(localReleaseSmokePath, localReleaseSmoke, [

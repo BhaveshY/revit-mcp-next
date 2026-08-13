@@ -24,14 +24,10 @@ on:
         description: Optional local RVT path to pass when launching Revit. Use a disposable project, not an RTE template.
         required: false
         default: ""
-      document_fingerprint:
-        description: Optional active document fingerprint expected by smoke:revit.
+      advanced_options_json:
+        description: Optional JSON object for documentFingerprint, installRoot, pyRevitPath, pyRevitBuilds, dynamoSettingsPath, and curated tag selectors.
         required: false
-        default: ""
-      install_root:
-        description: Optional install root. Empty uses %LOCALAPPDATA%\RevitMcpNext.
-        required: false
-        default: ""
+        default: "{}"
       skip_install:
         description: Skip build/install and smoke the already installed add-in in an existing Revit session.
         required: true
@@ -51,19 +47,11 @@ on:
         required: true
         type: boolean
         default: true
-      pyrevit_path:
-        description: Optional pyrevit.exe path for hosted pyRevit smoke.
-        required: false
-        default: ""
       seed_pyrevit_hosts:
         description: Seed pyRevit's per-user Revit host cache before hosted pyRevit smoke.
         required: true
         type: boolean
         default: false
-      pyrevit_builds:
-        description: Optional comma-separated Revit build ids for pyRevit host cache seeding.
-        required: false
-        default: ""
       dynamo_timeout_seconds:
         description: Seconds to wait for Dynamo-for-Revit host-smoke evidence.
         required: true
@@ -78,10 +66,6 @@ on:
         required: true
         type: boolean
         default: false
-      dynamo_settings_path:
-        description: Optional DynamoSettings.xml path used by the Dynamo journal preflight.
-        required: false
-        default: ""
       require_type_change:
         description: Fail unless the smoke can discover and apply an alternate compatible wall type.
         required: true
@@ -107,22 +91,6 @@ on:
         required: true
         type: boolean
         default: true
-      room_tag_type_id:
-        description: Optional loaded room tag FamilySymbol id for curated tag smoke.
-        required: false
-        default: ""
-      room_tag_type_name_contains:
-        description: Optional loaded room tag FamilySymbol name/family substring for curated tag smoke.
-        required: false
-        default: ""
-      element_tag_type_id:
-        description: Optional loaded wall or multi-category tag FamilySymbol id for curated tag smoke.
-        required: false
-        default: ""
-      element_tag_type_name_contains:
-        description: Optional loaded wall or multi-category tag FamilySymbol name/family substring for curated tag smoke.
-        required: false
-        default: ""
       readiness_profile:
         description: Evidence readiness profile to enforce after collection.
         required: true
@@ -163,26 +131,18 @@ jobs:
       REVIT_API_PATH: ${{ inputs.revit_api_path }}
       REVIT_EXE_PATH: ${{ inputs.revit_exe_path }}
       REVIT_MODEL_PATH: ${{ inputs.revit_model_path }}
-      INSTALL_ROOT_INPUT: ${{ inputs.install_root }}
-      DOCUMENT_FINGERPRINT: ${{ inputs.document_fingerprint }}
+      ADVANCED_OPTIONS_JSON: ${{ inputs.advanced_options_json }}
       STARTUP_WAIT_SECONDS: ${{ inputs.startup_wait_seconds }}
       COLLECT_HOST_INTEGRATIONS: ${{ inputs.collect_host_integrations }}
-      PYREVIT_PATH: ${{ inputs.pyrevit_path }}
       SEED_PYREVIT_HOSTS: ${{ inputs.seed_pyrevit_hosts }}
-      PYREVIT_BUILDS: ${{ inputs.pyrevit_builds }}
       DYNAMO_TIMEOUT_SECONDS: ${{ inputs.dynamo_timeout_seconds }}
       USE_DYNAMO_JOURNAL: ${{ inputs.use_dynamo_journal }}
       ALLOW_UNWARMED_DYNAMO_JOURNAL: ${{ inputs.allow_unwarmed_dynamo_journal }}
-      DYNAMO_SETTINGS_PATH: ${{ inputs.dynamo_settings_path }}
       REQUIRE_TYPE_CHANGE: ${{ inputs.require_type_change }}
       REQUIRE_ELEMENT_TYPE_EDIT: ${{ inputs.require_element_type_edit }}
       REQUIRE_ROOM_TAG: ${{ inputs.require_room_tag }}
       REQUIRE_ELEMENT_TAG: ${{ inputs.require_element_tag }}
       REQUIRE_TAGS: ${{ inputs.require_tags }}
-      ROOM_TAG_TYPE_ID: ${{ inputs.room_tag_type_id }}
-      ROOM_TAG_TYPE_NAME_CONTAINS: ${{ inputs.room_tag_type_name_contains }}
-      ELEMENT_TAG_TYPE_ID: ${{ inputs.element_tag_type_id }}
-      ELEMENT_TAG_TYPE_NAME_CONTAINS: ${{ inputs.element_tag_type_name_contains }}
       READINESS_PROFILE: ${{ inputs.readiness_profile }}
       SIGNING_MODE: ${{ inputs.signing_mode }}
       REQUIRE_TRUSTED_SIGNATURES: ${{ inputs.require_trusted_signatures }}
@@ -207,6 +167,53 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Resolve advanced options
+        run: |
+          $ErrorActionPreference = "Stop"
+          try {
+            $options = $env:ADVANCED_OPTIONS_JSON | ConvertFrom-Json
+          } catch {
+            throw "advanced_options_json must be a valid JSON object: $($_.Exception.Message)"
+          }
+
+          if ($null -eq $options -or $options -is [System.Array] -or $options -isnot [PSCustomObject]) {
+            throw "advanced_options_json must be a JSON object."
+          }
+
+          $allowed = @{
+            documentFingerprint = "DOCUMENT_FINGERPRINT"
+            installRoot = "INSTALL_ROOT_INPUT"
+            pyRevitPath = "PYREVIT_PATH"
+            pyRevitBuilds = "PYREVIT_BUILDS"
+            dynamoSettingsPath = "DYNAMO_SETTINGS_PATH"
+            roomTagTypeId = "ROOM_TAG_TYPE_ID"
+            roomTagTypeNameContains = "ROOM_TAG_TYPE_NAME_CONTAINS"
+            elementTagTypeId = "ELEMENT_TAG_TYPE_ID"
+            elementTagTypeNameContains = "ELEMENT_TAG_TYPE_NAME_CONTAINS"
+          }
+
+          foreach ($environmentName in $allowed.Values) {
+            "$environmentName=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+          foreach ($property in $options.PSObject.Properties) {
+            if (-not $allowed.ContainsKey($property.Name)) {
+              throw "advanced_options_json contains unsupported key: $($property.Name)"
+            }
+            if ($null -eq $property.Value) {
+              $value = ""
+            } elseif ($property.Value -isnot [string]) {
+              throw "advanced_options_json value must be a string or null: $($property.Name)"
+            } else {
+              $value = $property.Value
+            }
+
+            if ($value.Contains("`r") -or $value.Contains("`n")) {
+              throw "advanced_options_json value must not contain a newline: $($property.Name)"
+            }
+            "$($allowed[$property.Name])=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
       - name: Prepare evidence directory
         run: |
           $ErrorActionPreference = "Stop"
@@ -214,7 +221,7 @@ jobs:
 
           if ([string]::IsNullOrWhiteSpace($env:INSTALL_ROOT_INPUT)) {
             if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-              throw "LOCALAPPDATA is not set; provide the install_root workflow input."
+              throw "LOCALAPPDATA is not set; provide installRoot in advanced_options_json."
             }
             $installRoot = Join-Path $env:LOCALAPPDATA "RevitMcpNext"
           } else {

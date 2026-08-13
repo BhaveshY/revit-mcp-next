@@ -148,6 +148,12 @@ Use this workflow for release candidates on a Windows self-hosted machine with R
 
 The `Live Revit Smoke` workflow is manually dispatched and requires a runner labeled `self-hosted`, `Windows`, and `revit`. Configure the Revit API path, Revit executable path, and a disposable model path in the workflow inputs when the workflow launches Revit.
 
+Optional paths, the document guard, and curated tag selectors use `advanced_options_json`. Supported keys are `documentFingerprint`, `installRoot`, `pyRevitPath`, `pyRevitBuilds`, `dynamoSettingsPath`, `roomTagTypeId`, `roomTagTypeNameContains`, `elementTagTypeId`, and `elementTagTypeNameContains`.
+
+```json
+{"documentFingerprint":"project-a","installRoot":"C:\\RevitMcpNext"}
+```
+
 The workflow has two safe modes:
 
 - `skip_install=false`: the workflow builds a staged package and installs from that package. Revit must be closed before the install step, and `launch_revit=true` requires `revit_model_path`.
