@@ -57,8 +57,14 @@ function Invoke-RepoScript([string] $Path, [string[]] $Arguments) {
 }
 
 function Invoke-RepoScriptCapture([string] $Path, [string[]] $Arguments) {
-    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
     $text = ($output | Out-String)
     if ($exitCode -ne 0) {
         Write-Host $text
