@@ -34,6 +34,20 @@ function Get-FullPath($Path) {
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
 }
 
+function Get-Sha256Hex($Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "")
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Resolve-RequiredFile($Path, $Label) {
     if ([string]::IsNullOrWhiteSpace($Path)) {
         throw "$Label path cannot be empty."
@@ -488,7 +502,7 @@ function New-DynamoGraphLaunchPlan($SourceGraphFull, $SettingsPath, [switch] $Wr
     $trustedLocations = @(Get-DynamoTrustedLocations $SettingsPath)
     $sourceHash = ""
     if (Test-Path -LiteralPath $SourceGraphFull -PathType Leaf) {
-        $sourceHash = (Get-FileHash -LiteralPath $SourceGraphFull -Algorithm SHA256).Hash
+        $sourceHash = Get-Sha256Hex $SourceGraphFull
     }
 
     $plan = [ordered] @{
@@ -546,7 +560,7 @@ function New-DynamoGraphLaunchPlan($SourceGraphFull, $SettingsPath, [switch] $Wr
         try {
             New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
             Copy-Item -LiteralPath $SourceGraphFull -Destination $target -Force
-            $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+            $targetHash = Get-Sha256Hex $target
             $plan.mode = "trusted-copy-written"
             $plan.reason = "journal-mode-staged-graph-under-existing-dynamo-trusted-location"
             $plan.effectiveGraphPath = $target

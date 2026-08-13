@@ -13,6 +13,20 @@ function Get-FullPath($Path) {
     return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Get-Sha256Hex($Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "")
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Add-TrailingSeparator($Path) {
     if ($Path.EndsWith("\") -or $Path.EndsWith("/")) {
         return $Path
@@ -360,7 +374,7 @@ try {
     $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$($rootPackage.version)-windows"
     Assert-DirectoryExists $packageRoot "staged package"
     Assert-FileExists "$packageRoot.zip" "package zip"
-    $packagedAddinSha256 = (Get-FileHash -LiteralPath (Join-Path $packageRoot "payload\addin\2024\RevitMcpNext.Addin.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
+    $packagedAddinSha256 = (Get-Sha256Hex (Join-Path $packageRoot "payload\addin\2024\RevitMcpNext.Addin.dll")).ToLowerInvariant()
     $installedAddinPath = Join-Path $installRoot "addin\2024\RevitMcpNext.Addin.dll"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
@@ -860,7 +874,7 @@ try {
     $tamperedSigningLogPath = Join-Path $tamperedSigningLogRoot "signing.log"
     Set-Content -LiteralPath $tamperedSigningLogPath -Value "synthetic signing log with an invalid target status" -Encoding UTF8
     $tamperedSigningLog = Get-Item -LiteralPath $tamperedSigningLogPath
-    $tamperedSigningLogHash = (Get-FileHash -LiteralPath $tamperedSigningLogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $tamperedSigningLogHash = (Get-Sha256Hex $tamperedSigningLogPath).ToLowerInvariant()
     $tamperedSigningManifestPath = Join-Path $tamperedSigningEvidenceRoot "release-evidence-manifest.json"
     $tamperedSigningManifest = Get-Content -LiteralPath $tamperedSigningManifestPath -Raw | ConvertFrom-Json
     $tamperedSigningManifest.signing.status = "captured"
