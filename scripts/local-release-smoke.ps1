@@ -524,8 +524,6 @@ if ($RequireElementTypeEdit -and -not $AcknowledgeDisposableModel) {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 
-$node = Resolve-NodeCommand
-$npm = Resolve-NpmCommand
 $localSigningCertificateThumbprint = Resolve-LocalSigningCertificate $repoRoot $SigningCertificateThumbprint
 $localDevSigningEnabled = -not [string]::IsNullOrWhiteSpace($localSigningCertificateThumbprint)
 $revitApi = Resolve-RevitApiPath $RevitYear $RevitApiPath
@@ -533,6 +531,8 @@ $revitExe = Resolve-RevitExePath $RevitYear $RevitExePath
 $apiDll = Resolve-RequiredFile (Join-Path $revitApi "RevitAPI.dll") "RevitAPI.dll was not found."
 $apiUiDll = Resolve-RequiredFile (Join-Path $revitApi "RevitAPIUI.dll") "RevitAPIUI.dll was not found."
 $sourceModel = Resolve-SourceModel $RevitYear $ModelPath
+$node = Resolve-NodeCommand
+$npm = Resolve-NpmCommand
 if (($RequireTags -or $RequireRoomTag -or $RequireElementTag) -and [string]::IsNullOrWhiteSpace($ModelPath)) {
     Write-Step "Required tag coverage requested without -ModelPath. The default sample RVT is not a curated tag fixture; pass a disposable model with printable plan-backed levels and loaded or loadable tag families for release-candidate evidence."
 }

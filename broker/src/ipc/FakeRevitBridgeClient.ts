@@ -22,6 +22,19 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelDeliveryExecuteRequest,
+  ModelDeliveryExecuteResult,
+  ModelDeliveryFixtureRequest,
+  ModelDeliveryFixtureResult,
+  ModelDeliveryInspectRequest,
+  ModelDeliveryInspectResult,
+  ModelDeliveryCancelRequest,
+  ModelDeliveryCancelResult,
+  ModelDeliveryJobResult,
+  ModelDeliveryPreviewRequest,
+  ModelDeliveryPreviewResult,
+  ModelDeliveryStatusRequest,
+  ModelDeliveryStatusResult,
   ModelContextRequest,
   ModelContextResult,
   ModelReadinessRequest,
@@ -680,6 +693,7 @@ function resolveParameterDescribeOptions(payload: ParameterDescribeRequest): {
 
 export class FakeRevitBridgeClient implements RevitBridgeClient {
   private readonly mutableCatalogItems: FakeCatalogItem[] = catalogItems.map(cloneCatalogItem);
+  private readonly deliveryJobs = new Map<string, ModelDeliveryJobResult>();
   private nextDuplicateTypeId = 9901;
 
   async bridgeHealth(
@@ -814,6 +828,228 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       document,
       source: "revit-api",
     });
+  }
+
+  async createModelDeliveryFixture(
+    request: BridgeRequest<ModelDeliveryFixtureRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryFixtureResult>> {
+    maybeAbort(options);
+    const { fixtureId, fixtureRoot, templatePath } = request.payload;
+    const architecturePath = `${fixtureRoot}\\sources\\${fixtureId}-Architecture-Source-2024.rvt`;
+    const structurePath = `${fixtureRoot}\\sources\\${fixtureId}-Structure-Source-2024.rvt`;
+    return ok(request, {
+      fixtureId,
+      fixtureRoot,
+      revitVersion: "2024",
+      templatePath,
+      sourcePaths: [architecturePath, structurePath],
+      sourceSha256: { architecture: "a".repeat(64), structure: "b".repeat(64) },
+      expectedArchitectureLinkTransform: "10,20,3,0.866025404,0.5,0,-0.5,0.866025404,0,0,0,1",
+      recipe: {
+        projectId: fixtureId,
+        recipeVersion: "1",
+        deliveryId: `${fixtureId}-run`,
+        packageName: `${fixtureId}-package`,
+        destinationRoot: `${fixtureRoot}\\delivery`,
+        sourceModels: [
+          { id: "architecture", sourcePath: architecturePath, targetFileName: "Issued-Architecture-2024.rvt", role: "Architecture", startViewName: "START", start3dViewName: "START 3D" },
+          { id: "structure", sourcePath: structurePath, targetFileName: "Issued-Structure-2024.rvt", role: "Structure", startViewName: "START", start3dViewName: "START 3D" },
+        ],
+        linkRules: [{ sourceModelId: "architecture", matchFileName: structurePath.split("\\").pop(), action: "repath", targetModelId: "structure", expectedInstanceCount: 1, required: true }],
+        coordinates: { preserveLinkTransforms: true, packagedLinkPathType: "relative" },
+        cleanup: {
+          deleteSheets: true, deleteViews: true, deleteSchedules: true, deleteLegends: true, deleteDraftingViews: true,
+          deleteViewTemplates: true, deleteUnusedFilters: true, removeUnmappedLinks: true, purgeUnusedPasses: 1,
+          protectedViewNames: ["START", "START 3D"],
+        },
+        exports: [{ format: "dwg", modelIds: ["architecture", "structure"], outputSubdirectory: "DWG", viewNames: ["START"], required: true }],
+        qa: {
+          requireStandalone: true, requireNoCentralPath: true, requireSourceHashUnchanged: true,
+          requireCleanupMatchesPreview: true, requireAllRequiredExports: true,
+        },
+      },
+    });
+  }
+
+  async inspectModelDelivery(
+    request: BridgeRequest<ModelDeliveryInspectRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryInspectResult>> {
+    maybeAbort(options);
+    const repeat = request.payload.previousRecipe !== undefined;
+    return ok(request, {
+      mode: repeat ? "repeat" : "firstTime",
+      recipeReusable: repeat,
+      models: request.payload.sourcePaths.map((sourcePath, index) => ({
+        sourcePath,
+        suggestedId: request.payload.previousRecipe?.sourceModels[index]?.id ?? `model-${index + 1}`,
+        suggestedTargetFileName:
+          request.payload.previousRecipe?.sourceModels[index]?.targetFileName ?? sourcePath.split(/[\\/]/).pop() ?? `Model-${index + 1}.rvt`,
+        isWorkshared: true,
+        bytes: 1000 + index,
+        lastWriteUtc: "2026-08-28T00:00:00.000Z",
+        suggestedStartViewName: "START",
+        suggestedStart3dViewName: "START 3D",
+        openingViewCandidates: ["START", "Level 1"],
+        threeDViewCandidates: ["START 3D"],
+        sheetCount: 1,
+        scheduleCount: 1,
+        viewTemplateCount: 1,
+        filterCount: 1,
+        warningCount: 0,
+        links: [],
+      })),
+      detectedChanges: [],
+      missingDecisions: repeat
+        ? []
+        : [
+            { key: "package", question: "Where should the package be written, and what should this delivery folder be called?" },
+            { key: "modelRolesAndNames", question: "Confirm the suggested model roles and output RVT names." },
+            { key: "cleanupAndExports", question: "Choose one cleanup profile and the required IFC/DWG/NWC exports." },
+          ],
+    });
+  }
+
+  async previewModelDelivery(
+    request: BridgeRequest<ModelDeliveryPreviewRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryPreviewResult>> {
+    maybeAbort(options);
+    const recipe = request.payload.recipe;
+    const planHash = createHash("sha256").update(JSON.stringify(recipe)).digest("hex");
+    const packagePath = `${recipe.destinationRoot}\\${recipe.packageName}`;
+    return ok(request, {
+      previewId: `delivery-preview-${planHash.slice(0, 16)}`,
+      planHash,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      ready: true,
+      requiresConfirmation: true,
+      deliveryId: recipe.deliveryId,
+      packagePath,
+      stagingPath: `${recipe.destinationRoot}\\.revit-mcp-staging\\${recipe.deliveryId}`,
+      models: recipe.sourceModels.map((model, index) => ({
+        modelId: model.id,
+        role: model.role,
+        sourcePath: model.sourcePath,
+        outputPath: `${packagePath}\\${model.targetFileName}`,
+        sourceBytes: 1000 + index,
+        sourceLastWriteUtc: "2026-08-28T00:00:00.000Z",
+        sourceIsWorkshared: true,
+        targetIsWorkshared: false as const,
+        linkCount: 0,
+        sheetDeleteCount: 0,
+        viewDeleteCount: 0,
+        templateDeleteCount: 0,
+        filterDeleteCount: 0,
+        warningsCount: 0,
+      })),
+      blockers: [],
+      warnings: [],
+    });
+  }
+
+  async executeModelDelivery(
+    request: BridgeRequest<ModelDeliveryExecuteRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryExecuteResult>> {
+    maybeAbort(options);
+    if (request.payload.confirm !== true) {
+      return fail(request, "CONFIRMATION_REQUIRED", "revit.execute_model_delivery requires confirm=true.");
+    }
+
+    const recipe = request.payload.recipe;
+    const packagePath = `${recipe.destinationRoot}\\${recipe.packageName}`;
+    const now = new Date().toISOString();
+    const jobId = `delivery-job-${createHash("sha256").update(`${request.sessionId}:${recipe.deliveryId}`).digest("hex").slice(0, 16)}`;
+    const job: ModelDeliveryJobResult = {
+      jobId,
+      previewId: request.payload.previewId,
+      planHash: request.payload.planHash,
+      deliveryId: recipe.deliveryId,
+      state: "queued",
+      phase: "queued",
+      terminal: false,
+      cancellationRequested: false,
+      published: false,
+      packagePath,
+      stagingPath: `${recipe.destinationRoot}\\.revit-mcp-staging\\${recipe.deliveryId}`,
+      completedUnits: 0,
+      totalUnits: recipe.sourceModels.length * 3 + 2,
+      progressPercent: 0,
+      message: "Delivery accepted and queued for Revit processing.",
+      createdAt: now,
+      updatedAt: now,
+      models: recipe.sourceModels.map((model) => ({
+        modelId: model.id,
+        sourcePath: model.sourcePath,
+        outputPath: `${packagePath}\\${model.targetFileName}`,
+        success: true,
+        isWorkshared: false,
+        linksValidated: 0,
+        deletedSheets: 0,
+        deletedViews: 0,
+        deletedTemplates: 0,
+        deletedFilters: 0,
+        purgedElements: 0,
+        warningsCount: 0,
+        linkTransforms: [],
+        exports: [],
+        errors: [],
+      })),
+      errors: [],
+    };
+    this.deliveryJobs.set(jobId, job);
+    return ok(request, job);
+  }
+
+  async getModelDeliveryStatus(
+    request: BridgeRequest<ModelDeliveryStatusRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryStatusResult>> {
+    maybeAbort(options);
+    const job = this.deliveryJobs.get(request.payload.jobId);
+    if (!job) return fail(request, "DELIVERY_JOB_NOT_FOUND", "No fake model-delivery job matched that ID.");
+    if (!job.terminal) {
+      const completedAt = new Date().toISOString();
+      Object.assign(job, {
+        state: "succeeded",
+        phase: "succeeded",
+        terminal: true,
+        published: true,
+        completedUnits: job.totalUnits,
+        progressPercent: 100,
+        message: "Delivery package published after all validations passed.",
+        updatedAt: completedAt,
+        completedAt,
+        manifestPath: `${job.packagePath}\\manifest.json`,
+        auditPath: `${job.packagePath}\\audit.json`,
+      });
+    }
+    return ok(request, job);
+  }
+
+  async cancelModelDelivery(
+    request: BridgeRequest<ModelDeliveryCancelRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryCancelResult>> {
+    maybeAbort(options);
+    const job = this.deliveryJobs.get(request.payload.jobId);
+    if (!job) return fail(request, "DELIVERY_JOB_NOT_FOUND", "No fake model-delivery job matched that ID.");
+    if (!job.terminal) {
+      const completedAt = new Date().toISOString();
+      Object.assign(job, {
+        state: "cancelled",
+        phase: "cancelled",
+        terminal: true,
+        cancellationRequested: true,
+        published: false,
+        message: request.payload.reason ?? "Delivery cancelled at a safe checkpoint; no final package was published.",
+        updatedAt: completedAt,
+        completedAt,
+      });
+    }
+    return ok(request, job);
   }
 
   async getLevels(

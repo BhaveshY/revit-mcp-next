@@ -1217,7 +1217,14 @@ try {
 
     $addinManifestPath = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext.addin"
     Assert-FileExists $addinManifestPath "installed Revit add-in manifest"
+    $manifestRuntimeAddin = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext\RevitMcpNext.Addin.dll"
+    $manifestRuntimeContracts = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext\RevitMcpNext.Contracts.dll"
+    Assert-FileExists $manifestRuntimeAddin "Revit-visible add-in payload"
+    Assert-FileExists $manifestRuntimeContracts "Revit-visible contracts payload"
     $addinManifestText = Get-Content -LiteralPath $addinManifestPath -Raw
+    if (-not $addinManifestText.Contains("RevitMcpNext/RevitMcpNext.Addin.dll")) {
+        throw "Installed Revit add-in manifest does not use the Revit-visible adjacent payload."
+    }
     if (-not $addinManifestText.Contains("<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>")) {
         throw "Installed Revit add-in manifest does not use ClientId."
     }
@@ -1315,7 +1322,18 @@ try {
     $env:LOCALAPPDATA = $oldLocalAppData
 
     if (-not $KeepArtifacts -and (Test-Path -LiteralPath $runRoot -PathType Container)) {
-        Remove-Item -LiteralPath $runRoot -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction Stop
+        } catch {
+            # npm can still be releasing cache files when Windows starts the recursive
+            # walk. Cleanup is best-effort and must not turn a passed contract into a
+            # false failure.
+            Start-Sleep -Milliseconds 250
+            Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $runRoot -PathType Container) {
+                Write-Warning "Release contract passed, but temporary artifacts could not be fully removed: $runRoot"
+            }
+        }
     } elseif ($KeepArtifacts) {
         Write-Step "Kept artifacts: $runRoot"
     }

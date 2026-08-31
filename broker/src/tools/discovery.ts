@@ -15,7 +15,7 @@ interface DiscoveryContext {
 interface ToolDiscovery {
   name: string;
   title: string;
-  category: "session" | "read" | "analysis" | "catalog" | "write" | "debug";
+  category: "session" | "read" | "analysis" | "catalog" | "write" | "delivery" | "debug";
   description: string;
   readOnly: boolean;
   destructive: boolean;
@@ -304,6 +304,66 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     whenToUse: "Use before set_parameter to select a stable parameter identity, storage type, spec, and unit.",
     compactUse: "Prefer builtInParameter, sharedParameterGuid, or definitionId from writableEdit results. Use an unambiguous name only when no stable identity exists.",
     related: ["revit.query", "revit.preview_change_set"],
+  },
+  {
+    name: "revit.inspect_model_delivery",
+    title: "Inspect Revit Model Delivery",
+    category: "delivery",
+    description: "Inspect delivery sources and compare them with an optional saved project recipe.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use on first delivery and before repeat deliveries when source files or links may have changed.",
+    compactUse: "Pass local, mapped-drive, or UNC RVT paths; include previousRecipe on repeat runs.",
+    related: ["revit.preview_model_delivery"],
+  },
+  {
+    name: "revit.preview_model_delivery",
+    title: "Preview Revit Model Delivery",
+    category: "delivery",
+    description: "Validate the exact standalone-model, link, cleanup, export, and QA delivery plan without publishing files.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use after inspection and before every delivery execution.",
+    compactUse: "Resolve every blocker and approve the returned planHash before execution.",
+    related: ["revit.inspect_model_delivery", "revit.execute_model_delivery"],
+  },
+  {
+    name: "revit.execute_model_delivery",
+    title: "Execute Revit Model Delivery",
+    category: "delivery",
+    description: "Start an approved, staged, validated, atomic model-delivery job.",
+    readOnly: false,
+    destructive: true,
+    idempotent: false,
+    whenToUse: "Use only with a ready preview and explicit architect approval.",
+    compactUse: "Echo the exact recipe, previewId, planHash, expiry, and confirm=true; then follow job status.",
+    related: ["revit.preview_model_delivery", "revit.get_model_delivery_status", "revit.cancel_model_delivery"],
+  },
+  {
+    name: "revit.get_model_delivery_status",
+    title: "Get Revit Model Delivery Status",
+    category: "delivery",
+    description: "Read phase, progress, per-model QA, errors, and publication state for a delivery job.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Poll an active delivery job until it reaches succeeded, failed, or cancelled.",
+    compactUse: "Pass the jobId returned by execute_model_delivery.",
+    related: ["revit.execute_model_delivery", "revit.cancel_model_delivery"],
+  },
+  {
+    name: "revit.cancel_model_delivery",
+    title: "Cancel Revit Model Delivery",
+    category: "delivery",
+    description: "Request cancellation at the next safe delivery checkpoint without publishing a partial package.",
+    readOnly: false,
+    destructive: false,
+    idempotent: true,
+    whenToUse: "Use when the architect stops an active job or a new issue is discovered during processing.",
+    compactUse: "Pass jobId and an optional reason, then confirm terminal status.",
+    related: ["revit.get_model_delivery_status"],
   },
   {
     name: "revit.preview_change_set",

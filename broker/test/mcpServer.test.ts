@@ -114,6 +114,12 @@ test("broker exposes annotated tools with output schemas and callable structured
       "revit.list_documents",
       "revit.read_bundle",
       "revit.create_project_from_template",
+      "revit.create_model_delivery_fixture",
+      "revit.inspect_model_delivery",
+      "revit.preview_model_delivery",
+      "revit.execute_model_delivery",
+      "revit.get_model_delivery_status",
+      "revit.cancel_model_delivery",
       "revit.get_levels",
       "revit.get_views",
       "revit.get_sheets",
@@ -230,6 +236,59 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(createdProject.structuredContent?.data?.activated, true);
     assert.equal(createdProject.structuredContent?.data?.document?.path, "C:\\tmp\\revit-mcp-next-fixtures\\smoke.rvt");
     assert.equal(createdProject.structuredContent?.data?.document?.isActive, true);
+
+    const fixture = (await client.callTool({
+      name: "revit.create_model_delivery_fixture",
+      arguments: {
+        templatePath: "C:\\ProgramData\\Autodesk\\RVT 2024\\Templates\\Default_M_ENU.rte",
+        fixtureRoot: "C:\\tmp\\revit-mcp-next-fixtures\\delivery-flow",
+        fixtureId: "broker-test",
+        confirm: true,
+      },
+    })) as { isError?: boolean; structuredContent?: { data?: { sourcePaths?: string[]; recipe?: Record<string, unknown> } } };
+    assert.equal(fixture.isError, undefined);
+    const fixtureData = fixture.structuredContent?.data;
+    assert.equal(fixtureData?.sourcePaths?.length, 2);
+    assert.ok(fixtureData?.recipe);
+
+    const inspection = (await client.callTool({
+      name: "revit.inspect_model_delivery",
+      arguments: { sourcePaths: fixtureData?.sourcePaths },
+    })) as { isError?: boolean; structuredContent?: { data?: { mode?: string; missingDecisions?: unknown[] } } };
+    assert.equal(inspection.isError, undefined);
+    assert.equal(inspection.structuredContent?.data?.mode, "firstTime");
+    assert.ok((inspection.structuredContent?.data?.missingDecisions?.length ?? 0) > 0);
+
+    const deliveryPreview = (await client.callTool({
+      name: "revit.preview_model_delivery",
+      arguments: { recipe: fixtureData?.recipe },
+    })) as { isError?: boolean; structuredContent?: { data?: { previewId?: string; planHash?: string; expiresAt?: string; ready?: boolean } } };
+    assert.equal(deliveryPreview.isError, undefined);
+    assert.equal(deliveryPreview.structuredContent?.data?.ready, true);
+    const previewData = deliveryPreview.structuredContent?.data;
+
+    const execution = (await client.callTool({
+      name: "revit.execute_model_delivery",
+      arguments: {
+        recipe: fixtureData?.recipe,
+        previewId: previewData?.previewId,
+        planHash: previewData?.planHash,
+        expiresAt: previewData?.expiresAt,
+        confirm: true,
+      },
+    })) as { isError?: boolean; structuredContent?: { data?: { jobId?: string; state?: string; terminal?: boolean } } };
+    assert.equal(execution.isError, undefined);
+    assert.equal(execution.structuredContent?.data?.state, "queued");
+    assert.equal(execution.structuredContent?.data?.terminal, false);
+
+    const deliveryStatus = (await client.callTool({
+      name: "revit.get_model_delivery_status",
+      arguments: { jobId: execution.structuredContent?.data?.jobId },
+    })) as { isError?: boolean; structuredContent?: { data?: { state?: string; published?: boolean; progressPercent?: number } } };
+    assert.equal(deliveryStatus.isError, undefined);
+    assert.equal(deliveryStatus.structuredContent?.data?.state, "succeeded");
+    assert.equal(deliveryStatus.structuredContent?.data?.published, true);
+    assert.equal(deliveryStatus.structuredContent?.data?.progressPercent, 100);
 
     const currentView = (await client.callTool({
       name: "revit.get_current_view",

@@ -47,6 +47,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["status"] = "read",
                 ["list_documents"] = "read",
                 ["create_project_from_template"] = "write",
+                ["create_model_delivery_fixture"] = "write",
                 ["get_levels"] = "read",
                 ["get_views"] = "read",
                 ["get_sheets"] = "read",
@@ -64,6 +65,11 @@ namespace RevitMcpNext.Addin.Revit
                 ["catalog"] = "read",
                 ["query"] = "read",
                 ["describe_parameters"] = "read",
+                ["inspect_model_delivery"] = "read",
+                ["preview_model_delivery"] = "preview",
+                ["execute_model_delivery"] = "destructive",
+                ["get_model_delivery_status"] = "read",
+                ["cancel_model_delivery"] = "debug",
                 ["preview_change_set"] = "preview",
                 ["apply_change_set"] = "write",
                 ["cancel_request"] = "debug"
@@ -72,6 +78,7 @@ namespace RevitMcpNext.Addin.Revit
         private readonly TransactionService _transactions;
         private readonly DocumentGenerationTracker _generations;
         private readonly PreviewTokenStore _previewTokens;
+        private readonly ModelDeliveryWorkflow _modelDelivery;
 
         public RevitExternalEventHandler(
             RevitRequestQueue queue,
@@ -83,6 +90,7 @@ namespace RevitMcpNext.Addin.Revit
             _transactions = transactions;
             _generations = generations ?? new DocumentGenerationTracker();
             _previewTokens = previewTokens ?? new PreviewTokenStore();
+            _modelDelivery = new ModelDeliveryWorkflow();
         }
 
         public void Execute(UIApplication app)
@@ -99,7 +107,12 @@ namespace RevitMcpNext.Addin.Revit
                 if (elapsed.ElapsedMilliseconds >= MaxExternalEventElapsedMs) break;
             }
 
-            if (_queue.HasPending)
+            if (_modelDelivery.HasPendingWork)
+            {
+                _modelDelivery.ProcessNext(app);
+            }
+
+            if (_queue.HasPending || _modelDelivery.HasPendingWork)
             {
                 _queue.Raise();
             }
@@ -164,6 +177,8 @@ namespace RevitMcpNext.Addin.Revit
                             return Success(request, BuildDocumentList(app), sw, generation: GetActiveDocumentGeneration(app));
                         case "create_project_from_template":
                             return HandleCreateProjectFromTemplate(app, request, sw);
+                        case "create_model_delivery_fixture":
+                            return HandleCreateModelDeliveryFixture(app, request, sw);
                         case "get_levels":
                             return HandleGetLevels(app, request, sw);
                         case "get_views":
@@ -198,6 +213,16 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleQuery(app, request, sw);
                         case "describe_parameters":
                             return HandleDescribeParameters(app, request, sw);
+                        case "inspect_model_delivery":
+                            return HandleInspectModelDelivery(app, request, sw);
+                        case "preview_model_delivery":
+                            return HandlePreviewModelDelivery(app, request, sw);
+                        case "execute_model_delivery":
+                            return HandleExecuteModelDelivery(app, request, sw);
+                        case "get_model_delivery_status":
+                            return HandleGetModelDeliveryStatus(request, sw);
+                        case "cancel_model_delivery":
+                            return HandleCancelModelDelivery(request, sw);
                         case "preview_change_set":
                             return HandlePreviewChange(app, request, sw);
                         case "apply_change_set":
@@ -235,6 +260,18 @@ namespace RevitMcpNext.Addin.Revit
                 "OPERATION_KIND_MISMATCH",
                 "Bridge request operation '" + request.Operation + "' must use operationKind '" + expectedKind + "' but received '" + actualKind + "'.",
                 sw);
+        }
+
+        private BridgeResponseEnvelope HandleCreateModelDeliveryFixture(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            try
+            {
+                return Success(request, ModelDeliveryFixture.Create(app, request.Payload), sw);
+            }
+            catch (ModelDeliveryException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
+            }
         }
 
         private BridgeResponseEnvelope HandleGetLevels(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
@@ -1767,6 +1804,66 @@ namespace RevitMcpNext.Addin.Revit
             if (!string.IsNullOrWhiteSpace(reason)) data["reason"] = reason;
 
             return Success(request, data, sw);
+        }
+
+        private BridgeResponseEnvelope HandlePreviewModelDelivery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            try
+            {
+                return Success(request, _modelDelivery.Preview(app, request.SessionId, request.Payload), sw);
+            }
+            catch (ModelDeliveryException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
+            }
+        }
+
+        private BridgeResponseEnvelope HandleInspectModelDelivery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            try
+            {
+                return Success(request, _modelDelivery.Inspect(app, request.Payload), sw);
+            }
+            catch (ModelDeliveryException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
+            }
+        }
+
+        private BridgeResponseEnvelope HandleExecuteModelDelivery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            try
+            {
+                return Success(request, _modelDelivery.Execute(app, request.SessionId, request.Payload), sw);
+            }
+            catch (ModelDeliveryException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
+            }
+        }
+
+        private BridgeResponseEnvelope HandleGetModelDeliveryStatus(BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            try
+            {
+                return Success(request, _modelDelivery.GetStatus(request.SessionId, request.Payload), sw);
+            }
+            catch (ModelDeliveryException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
+            }
+        }
+
+        private BridgeResponseEnvelope HandleCancelModelDelivery(BridgeRequestEnvelope request, Stopwatch sw)
+        {
+            try
+            {
+                return Success(request, _modelDelivery.Cancel(request.SessionId, request.Payload), sw);
+            }
+            catch (ModelDeliveryException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
+            }
         }
 
         private static Dictionary<string, object> PreviewOperation(
@@ -7596,6 +7693,7 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     ["queue"] = _queue.GetDiagnosticsSnapshot(),
                     ["previewTokens"] = _previewTokens.GetDiagnosticsSnapshot(),
+                    ["modelDelivery"] = _modelDelivery.GetDiagnosticsSnapshot(),
                     ["recovery"] = new[]
                     {
                         "If pendingCount stays above zero or lastRaiseResult is not Accepted/Pending, bring Revit forward and close modal dialogs.",
@@ -7610,6 +7708,7 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.status",
                     "revit.list_documents",
                     "revit.create_project_from_template",
+                    "revit.create_model_delivery_fixture",
                     "revit.get_levels",
                     "revit.get_views",
                     "revit.get_sheets",
@@ -7627,6 +7726,11 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.catalog",
                     "revit.query",
                     "revit.describe_parameters",
+                    "revit.inspect_model_delivery",
+                    "revit.preview_model_delivery",
+                    "revit.execute_model_delivery",
+                    "revit.get_model_delivery_status",
+                    "revit.cancel_model_delivery",
                     "revit.preview_change_set",
                     "revit.apply_change_set",
                     "revit.cancel_request"

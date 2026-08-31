@@ -301,6 +301,124 @@ const createProjectFromTemplateSchema = {
   overwrite: z.boolean().default(false).describe("Overwrite outputPath if it already exists. Defaults to false."),
   confirm: z.literal(true).describe("Required explicit confirmation because this creates or overwrites a local RVT file."),
 };
+const createModelDeliveryFixtureSchema = {
+  templatePath: revitTemplatePath,
+  fixtureRoot: boundedLocalPath.describe("New empty local directory root for the disposable fixture; existing paths are rejected."),
+  fixtureId: boundedId,
+  confirm: z.literal(true),
+};
+
+const deliveryFileNameSchema = z
+  .string()
+  .min(5)
+  .max(240)
+  .regex(/^[^<>:"/\\|?*]+\.rvt$/i, "targetFileName must be a file name ending with .rvt and must not contain a path.");
+const deliveryDirectoryNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[^<>:"/\\|?*]+$/, "packageName must be a directory name, not a path.");
+const deliverySourceSchema = z
+  .object({
+    id: boundedId.describe("Stable model identifier used by link rules; project-specific and not inferred from fixed names."),
+    sourcePath: revitProjectPath.describe("Absolute or UNC path to the source RVT visible to the Revit process."),
+    targetFileName: deliveryFileNameSchema.describe("Standalone RVT file name inside the final package."),
+    role: boundedString.optional().describe("Optional project-specific role label shown in previews and reports."),
+    startViewName: z.string().min(1).max(256).optional().describe("Exact protected opening view name."),
+    start3dViewName: z.string().min(1).max(256).optional().describe("Optional exact protected 3D view name."),
+  })
+  .strict();
+const deliveryLinkRuleSchema = z
+  .object({
+    sourceModelId: boundedId.describe("Packaged model whose existing Revit link type is governed by this rule."),
+    matchPath: boundedLocalPath.optional().describe("Exact existing link path to match after canonicalization."),
+    matchFileName: z.string().min(1).max(240).optional().describe("Existing linked file name to match when path matching is not available."),
+    action: z.enum(["repath", "unload", "remove", "retain"]),
+    targetModelId: boundedId.optional().describe("Required for repath; identifies another source model in this recipe."),
+    expectedInstanceCount: z.number().int().min(0).max(256).optional().describe("Optional exact instance-count guard for duplicate placement review."),
+    required: z.boolean().optional().describe("Block preview when this rule matches no link. Defaults to false."),
+  })
+  .strict()
+  .refine((value) => Boolean(value.matchPath || value.matchFileName), "Each link rule requires matchPath or matchFileName.")
+  .refine((value) => value.action !== "repath" || Boolean(value.targetModelId), "Repath rules require targetModelId.");
+const deliveryCleanupSchema = z
+  .object({
+    deleteSheets: z.boolean(),
+    deleteViews: z.boolean(),
+    deleteSchedules: z.boolean(),
+    deleteLegends: z.boolean(),
+    deleteDraftingViews: z.boolean(),
+    deleteViewTemplates: z.boolean(),
+    deleteUnusedFilters: z.boolean(),
+    removeUnmappedLinks: z.boolean(),
+    purgeUnusedPasses: z.number().int().min(0).max(3),
+    protectedViewNames: z.array(z.string().min(1).max(256)).max(128),
+  })
+  .strict()
+  .describe("Explicit cleanup decisions. No destructive cleanup value is defaulted by the connector.");
+const deliveryExportSchema = z
+  .object({
+    format: z.enum(["ifc", "dwg", "nwc"]),
+    modelIds: z.array(boundedId).min(1).max(64).optional().describe("Optional source model IDs. Omit to export every packaged model."),
+    setupName: z.string().min(1).max(256).optional(),
+    outputSubdirectory: z.string().min(1).max(128).regex(/^[^<>:"/\\|?*]+$/).optional(),
+    viewNames: z.array(z.string().min(1).max(256)).max(256).optional(),
+    required: z.boolean(),
+  })
+  .strict();
+const deliveryCoordinateSchema = z
+  .object({
+    preserveLinkTransforms: z.literal(true),
+    packagedLinkPathType: z.literal("relative"),
+  })
+  .strict()
+  .describe("Fixed coordinate safety invariants for packaged links.");
+const deliveryQaSchema = z
+  .object({
+    requireStandalone: z.literal(true),
+    requireNoCentralPath: z.literal(true),
+    requireSourceHashUnchanged: z.literal(true),
+    requireCleanupMatchesPreview: z.literal(true),
+    requireAllRequiredExports: z.literal(true),
+    maxWarnings: z.number().int().min(0).max(100000).optional(),
+  })
+  .strict();
+const modelDeliveryRecipeSchema = z
+  .object({
+    projectId: boundedString,
+    recipeVersion: boundedString,
+    deliveryId: boundedId.describe("Stable per-run identifier used to reconcile retry staging."),
+    packageName: deliveryDirectoryNameSchema,
+    destinationRoot: boundedLocalPath.describe("Absolute or UNC delivery root visible to the Revit process."),
+    sourceModels: z.array(deliverySourceSchema).min(1).max(64),
+    linkRules: z.array(deliveryLinkRuleSchema).max(512),
+    coordinates: deliveryCoordinateSchema,
+    cleanup: deliveryCleanupSchema,
+    exports: z.array(deliveryExportSchema).max(24),
+    qa: deliveryQaSchema,
+  })
+  .strict();
+const modelDeliveryInspectSchema = {
+  sourcePaths: z.array(revitProjectPath).min(1).max(64),
+  previousRecipe: modelDeliveryRecipeSchema.optional().describe("Saved project recipe from a previous delivery. Omit on first use."),
+};
+const modelDeliveryPreviewSchema = {
+  recipe: modelDeliveryRecipeSchema,
+};
+const modelDeliveryExecuteSchema = {
+  recipe: modelDeliveryRecipeSchema,
+  previewId: boundedString.describe("Single-use preview identifier from revit.preview_model_delivery."),
+  planHash: z.string().min(1).max(128).describe("Hash of the exact recipe and source fingerprints returned by preview."),
+  expiresAt: z.string().datetime({ offset: true }),
+  confirm: z.literal(true).describe("Must be true after the architect approves the exact delivery preview."),
+};
+const modelDeliveryStatusSchema = {
+  jobId: boundedString.describe("Model-delivery job ID returned by revit.execute_model_delivery."),
+};
+const modelDeliveryCancelSchema = {
+  jobId: boundedString.describe("Active model-delivery job ID returned by revit.execute_model_delivery."),
+  reason: z.string().min(1).max(512).optional(),
+};
 
 const modelContextSchema = {
   ...documentGuardSchema,
@@ -1266,6 +1384,149 @@ const createProjectFromTemplateResultSchema = z
     source: z.literal("revit-api"),
   })
   .passthrough();
+const createModelDeliveryFixtureResultSchema = z
+  .object({
+    fixtureId: z.string(),
+    fixtureRoot: z.string(),
+    revitVersion: z.string(),
+    templatePath: z.string(),
+    sourcePaths: z.array(z.string()),
+    sourceSha256: z.record(z.string(), z.string()),
+    expectedArchitectureLinkTransform: z.string(),
+    recipe: modelDeliveryRecipeSchema,
+  })
+  .passthrough();
+
+const modelDeliveryIssueSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+    modelId: z.string().optional(),
+    path: z.string().optional(),
+  })
+  .passthrough();
+const modelDeliveryInspectResultSchema = z
+  .object({
+    mode: z.enum(["firstTime", "repeat"]),
+    recipeReusable: z.boolean(),
+    models: z.array(
+      z
+        .object({
+          sourcePath: z.string(),
+          suggestedId: z.string(),
+          suggestedTargetFileName: z.string(),
+          isWorkshared: z.boolean(),
+          bytes: z.number(),
+          lastWriteUtc: z.string(),
+          suggestedStartViewName: z.string().nullable().optional(),
+          suggestedStart3dViewName: z.string().nullable().optional(),
+          openingViewCandidates: z.array(z.string()),
+          threeDViewCandidates: z.array(z.string()),
+          sheetCount: z.number(),
+          scheduleCount: z.number(),
+          viewTemplateCount: z.number(),
+          filterCount: z.number(),
+          warningCount: z.number(),
+          links: z.array(
+            z
+              .object({
+                path: z.string(),
+                fileName: z.string(),
+                instanceCount: z.number(),
+                transforms: z.array(z.string()),
+                automaticallyMapsToSource: z.boolean(),
+                coveredByPreviousRecipe: z.boolean(),
+              })
+              .passthrough()
+          ),
+        })
+        .passthrough()
+    ),
+    detectedChanges: z.array(modelDeliveryIssueSchema),
+    missingDecisions: z.array(z.object({ key: z.string(), question: z.string() }).passthrough()),
+  })
+  .passthrough();
+const modelDeliveryModelPlanSchema = z
+  .object({
+    modelId: z.string(),
+    role: z.string().optional(),
+    sourcePath: z.string(),
+    outputPath: z.string(),
+    sourceBytes: z.number(),
+    sourceLastWriteUtc: z.string(),
+    sourceIsWorkshared: z.boolean(),
+    targetIsWorkshared: z.literal(false),
+    linkCount: z.number(),
+    sheetDeleteCount: z.number(),
+    viewDeleteCount: z.number(),
+    templateDeleteCount: z.number(),
+    filterDeleteCount: z.number(),
+    warningsCount: z.number(),
+  })
+  .passthrough();
+const modelDeliveryPreviewResultSchema = z
+  .object({
+    previewId: z.string(),
+    planHash: z.string(),
+    expiresAt: z.string(),
+    ready: z.boolean(),
+    requiresConfirmation: z.literal(true),
+    deliveryId: z.string(),
+    packagePath: z.string(),
+    stagingPath: z.string(),
+    models: z.array(modelDeliveryModelPlanSchema),
+    blockers: z.array(modelDeliveryIssueSchema),
+    warnings: z.array(modelDeliveryIssueSchema),
+  })
+  .passthrough();
+const modelDeliveryModelResultSchema = z
+  .object({
+    modelId: z.string(),
+    sourcePath: z.string(),
+    outputPath: z.string(),
+    success: z.boolean(),
+    isWorkshared: z.boolean(),
+    centralModelPath: z.string().optional(),
+    sourceSha256: z.string().optional(),
+    outputSha256: z.string().optional(),
+    warningsCount: z.number(),
+    linksValidated: z.number(),
+    deletedSheets: z.number(),
+    deletedViews: z.number(),
+    deletedTemplates: z.number(),
+    deletedFilters: z.number(),
+    purgedElements: z.number(),
+    linkTransforms: z.array(z.string()),
+    exports: z.array(z.string()),
+    errors: z.array(z.string()),
+  })
+  .passthrough();
+const modelDeliveryExecuteResultSchema = z
+  .object({
+    jobId: z.string(),
+    previewId: z.string(),
+    planHash: z.string(),
+    deliveryId: z.string(),
+    state: z.string(),
+    phase: z.string(),
+    terminal: z.boolean(),
+    cancellationRequested: z.boolean(),
+    published: z.boolean(),
+    packagePath: z.string(),
+    stagingPath: z.string(),
+    completedUnits: z.number(),
+    totalUnits: z.number(),
+    progressPercent: z.number(),
+    message: z.string(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    completedAt: z.string().optional(),
+    manifestPath: z.string().optional(),
+    auditPath: z.string().optional(),
+    models: z.array(modelDeliveryModelResultSchema),
+    errors: z.array(modelDeliveryIssueSchema),
+  })
+  .passthrough();
 
 const levelSummarySchema = z
   .object({
@@ -1621,6 +1882,12 @@ const outputSchemas = {
   requestResult: toolOutputSchema(requestResultDataSchema),
   documents: toolOutputSchema(z.array(documentSummarySchema)),
   createProjectFromTemplate: toolOutputSchema(createProjectFromTemplateResultSchema),
+  createModelDeliveryFixture: toolOutputSchema(createModelDeliveryFixtureResultSchema),
+  previewModelDelivery: toolOutputSchema(modelDeliveryPreviewResultSchema),
+  inspectModelDelivery: toolOutputSchema(modelDeliveryInspectResultSchema),
+  executeModelDelivery: toolOutputSchema(modelDeliveryExecuteResultSchema),
+  modelDeliveryStatus: toolOutputSchema(modelDeliveryExecuteResultSchema),
+  cancelModelDelivery: toolOutputSchema(modelDeliveryExecuteResultSchema),
   levels: toolOutputSchema(z.array(levelSummarySchema)),
   currentView: toolOutputSchema(currentViewDataSchema),
   views: toolOutputSchema(viewsResultSchema),
@@ -2088,6 +2355,156 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const request = makeRequest(context.sessionId, "create_project_from_template", "write", args, 120000);
       const response = await context.bridge.createProjectFromTemplate(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (result) => `Created disposable Revit project: ${result.outputPath}`);
+    }
+  );
+
+  server.registerTool(
+    "revit.create_model_delivery_fixture",
+    {
+      title: "Create Disposable Model Delivery Fixture",
+      description:
+        "Create two disposable workshared central RVTs with a transformed link and cleanup artifacts for live connector verification. Never use this on a real project path.",
+      inputSchema: createModelDeliveryFixtureSchema,
+      outputSchema: outputSchemas.createModelDeliveryFixture,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "create_model_delivery_fixture", "write", args, 300000);
+      const response = await context.bridge.createModelDeliveryFixture(request, { signal: ctx.mcpReq.signal });
+      return asToolResult(response, (result) => `Created disposable ${result.revitVersion} delivery fixture at ${result.fixtureRoot}.`);
+    }
+  );
+
+  server.registerTool(
+    "revit.inspect_model_delivery",
+    {
+      title: "Inspect Revit Model Delivery",
+      description:
+        "Inspect local/mapped/UNC source RVTs for first-time recipe setup or compare them with a saved recipe. Returns compact facts, detected changes, and only the decisions Codex still needs from the architect.",
+      inputSchema: modelDeliveryInspectSchema,
+      outputSchema: outputSchemas.inspectModelDelivery,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "inspect_model_delivery", "read", args, 300000);
+      const response = await context.bridge.inspectModelDelivery(request, { signal: ctx.mcpReq.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.mode === "firstTime" ? "First-time" : "Repeat"} delivery inspection: ${result.models.length} model(s), ` +
+          `${result.detectedChanges.length} detected change(s), ${result.missingDecisions.length} decision group(s) needed.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.preview_model_delivery",
+    {
+      title: "Preview Revit Model Delivery",
+      description:
+        "Inspect an arbitrary project-specific set of RVT sources and return the exact standalone-file, link, cleanup, export, and QA plan without writing files. Use before revit.execute_model_delivery.",
+      inputSchema: modelDeliveryPreviewSchema,
+      outputSchema: outputSchemas.previewModelDelivery,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "preview_model_delivery", "preview", args, 300000);
+      const response = await context.bridge.previewModelDelivery(request, { signal: ctx.mcpReq.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.ready ? "Ready" : "Blocked"} delivery preview ${result.previewId}: ${result.models.length} model(s), ` +
+          `${result.blockers.length} blocker(s), ${result.warnings.length} warning(s).`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.execute_model_delivery",
+    {
+      title: "Execute Revit Model Delivery",
+      description:
+        "Execute one approved model-delivery preview. Creates delivery-specific staging, produces standalone non-workshared RVTs, applies approved link/cleanup/export rules, validates every output, and publishes only after all required checks pass.",
+      inputSchema: modelDeliveryExecuteSchema,
+      outputSchema: outputSchemas.executeModelDelivery,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "execute_model_delivery", "destructive", args, 30000);
+      const response = await context.bridge.executeModelDelivery(request, { signal: ctx.mcpReq.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `Started delivery ${result.deliveryId} as job ${result.jobId}. Use revit.get_model_delivery_status to follow progress.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_model_delivery_status",
+    {
+      title: "Get Revit Model Delivery Status",
+      description:
+        "Return progress, phase, per-model QA results, publication state, and any errors for a model-delivery job.",
+      inputSchema: modelDeliveryStatusSchema,
+      outputSchema: outputSchemas.modelDeliveryStatus,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "get_model_delivery_status", "read", args, 30000);
+      const response = await context.bridge.getModelDeliveryStatus(request, { signal: ctx.mcpReq.signal });
+      return asToolResult(
+        response,
+        (result) =>
+          `${result.deliveryId}: ${result.state}, ${result.progressPercent}% complete${result.published ? ", published" : ""}. ${result.message}`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.cancel_model_delivery",
+    {
+      title: "Cancel Revit Model Delivery",
+      description:
+        "Request cancellation of an active model-delivery job. Cancellation occurs at the next safe checkpoint and never publishes a partial package.",
+      inputSchema: modelDeliveryCancelSchema,
+      outputSchema: outputSchemas.cancelModelDelivery,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "cancel_model_delivery", "debug", args, 30000);
+      const response = await context.bridge.cancelModelDelivery(request, { signal: ctx.mcpReq.signal });
+      return asToolResult(response, (result) => `${result.deliveryId}: ${result.message}`);
     }
   );
 

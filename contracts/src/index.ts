@@ -280,6 +280,271 @@ export interface CreateProjectFromTemplateResult {
   source: "revit-api";
 }
 
+export type ModelDeliveryLinkAction = "repath" | "unload" | "remove" | "retain";
+export type ModelDeliveryExportFormat = "ifc" | "dwg" | "nwc";
+
+export interface ModelDeliverySource {
+  id: string;
+  sourcePath: string;
+  targetFileName: string;
+  role?: string;
+  startViewName?: string;
+  start3dViewName?: string;
+}
+
+export interface ModelDeliveryLinkRule {
+  sourceModelId: string;
+  matchPath?: string;
+  matchFileName?: string;
+  action: ModelDeliveryLinkAction;
+  targetModelId?: string;
+  expectedInstanceCount?: number;
+  required?: boolean;
+}
+
+export interface ModelDeliveryCleanupPolicy {
+  deleteSheets: boolean;
+  deleteViews: boolean;
+  deleteSchedules: boolean;
+  deleteLegends: boolean;
+  deleteDraftingViews: boolean;
+  deleteViewTemplates: boolean;
+  deleteUnusedFilters: boolean;
+  removeUnmappedLinks: boolean;
+  purgeUnusedPasses: number;
+  protectedViewNames: string[];
+}
+
+export interface ModelDeliveryExportRequest {
+  format: ModelDeliveryExportFormat;
+  modelIds?: string[];
+  setupName?: string;
+  outputSubdirectory?: string;
+  viewNames?: string[];
+  required: boolean;
+}
+
+export interface ModelDeliveryCoordinatePolicy {
+  preserveLinkTransforms: true;
+  packagedLinkPathType: "relative";
+}
+
+export interface ModelDeliveryQaPolicy {
+  requireStandalone: true;
+  requireNoCentralPath: true;
+  requireSourceHashUnchanged: true;
+  requireCleanupMatchesPreview: true;
+  requireAllRequiredExports: true;
+  maxWarnings?: number;
+}
+
+export interface ModelDeliveryRecipe {
+  projectId: string;
+  recipeVersion: string;
+  deliveryId: string;
+  packageName: string;
+  destinationRoot: string;
+  sourceModels: ModelDeliverySource[];
+  linkRules: ModelDeliveryLinkRule[];
+  coordinates: ModelDeliveryCoordinatePolicy;
+  cleanup: ModelDeliveryCleanupPolicy;
+  exports: ModelDeliveryExportRequest[];
+  qa: ModelDeliveryQaPolicy;
+}
+
+export interface ModelDeliveryPreviewRequest {
+  recipe: ModelDeliveryRecipe;
+}
+
+export interface ModelDeliveryInspectRequest {
+  sourcePaths: string[];
+  previousRecipe?: ModelDeliveryRecipe;
+}
+
+export interface ModelDeliveryFixtureRequest {
+  templatePath: string;
+  fixtureRoot: string;
+  fixtureId: string;
+  confirm: true;
+}
+
+export interface ModelDeliveryFixtureResult {
+  fixtureId: string;
+  fixtureRoot: string;
+  revitVersion: string;
+  templatePath: string;
+  sourcePaths: string[];
+  sourceSha256: Record<string, string>;
+  expectedArchitectureLinkTransform: string;
+  recipe: ModelDeliveryRecipe;
+}
+
+export interface ModelDeliveryInspectionLink {
+  path: string;
+  fileName: string;
+  instanceCount: number;
+  transforms: string[];
+  automaticallyMapsToSource: boolean;
+  coveredByPreviousRecipe: boolean;
+}
+
+export interface ModelDeliveryInspectionModel {
+  sourcePath: string;
+  suggestedId: string;
+  suggestedTargetFileName: string;
+  isWorkshared: boolean;
+  bytes: number;
+  lastWriteUtc: string;
+  suggestedStartViewName?: string;
+  suggestedStart3dViewName?: string;
+  openingViewCandidates: string[];
+  threeDViewCandidates: string[];
+  sheetCount: number;
+  scheduleCount: number;
+  viewTemplateCount: number;
+  filterCount: number;
+  warningCount: number;
+  links: ModelDeliveryInspectionLink[];
+}
+
+export interface ModelDeliveryInspectionDecision {
+  key: string;
+  question: string;
+}
+
+export interface ModelDeliveryDetectedChange {
+  code: string;
+  message: string;
+  modelId?: string;
+  path?: string;
+}
+
+export interface ModelDeliveryInspectResult {
+  mode: "firstTime" | "repeat";
+  recipeReusable: boolean;
+  models: ModelDeliveryInspectionModel[];
+  detectedChanges: ModelDeliveryDetectedChange[];
+  missingDecisions: ModelDeliveryInspectionDecision[];
+}
+
+export interface ModelDeliveryPlanIssue {
+  code: string;
+  message: string;
+  modelId?: string;
+  path?: string;
+}
+
+export interface ModelDeliveryModelPlan {
+  modelId: string;
+  role?: string;
+  sourcePath: string;
+  outputPath: string;
+  sourceBytes: number;
+  sourceLastWriteUtc: string;
+  sourceIsWorkshared: boolean;
+  targetIsWorkshared: false;
+  linkCount: number;
+  sheetDeleteCount: number;
+  viewDeleteCount: number;
+  templateDeleteCount: number;
+  filterDeleteCount: number;
+  warningsCount: number;
+}
+
+export interface ModelDeliveryPreviewResult {
+  previewId: string;
+  planHash: string;
+  expiresAt: string;
+  ready: boolean;
+  requiresConfirmation: true;
+  deliveryId: string;
+  packagePath: string;
+  stagingPath: string;
+  models: ModelDeliveryModelPlan[];
+  blockers: ModelDeliveryPlanIssue[];
+  warnings: ModelDeliveryPlanIssue[];
+}
+
+export interface ModelDeliveryExecuteRequest extends ModelDeliveryPreviewRequest {
+  previewId: string;
+  planHash: string;
+  expiresAt: string;
+  confirm: true;
+}
+
+export interface ModelDeliveryModelResult {
+  modelId: string;
+  sourcePath: string;
+  outputPath: string;
+  success: boolean;
+  isWorkshared: boolean;
+  centralModelPath?: string;
+  sourceSha256?: string;
+  outputSha256?: string;
+  warningsCount: number;
+  linksValidated: number;
+  deletedSheets: number;
+  deletedViews: number;
+  deletedTemplates: number;
+  deletedFilters: number;
+  purgedElements: number;
+  linkTransforms: string[];
+  exports: string[];
+  errors: string[];
+}
+
+export type ModelDeliveryJobState =
+  | "queued"
+  | "copying"
+  | "processing"
+  | "validating"
+  | "verifyingsources"
+  | "publishing"
+  | "finalvalidating"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface ModelDeliveryJobResult {
+  jobId: string;
+  previewId: string;
+  planHash: string;
+  deliveryId: string;
+  state: ModelDeliveryJobState | string;
+  phase: ModelDeliveryJobState | string;
+  terminal: boolean;
+  cancellationRequested: boolean;
+  published: boolean;
+  packagePath: string;
+  stagingPath: string;
+  completedUnits: number;
+  totalUnits: number;
+  progressPercent: number;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  manifestPath?: string;
+  auditPath?: string;
+  models: ModelDeliveryModelResult[];
+  errors: ModelDeliveryPlanIssue[];
+}
+
+export type ModelDeliveryExecuteResult = ModelDeliveryJobResult;
+
+export interface ModelDeliveryStatusRequest {
+  jobId: string;
+}
+
+export type ModelDeliveryStatusResult = ModelDeliveryJobResult;
+
+export interface ModelDeliveryCancelRequest {
+  jobId: string;
+  reason?: string;
+}
+
+export type ModelDeliveryCancelResult = ModelDeliveryJobResult;
+
 export interface LevelSummary {
   id: ElementId;
   uniqueId?: UniqueId;

@@ -240,6 +240,9 @@ $brokerRevitCtl = Join-Path $InstallRoot "broker\dist\src\cli\revitctl.js"
 $installedAddinRoot = Join-Path $InstallRoot "addin\$RevitYear"
 $addinDll = Join-Path $installedAddinRoot "RevitMcpNext.Addin.dll"
 $contractsDll = Join-Path $installedAddinRoot "RevitMcpNext.Contracts.dll"
+$manifestRuntimeRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext"
+$manifestAddinDll = Join-Path $manifestRuntimeRoot "RevitMcpNext.Addin.dll"
+$manifestContractsDll = Join-Path $manifestRuntimeRoot "RevitMcpNext.Contracts.dll"
 $addinPdb = Join-Path $installedAddinRoot "RevitMcpNext.Addin.pdb"
 $contractsPdb = Join-Path $installedAddinRoot "RevitMcpNext.Contracts.pdb"
 $pythonClient = Join-Path $InstallRoot "integrations\python\revit_mcp_next_client.py"
@@ -269,6 +272,8 @@ Test-RequiredFile $brokerServer "broker server module" | Out-Null
 Test-RequiredFile $brokerRevitCtl "revitctl entry" | Out-Null
 Test-RequiredFile $addinDll "Revit add-in DLL" | Out-Null
 Test-RequiredFile $contractsDll "Revit contracts DLL" | Out-Null
+Test-RequiredFile $manifestAddinDll "Revit-visible add-in DLL" | Out-Null
+Test-RequiredFile $manifestContractsDll "Revit-visible contracts DLL" | Out-Null
 Test-RequiredFile $pythonClient "Python MCP integration client" | Out-Null
 Test-RequiredFile $pythonInProcessHelper "Python in-process integration helper" | Out-Null
 Test-RequiredFile $pythonHostSmokeHelper "Python host-smoke evidence helper" | Out-Null
@@ -288,10 +293,11 @@ Test-OptionalFile $addinPdb "Revit add-in PDB"
 Test-OptionalFile $contractsPdb "Revit contracts PDB"
 Test-OptionalFile $receipt "install receipt"
 Test-OptionalFile $releaseManifest "release manifest"
-Test-ManifestAssemblyPath $manifest $addinDll
+Test-ManifestAssemblyPath $manifest $manifestAddinDll
 Test-ManifestIdentity $manifest "6F78E70D-BE13-4E0B-9B11-9E28F876AF71"
 Test-AuthenticodeFile $addinDll "Revit add-in DLL"
 Test-AuthenticodeFile $contractsDll "Revit contracts DLL"
+Test-AuthenticodeFile $manifestAddinDll "Revit-visible add-in DLL"
 
 if ($authConfigOk) {
     $authToken = Read-AuthTokenConfig $authConfig

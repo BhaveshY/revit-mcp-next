@@ -18,6 +18,18 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelDeliveryExecuteRequest,
+  ModelDeliveryExecuteResult,
+  ModelDeliveryFixtureRequest,
+  ModelDeliveryFixtureResult,
+  ModelDeliveryInspectRequest,
+  ModelDeliveryInspectResult,
+  ModelDeliveryCancelRequest,
+  ModelDeliveryCancelResult,
+  ModelDeliveryPreviewRequest,
+  ModelDeliveryPreviewResult,
+  ModelDeliveryStatusRequest,
+  ModelDeliveryStatusResult,
   ModelContextRequest,
   ModelContextResult,
   ModelReadinessRequest,
@@ -137,6 +149,48 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     request: BridgeRequest<CreateProjectFromTemplateRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<CreateProjectFromTemplateResult>> {
+    return this.send(request, options);
+  }
+
+  createModelDeliveryFixture(
+    request: BridgeRequest<ModelDeliveryFixtureRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryFixtureResult>> {
+    return this.send(request, options);
+  }
+
+  previewModelDelivery(
+    request: BridgeRequest<ModelDeliveryPreviewRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryPreviewResult>> {
+    return this.send(request, options);
+  }
+
+  inspectModelDelivery(
+    request: BridgeRequest<ModelDeliveryInspectRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryInspectResult>> {
+    return this.send(request, options);
+  }
+
+  executeModelDelivery(
+    request: BridgeRequest<ModelDeliveryExecuteRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryExecuteResult>> {
+    return this.send(request, options);
+  }
+
+  getModelDeliveryStatus(
+    request: BridgeRequest<ModelDeliveryStatusRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryStatusResult>> {
+    return this.send(request, options);
+  }
+
+  cancelModelDelivery(
+    request: BridgeRequest<ModelDeliveryCancelRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryCancelResult>> {
     return this.send(request, options);
   }
 

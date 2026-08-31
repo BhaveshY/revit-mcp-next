@@ -17,6 +17,18 @@ import type {
   LevelSummary,
   MaterialQuantitiesRequest,
   MaterialQuantitiesResult,
+  ModelDeliveryExecuteRequest,
+  ModelDeliveryExecuteResult,
+  ModelDeliveryFixtureRequest,
+  ModelDeliveryFixtureResult,
+  ModelDeliveryInspectRequest,
+  ModelDeliveryInspectResult,
+  ModelDeliveryCancelRequest,
+  ModelDeliveryCancelResult,
+  ModelDeliveryPreviewRequest,
+  ModelDeliveryPreviewResult,
+  ModelDeliveryStatusRequest,
+  ModelDeliveryStatusResult,
   ModelContextRequest,
   ModelContextResult,
   ModelReadinessRequest,
@@ -68,6 +80,30 @@ export interface RevitBridgeClient {
     request: BridgeRequest<CreateProjectFromTemplateRequest>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<CreateProjectFromTemplateResult>>;
+  createModelDeliveryFixture(
+    request: BridgeRequest<ModelDeliveryFixtureRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryFixtureResult>>;
+  previewModelDelivery(
+    request: BridgeRequest<ModelDeliveryPreviewRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryPreviewResult>>;
+  inspectModelDelivery(
+    request: BridgeRequest<ModelDeliveryInspectRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryInspectResult>>;
+  executeModelDelivery(
+    request: BridgeRequest<ModelDeliveryExecuteRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryExecuteResult>>;
+  getModelDeliveryStatus(
+    request: BridgeRequest<ModelDeliveryStatusRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryStatusResult>>;
+  cancelModelDelivery(
+    request: BridgeRequest<ModelDeliveryCancelRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<ModelDeliveryCancelResult>>;
   getLevels(
     request: BridgeRequest<{ documentFingerprint?: string }>,
     options?: BridgeCallOptions

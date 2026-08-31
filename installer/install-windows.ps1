@@ -236,6 +236,23 @@ function Copy-OptionalFile($Source, $Destination) {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+function Copy-FileWithinRoot($Source, $Destination, $AllowedRoot, [switch] $Optional) {
+    if ($Optional -and -not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        return
+    }
+
+    Resolve-RequiredFile $Source "Required Revit-visible payload file was not found." | Out-Null
+    Assert-PathChild $AllowedRoot $Destination "Revit-visible payload target"
+
+    if ($DryRun) {
+        Write-Step "Would copy Revit-visible payload file $Source -> $Destination"
+        return
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
 function New-AuthToken {
     $bytes = New-Object byte[] 32
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -636,8 +653,10 @@ if ($DryRun) {
 }
 
 $addinAssemblyPaths = [ordered] @{}
+$manifestAssemblyPaths = [ordered] @{}
 foreach ($year in $RevitYears) {
     $addinAssemblyPaths["$year"] = (Get-FullPath (Join-Path $installedAddin "$year\RevitMcpNext.Addin.dll"))
+    $manifestAssemblyPaths["$year"] = (Get-FullPath (Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year\RevitMcpNext\RevitMcpNext.Addin.dll"))
 }
 $primaryAddinAssemblyPath = $addinAssemblyPaths["$($RevitYears[0])"]
 
@@ -656,6 +675,7 @@ $clientDiscoveryContent = [ordered] @{
     addinAssemblyPath = $primaryAddinAssemblyPath
     supportedRevitYears = $RevitYears
     addinAssemblyPaths = $addinAssemblyPaths
+    manifestAssemblyPaths = $manifestAssemblyPaths
     integrationsPath = (Get-FullPath $installedIntegrations)
     pythonClientPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_client.py"))
     pythonInProcessHelperPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_inprocess.py"))
@@ -686,7 +706,13 @@ $clientDiscoveryContent = [ordered] @{
         "revit.describe_parameters",
         "revit.preview_change_set",
         "revit.apply_change_set",
-        "revit.cancel_request"
+        "revit.cancel_request",
+        "revit.create_model_delivery_fixture",
+        "revit.inspect_model_delivery",
+        "revit.preview_model_delivery",
+        "revit.execute_model_delivery",
+        "revit.get_model_delivery_status",
+        "revit.cancel_model_delivery"
     )
     catalogKinds = @("elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes", "textNoteTypes", "dimensionTypes", "tagTypes")
     writeOperations = @(
@@ -727,14 +753,21 @@ if ($DryRun) {
 foreach ($year in $RevitYears) {
     $addinDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year"
     $addinPath = Join-Path $addinDir "RevitMcpNext.addin"
-    $assemblyPath = $addinAssemblyPaths["$year"]
+    $runtimeDir = Join-Path $addinDir "RevitMcpNext"
+    $assemblyPath = $manifestAssemblyPaths["$year"]
     $manifestAssemblyPath = Get-ManifestAssemblyPath $addinDir $assemblyPath
     $manifest = (Get-Content -LiteralPath $addinTemplate -Raw).Replace("{{ASSEMBLY_PATH}}", $manifestAssemblyPath)
 
     if ($DryRun) {
+        Write-Step "Would stage Revit-visible add-in payload for Revit $year at $runtimeDir"
         Write-Step "Would install add-in manifest for Revit $year at $addinPath"
     } else {
         New-Item -ItemType Directory -Force -Path $addinDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+        Copy-FileWithinRoot $addinAssemblyPaths["$year"] (Join-Path $runtimeDir "RevitMcpNext.Addin.dll") $addinDir
+        Copy-FileWithinRoot (Join-Path $installedAddin "$year\RevitMcpNext.Contracts.dll") (Join-Path $runtimeDir "RevitMcpNext.Contracts.dll") $addinDir
+        Copy-FileWithinRoot (Join-Path $installedAddin "$year\RevitMcpNext.Addin.pdb") (Join-Path $runtimeDir "RevitMcpNext.Addin.pdb") $addinDir -Optional
+        Copy-FileWithinRoot (Join-Path $installedAddin "$year\RevitMcpNext.Contracts.pdb") (Join-Path $runtimeDir "RevitMcpNext.Contracts.pdb") $addinDir -Optional
         Set-Content -LiteralPath $addinPath -Value $manifest -Encoding UTF8
     }
 }
@@ -782,6 +815,7 @@ $installReceipt = [ordered] @{
         aclRestricted = $authConfigState.aclRestricted
     }
     clientDiscovery = $clientDiscovery
+    manifestAssemblyPaths = $manifestAssemblyPaths
 }
 
 $receiptPath = Join-Path $InstallRoot "install-receipt.json"

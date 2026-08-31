@@ -27,9 +27,7 @@ namespace RevitMcpNext.Addin.Ipc
         private readonly RevitRequestQueue _requestQueue;
         private readonly RequestOutcomeLedger _requestOutcomes;
         private readonly PipeAuthOptions _authOptions;
-#if NETFRAMEWORK
         private readonly PipeSecurity _pipeSecurity;
-#endif
         private readonly Func<NamedPipeServerStream> _serverFactory;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private readonly object _lifecycleGate = new object();
@@ -67,9 +65,7 @@ namespace RevitMcpNext.Addin.Ipc
             _requestOutcomes = requestOutcomes ?? new RequestOutcomeLedger();
             _requestQueue.RequestStarted += HandleRequestStarted;
             _authOptions = authOptions ?? PipeAuthOptions.FromEnvironment();
-#if NETFRAMEWORK
             _pipeSecurity = PipeSecurityFactory.CreateCurrentUserOnly();
-#endif
             _serverFactory = serverFactory;
         }
 
@@ -859,14 +855,15 @@ namespace RevitMcpNext.Addin.Ipc
                 DefaultPipeBufferSize,
                 _pipeSecurity);
 #else
-            return new NamedPipeServerStream(
+            return NamedPipeServerStreamAcl.Create(
                 pipeName,
                 PipeDirection.InOut,
                 maxInstances,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                PipeOptions.Asynchronous,
                 DefaultPipeBufferSize,
-                DefaultPipeBufferSize);
+                DefaultPipeBufferSize,
+                _pipeSecurity);
 #endif
         }
 
