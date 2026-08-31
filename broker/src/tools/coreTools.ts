@@ -5,12 +5,14 @@ import type { RevitBridgeClient } from "../ipc/RevitBridgeClient.js";
 import { makeRequest } from "../ipc/RequestFactory.js";
 import { applyDecodedPageCursor, decodePageCursor, encodePageCursorResponse } from "./pageCursor.js";
 import { asToolResult } from "./toolResult.js";
+import type { ModelDeliveryRecipeStore } from "../recipes/ModelDeliveryRecipeStore.js";
 
 interface CoreToolContext {
   bridge: RevitBridgeClient;
   brokerVersion: string;
   sessionId: string;
   bridgeProtocolVersion: BridgeProtocolVersion;
+  recipeStore: ModelDeliveryRecipeStore;
 }
 
 const boundedString = z.string().min(1).max(128);
@@ -400,7 +402,18 @@ const modelDeliveryRecipeSchema = z
   .strict();
 const modelDeliveryInspectSchema = {
   sourcePaths: z.array(revitProjectPath).min(1).max(64),
+  projectId: boundedString.optional().describe("Stable project ID used to load the latest saved recipe automatically."),
   previousRecipe: modelDeliveryRecipeSchema.optional().describe("Saved project recipe from a previous delivery. Omit on first use."),
+};
+const modelDeliverySaveRecipeSchema = {
+  recipe: modelDeliveryRecipeSchema,
+  expectedRecipeSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional().describe("Optional optimistic-concurrency guard from get/list."),
+};
+const modelDeliveryGetRecipeSchema = {
+  projectId: boundedString,
+};
+const modelDeliveryListRecipesSchema = {
+  limit: z.number().int().min(1).max(500).default(100),
 };
 const modelDeliveryPreviewSchema = {
   recipe: modelDeliveryRecipeSchema,
@@ -1885,6 +1898,17 @@ const outputSchemas = {
   createModelDeliveryFixture: toolOutputSchema(createModelDeliveryFixtureResultSchema),
   previewModelDelivery: toolOutputSchema(modelDeliveryPreviewResultSchema),
   inspectModelDelivery: toolOutputSchema(modelDeliveryInspectResultSchema),
+  saveModelDeliveryRecipe: toolOutputSchema(z.object({
+    schemaVersion: z.number(), projectId: z.string(), recipeVersion: z.string(), recipeSha256: z.string(), savedAtUtc: z.string(), changed: z.boolean(), recipe: modelDeliveryRecipeSchema,
+  }).strict()),
+  getModelDeliveryRecipe: toolOutputSchema(z.object({
+    found: z.boolean(), schemaVersion: z.number().optional(), projectId: z.string(), recipeVersion: z.string().optional(), recipeSha256: z.string().optional(), savedAtUtc: z.string().optional(), recipe: modelDeliveryRecipeSchema.optional(),
+  }).strict()),
+  listModelDeliveryRecipes: toolOutputSchema(z.object({
+    returnedCount: z.number(), totalCount: z.number(), truncated: z.boolean(), recipes: z.array(z.object({
+      projectId: z.string(), recipeVersion: z.string(), recipeSha256: z.string(), savedAtUtc: z.string(), sourceModelCount: z.number(), packageName: z.string(), destinationRoot: z.string(),
+    }).strict()),
+  }).strict()),
   executeModelDelivery: toolOutputSchema(modelDeliveryExecuteResultSchema),
   modelDeliveryStatus: toolOutputSchema(modelDeliveryExecuteResultSchema),
   cancelModelDelivery: toolOutputSchema(modelDeliveryExecuteResultSchema),
@@ -2385,7 +2409,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Inspect Revit Model Delivery",
       description:
-        "Inspect local/mapped/UNC source RVTs for first-time recipe setup or compare them with a saved recipe. Returns compact facts, detected changes, and only the decisions Codex still needs from the architect.",
+        "Inspect local/mapped/UNC source RVTs for first-time recipe setup or compare them with a saved recipe. Pass projectId to load its latest saved recipe automatically. Returns compact facts, detected changes, and only the decisions Codex still needs from the architect.",
       inputSchema: modelDeliveryInspectSchema,
       outputSchema: outputSchemas.inspectModelDelivery,
       annotations: {
@@ -2396,13 +2420,80 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       },
     },
     async (args, ctx) => {
-      const request = makeRequest(context.sessionId, "inspect_model_delivery", "read", args, 300000);
+      const stored = args.previousRecipe === undefined && args.projectId
+        ? await context.recipeStore.get(args.projectId)
+        : undefined;
+      const payload = {
+        sourcePaths: args.sourcePaths,
+        previousRecipe: args.previousRecipe ?? stored?.recipe,
+      };
+      const request = makeRequest(context.sessionId, "inspect_model_delivery", "read", payload, 300000);
       const response = await context.bridge.inspectModelDelivery(request, { signal: ctx.mcpReq.signal });
       return asToolResult(
         response,
         (result) =>
           `${result.mode === "firstTime" ? "First-time" : "Repeat"} delivery inspection: ${result.models.length} model(s), ` +
           `${result.detectedChanges.length} detected change(s), ${result.missingDecisions.length} decision group(s) needed.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.save_model_delivery_recipe",
+    {
+      title: "Save Model Delivery Recipe",
+      description: "Persist an approved project delivery recipe in the local broker library. Identical retries are no-ops; use expectedRecipeSha256 to prevent overwriting a newer team decision.",
+      inputSchema: modelDeliverySaveRecipeSchema,
+      outputSchema: outputSchemas.saveModelDeliveryRecipe,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      const startedAt = Date.now();
+      const saved = await context.recipeStore.save(args.recipe, args.expectedRecipeSha256);
+      return asToolResult(
+        { ok: true, requestId: `recipe-save-${saved.recipeSha256}`, data: saved, warnings: [], metrics: { elapsedMs: Date.now() - startedAt } },
+        (result) => `${result.changed ? "Saved" : "Recipe already current for"} project ${result.projectId} (${result.recipeSha256}).`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_model_delivery_recipe",
+    {
+      title: "Get Model Delivery Recipe",
+      description: "Return the latest integrity-checked delivery recipe saved for a project ID, without requiring Revit to be open.",
+      inputSchema: modelDeliveryGetRecipeSchema,
+      outputSchema: outputSchemas.getModelDeliveryRecipe,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      const startedAt = Date.now();
+      const stored = await context.recipeStore.get(args.projectId);
+      const data = stored ? { found: true, ...stored } : { found: false, projectId: args.projectId };
+      return asToolResult(
+        { ok: true, requestId: `recipe-get-${Date.now()}`, data, warnings: [], metrics: { elapsedMs: Date.now() - startedAt } },
+        (result) => result.found ? `Loaded the latest recipe for project ${result.projectId}.` : `No saved recipe exists for project ${result.projectId}.`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.list_model_delivery_recipes",
+    {
+      title: "List Model Delivery Recipes",
+      description: "List the latest saved project delivery recipes and their integrity hashes, without returning the full recipe bodies.",
+      inputSchema: modelDeliveryListRecipesSchema,
+      outputSchema: outputSchemas.listModelDeliveryRecipes,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      const startedAt = Date.now();
+      const allRecipes = await context.recipeStore.list();
+      const recipes = allRecipes.slice(0, args.limit);
+      const data = { returnedCount: recipes.length, totalCount: allRecipes.length, truncated: recipes.length < allRecipes.length, recipes };
+      return asToolResult(
+        { ok: true, requestId: `recipe-list-${Date.now()}`, data, warnings: [], metrics: { elapsedMs: Date.now() - startedAt } },
+        (result) => `${result.returnedCount} saved project recipe(s).`
       );
     }
   );

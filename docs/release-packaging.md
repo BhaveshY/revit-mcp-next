@@ -130,7 +130,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\install-windows.ps
 When the installer is run from a package, it auto-detects the sibling `payload` directory, verifies `CHECKSUMS.sha256`, installs from packaged files, and uses packaged `node_modules` without running npm on the target machine. To install from another package directory:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File installer\install-windows.ps1 -PackageRoot C:\path\to\revit-mcp-next-0.1.0-windows
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\install-windows.ps1 -PackageRoot C:\path\to\revit-mcp-next-0.2.0-windows
 ```
 
 Useful installer switches:

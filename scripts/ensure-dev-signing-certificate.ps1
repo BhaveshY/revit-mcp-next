@@ -252,6 +252,10 @@ function Add-CertificateToRootWithCertUtil($Certificate) {
             throw "Timed out adding the dev signing certificate to CurrentUser Root. $approvalMessage"
         }
 
+        # Windows PowerShell can retain a stale/null ExitCode after the timed WaitForExit overload.
+        # Refresh before evaluating it so a successful certutil run is not reported as a failure.
+        $process.Refresh()
+
         if ($process.ExitCode -ne 0) {
             $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
             throw "certutil failed adding the dev signing certificate to CurrentUser Root with exit code $($process.ExitCode). $stderr"

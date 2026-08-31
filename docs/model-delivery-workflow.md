@@ -9,12 +9,14 @@ The same typed contract and C# implementation must build for Revit 2024 and Revi
 ## User continuity
 
 1. The architect opens Revit with Revit MCP Next loaded.
-2. In Codex, the architect requests a delivery and supplies or selects a project recipe.
-3. `revit.preview_model_delivery` reads the source files and returns one complete plan: source-to-output names, worksharing state, link actions, cleanup counts, exports, warnings, and blockers.
-4. Codex asks only about blockers or ambiguous project-specific mappings.
-5. The architect approves the exact preview once.
-6. `revit.execute_model_delivery` executes that single-use plan and returns a per-model audit plus package manifest.
-7. Codex reports success, failure, and the final output paths. No Revit button is required.
+2. In Codex, the architect requests a delivery and gives the project ID plus the current source RVT paths.
+3. `revit.inspect_model_delivery` automatically loads the latest saved recipe for that project. On first use, no recipe exists and Codex asks only for the missing project-specific decisions. On repeat use, it reports only detected changes and exceptions.
+4. `revit.preview_model_delivery` reads the source files and returns one complete plan: source-to-output names, worksharing state, link actions, cleanup counts, exports, warnings, and blockers.
+5. Codex asks only about blockers or ambiguous project-specific mappings.
+6. The architect approves the exact preview once.
+7. `revit.execute_model_delivery` executes that single-use plan and returns a per-model audit plus package manifest.
+8. After a successful delivery, Codex saves the approved recipe with `revit.save_model_delivery_recipe`; unchanged retries are no-ops.
+9. Codex reports success, failure, and the final output paths. No Revit button is required.
 
 ## Non-negotiable invariants
 
@@ -45,6 +47,16 @@ The recipe is project-specific and supports any number of differently named mode
 - Acceptance thresholds for expected cleanup counts, required links, allowed warnings, and required output files.
 
 The connector does not infer destructive rules. Preview blocks until every destructive rule and ambiguous link mapping is explicit.
+
+### Persistent recipe library
+
+- Recipes are broker metadata and are usable even when Revit is closed.
+- The default store is `%LOCALAPPDATA%\RevitMcpNext\recipes`; deployments can override it with `REVIT_MCP_NEXT_RECIPE_STORE`.
+- Entries are immutable, content-addressed JSON files with a canonical SHA-256 integrity hash. Repeating the same save does not create a new active version.
+- `revit.get_model_delivery_recipe` returns the latest full recipe for an exact project ID. `revit.list_model_delivery_recipes` returns compact summaries when the ID is not known.
+- Recipe updates can include `expectedRecipeSha256`. The broker rejects the update if another process saved a newer recipe, preventing stale office decisions from being silently replaced.
+- `revit.inspect_model_delivery` accepts `projectId`; when `previousRecipe` is omitted, the broker automatically loads the latest saved recipe.
+- A recipe is saved only after a successful delivery or explicit approval of a recipe change. Failed or cancelled runs do not become the office default.
 
 ## Execution algorithm
 
@@ -85,12 +97,14 @@ The implementation should add only tests that prove the delivery contract:
 
 1. Broker/schema contract: arbitrary model count, strict paths/names, preview/apply metadata, and no hidden defaults for destructive cleanup.
 2. Deterministic delivery simulator: project-specific names, central and standalone inputs, link remapping, duplicate/ambiguous links, stale preview, failed QA, retry after partial staging, and successful publish.
-3. Add-in build for both 2024 and 2027.
-4. Live disposable Revit scenario per available installed year: at least two differently named models, one link, standalone output assertion, reopen validation, and no source modification.
+3. Recipe-store contract: idempotent save, integrity check, latest-version lookup, inventory, automatic inspection load, and stale-write rejection.
+4. Add-in build for both 2024 and 2027.
+5. Live disposable Revit scenario per available installed year: at least two differently named models, one link, standalone output assertion, reopen validation, and no source modification.
 
 ## Definition of done
 
 - Codex can call preview and execute tools without a Revit button.
+- First-time decisions can be saved and automatically reused by project ID on later deliveries.
 - The workflow supports arbitrary project-specific source names and counts.
 - No delivered RVT is workshared or connected to a source central model.
 - Links resolve inside the delivered package according to the approved map.

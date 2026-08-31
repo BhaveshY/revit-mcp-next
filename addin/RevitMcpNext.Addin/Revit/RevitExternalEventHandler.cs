@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed class RevitExternalEventHandler : IExternalEventHandler
     {
-        private const string AddinVersion = "0.1.0";
+        private const string AddinVersion = "0.2.0";
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxExternalEventElapsedMs = 100;
         private const int MaxQueryLimit = 500;

@@ -330,7 +330,9 @@ function Assert-NoRawTokenInEvidence($EvidenceRoot, $Token) {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
-    $OutputRoot = Join-Path $repoRoot "artifacts\release-evidence-contract"
+    # Evidence fixtures create several deliberately deep tamper-test trees. Keep
+    # the default short enough for Windows tools that still enforce MAX_PATH.
+    $OutputRoot = Join-Path $env:TEMP "rmn-evidence-contract"
 }
 
 $outputRootFull = Get-FullPath $OutputRoot
@@ -957,7 +959,17 @@ try {
     $env:LOCALAPPDATA = $oldLocalAppData
 
     if (-not $KeepArtifacts -and (Test-Path -LiteralPath $runRoot -PathType Container)) {
-        Remove-Item -LiteralPath $runRoot -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction Stop
+        } catch {
+            # npm may still be releasing cache files while Windows enumerates the tree.
+            # Cleanup is best-effort after the evidence assertions have passed.
+            Start-Sleep -Milliseconds 250
+            Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $runRoot -PathType Container) {
+                Write-Warning "Release evidence contract passed, but temporary artifacts could not be fully removed: $runRoot"
+            }
+        }
     } elseif ($KeepArtifacts) {
         Write-Step "Kept artifacts: $runRoot"
     }

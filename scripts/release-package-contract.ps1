@@ -1079,6 +1079,8 @@ Assert-PathChild $outputRootFull $runRoot "release contract run root"
 
 $oldAppData = $env:APPDATA
 $oldLocalAppData = $env:LOCALAPPDATA
+$oldCodexHome = $env:CODEX_HOME
+$oldUserProfile = $env:USERPROFILE
 
 try {
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
@@ -1089,7 +1091,9 @@ try {
     $supportRoot = Join-Path $runRoot "sup"
     $env:APPDATA = Join-Path $runRoot "ad"
     $env:LOCALAPPDATA = Join-Path $runRoot "lad"
-    New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA | Out-Null
+    $env:CODEX_HOME = Join-Path $runRoot "codex"
+    $env:USERPROFILE = Join-Path $runRoot "user"
+    New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:CODEX_HOME, $env:USERPROFILE | Out-Null
 
     Write-Step "Run root: $runRoot"
     New-SyntheticAddinOutput $syntheticAddinRoot
@@ -1320,6 +1324,8 @@ try {
 } finally {
     $env:APPDATA = $oldAppData
     $env:LOCALAPPDATA = $oldLocalAppData
+    $env:CODEX_HOME = $oldCodexHome
+    $env:USERPROFILE = $oldUserProfile
 
     if (-not $KeepArtifacts -and (Test-Path -LiteralPath $runRoot -PathType Container)) {
         try {

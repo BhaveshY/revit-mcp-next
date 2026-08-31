@@ -3,7 +3,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createBrokerServer } from "./server.js";
 import { NamedPipeBridgeClient } from "./ipc/NamedPipeBridgeClient.js";
 
-const brokerVersion = process.env.REVIT_MCP_NEXT_VERSION ?? "0.1.0";
+const brokerVersion = process.env.REVIT_MCP_NEXT_VERSION ?? "0.2.0";
 const pipeName = process.env.REVIT_MCP_NEXT_PIPE ?? "revit-mcp-next";
 const sessionId = process.env.REVIT_MCP_NEXT_SESSION ?? `broker-${process.pid}`;
 

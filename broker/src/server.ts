@@ -3,11 +3,13 @@ import { BRIDGE_PROTOCOL_VERSION } from "@revit-mcp-next/contracts";
 import type { RevitBridgeClient } from "./ipc/RevitBridgeClient.js";
 import { registerCoreTools } from "./tools/coreTools.js";
 import { registerDiscovery } from "./tools/discovery.js";
+import { ModelDeliveryRecipeStore } from "./recipes/ModelDeliveryRecipeStore.js";
 
 export interface BrokerServerOptions {
   bridge: RevitBridgeClient;
   brokerVersion: string;
   sessionId: string;
+  recipeStore?: ModelDeliveryRecipeStore;
 }
 
 export const BROKER_MCP_PROTOCOL_VERSIONS = [
@@ -41,6 +43,7 @@ export function createBrokerServer(options: BrokerServerOptions): McpServer {
   registerCoreTools(server, {
     ...options,
     bridgeProtocolVersion: BRIDGE_PROTOCOL_VERSION,
+    recipeStore: options.recipeStore ?? new ModelDeliveryRecipeStore(),
   });
   registerDiscovery(server, {
     brokerVersion: options.brokerVersion,

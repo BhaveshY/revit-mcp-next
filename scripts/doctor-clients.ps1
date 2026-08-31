@@ -618,8 +618,7 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
         $codexCandidates = New-Object System.Collections.Generic.List[string]
         if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
             $codexCandidates.Add((Join-Path $env:CODEX_HOME "config.toml")) | Out-Null
-        }
-        if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        } elseif (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
             $codexCandidates.Add((Join-Path $env:USERPROFILE ".codex\config.toml")) | Out-Null
         }
         if ($codexCandidates.Count -eq 0) {
