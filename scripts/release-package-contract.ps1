@@ -1249,7 +1249,7 @@ try {
     if ([string]::IsNullOrWhiteSpace([string] $clientDiscovery.revitctlPath) -or -not (Test-Path -LiteralPath ([string] $clientDiscovery.revitctlPath) -PathType Leaf)) {
         throw "Client discovery did not record an installed revitctl launcher path."
     }
-    foreach ($expectedTool in @("revit.bridge_health", "revit.get_request_result", "revit.read_bundle", "revit.get_views", "revit.get_sheets", "revit.get_schedules", "revit.get_schedule_fields", "revit.create_project_from_template", "revit.describe_parameters", "revit.get_model_readiness", "revit.get_model_context", "revit.get_warnings", "revit.catalog", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request")) {
+    foreach ($expectedTool in @("revit.bridge_health", "revit.get_request_result", "revit.read_bundle", "revit.get_views", "revit.get_sheets", "revit.get_schedules", "revit.get_schedule_fields", "revit.create_project_from_template", "revit.describe_parameters", "revit.get_model_readiness", "revit.get_model_context", "revit.get_warnings", "revit.catalog", "revit.inspect_model_delivery", "revit.save_model_delivery_recipe", "revit.get_model_delivery_recipe", "revit.list_model_delivery_recipes", "revit.preview_change_set", "revit.apply_change_set", "revit.cancel_request")) {
         if (@($clientDiscovery.tools) -notcontains $expectedTool) {
             throw "Client discovery did not advertise expected tool: $expectedTool"
         }
