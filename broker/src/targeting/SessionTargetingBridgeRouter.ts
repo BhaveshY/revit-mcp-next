@@ -34,9 +34,13 @@ const DOCUMENT_SCOPED_OPERATIONS = new Set([
   "catalog",
   "query",
   "describe_parameters",
+  "inspect_model_delivery",
+  "preview_model_delivery",
+  "execute_model_delivery",
   "preview_change_set",
   "apply_change_set",
 ]);
+const DOCUMENT_GENERATION_ADVANCING_OPERATIONS = new Set(["apply_change_set"]);
 
 type DocumentTargetSummary = RevitDocumentSummary & {
   instanceId: string;
@@ -49,6 +53,7 @@ type BridgeMethod = Exclude<keyof RevitBridgeClient, "dispose">;
 
 export class SessionTargetingBridgeRouter {
   readonly bridge: RevitBridgeClient;
+  private readonly deliveryJobTargets = new Map<string, RevitTarget>();
 
   constructor(
     private readonly directory: RevitInstanceDirectory,
@@ -152,11 +157,31 @@ export class SessionTargetingBridgeRouter {
         return (await this.listDocuments(request, options)) as BridgeResponse<T>;
       }
 
+      if (request.operation === "get_model_delivery_status" || request.operation === "cancel_model_delivery") {
+        const jobId = recordString(request.payload, "jobId");
+        const jobTarget = jobId ? this.deliveryJobTargets.get(jobId) : undefined;
+        if (jobTarget) {
+          const connection = await this.connectionFor(jobTarget.instanceId);
+          const response = await invokeBridge<T>(connection, methodName, { ...request, instanceId: jobTarget.instanceId }, options);
+          return this.attachTarget(response, jobTarget, false, false);
+        }
+      }
+
       if (DOCUMENT_SCOPED_OPERATIONS.has(request.operation)) {
         const resolved = await this.resolveOperationTarget(request, options);
         const prepared = prepareTargetedRequest(request, resolved.target);
         const response = await invokeBridge<T>(resolved.connection, methodName, prepared, options);
-        return this.attachTarget(response, resolved.target, resolved.usesSessionTarget);
+        if (response.ok && request.operation === "execute_model_delivery" && isRecord(response.data)) {
+          const jobId = recordString(response.data, "jobId");
+          if (jobId) this.deliveryJobTargets.set(jobId, resolved.target);
+        }
+        const mutationMayAdvanceGeneration = DOCUMENT_GENERATION_ADVANCING_OPERATIONS.has(request.operation);
+        return this.attachTarget(
+          response,
+          resolved.target,
+          resolved.usesSessionTarget && mutationMayAdvanceGeneration,
+          mutationMayAdvanceGeneration
+        );
       }
 
       const selected = this.targets.get();
@@ -173,11 +198,17 @@ export class SessionTargetingBridgeRouter {
 
       const connection = await this.resolveInstance(request, options);
       const response = await invokeBridge<T>(connection, methodName, { ...request, instanceId: connection.metadata.instanceId }, options);
+      if (request.operation === "create_project_from_template" && response.ok) {
+        const createdTarget = targetFromCreatedProject(response.data, connection);
+        const selected = this.targets.set(createdTarget);
+        return { ...response, target: selected, generation: selected.generation };
+      }
       return selected?.instanceId === connection.metadata.instanceId
         ? this.attachTarget(response, selected, false, false)
         : response;
     } catch (error) {
-      return routingFailure<T>(request.requestId, error, this.targets.get());
+      const errorTarget = error instanceof RoutingError ? error.target : undefined;
+      return routingFailure<T>(request.requestId, error, errorTarget ?? this.targets.get());
     }
   }
 
@@ -247,7 +278,21 @@ export class SessionTargetingBridgeRouter {
 
     const selected = this.targets.get();
     if (selected) {
-      return { connection: await this.connectionFor(selected.instanceId), target: selected, usesSessionTarget: true };
+      const current = await this.resolveExplicitTarget(
+        { instanceId: selected.instanceId, documentFingerprint: selected.documentFingerprint },
+        options
+      );
+      if (current.generation !== selected.generation) {
+        throw new RoutingError(
+          "TARGET_GENERATION_CHANGED",
+          `The selected document generation changed from ${selected.generation} to ${current.generation}. Call revit.list_documents and revit.set_target before continuing.`
+        );
+      }
+      return {
+        connection: await this.connectionFor(current.instanceId),
+        target: { ...current, selectionMode: selected.selectionMode },
+        usesSessionTarget: true,
+      };
     }
 
     const openDocuments = await this.listDocumentTargets(options);
@@ -297,7 +342,9 @@ export class SessionTargetingBridgeRouter {
     if (input.generation !== undefined && input.generation !== target.generation) {
       throw new RoutingError(
         "GENERATION_MISMATCH",
-        `The target document generation is ${target.generation}, but ${input.generation} was requested.`
+        `The target document generation is ${target.generation}, but ${input.generation} was requested.`,
+        undefined,
+        target
       );
     }
     return target;
@@ -379,7 +426,12 @@ export class SessionTargetingBridgeRouter {
 }
 
 class RoutingError extends Error {
-  constructor(readonly code: string, message: string, readonly suggestedNextAction?: string) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly suggestedNextAction?: string,
+    readonly target?: RevitTarget
+  ) {
     super(message);
   }
 }
@@ -407,11 +459,7 @@ function prepareTargetedRequest<TPayload>(request: BridgeRequest<TPayload>, targ
     const targetedPayload = payload as Record<string, unknown>;
     targetedPayload.instanceId = target.instanceId;
     targetedPayload.documentFingerprint = target.documentFingerprint;
-    if (
-      (request.operationKind === "preview" || request.operationKind === "write" || request.operationKind === "destructive") &&
-      targetedPayload.expectedGeneration === undefined &&
-      targetedPayload.baseGeneration === undefined
-    ) {
+    if (targetedPayload.expectedGeneration === undefined && targetedPayload.baseGeneration === undefined) {
       targetedPayload.expectedGeneration = target.generation;
     }
   }
@@ -420,11 +468,7 @@ function prepareTargetedRequest<TPayload>(request: BridgeRequest<TPayload>, targ
     ...request,
     instanceId: target.instanceId,
     documentFingerprint: target.documentFingerprint,
-    expectedGeneration:
-      request.expectedGeneration ??
-      (request.operationKind === "preview" || request.operationKind === "write" || request.operationKind === "destructive"
-        ? target.generation
-        : undefined),
+    expectedGeneration: request.expectedGeneration ?? target.generation,
     payload,
   };
 }
@@ -451,10 +495,70 @@ function toTarget(document: DocumentTargetSummary, selectionMode: RevitTarget["s
     documentFingerprint: document.fingerprint,
     documentTitle: document.title,
     documentPath: document.path,
+    isWorkshared: document.isWorkshared,
+    centralModelPath: document.centralModelPath,
     generation: document.generation,
     isUiActive: document.isActive,
     selectionMode,
   };
+}
+
+function targetFromCreatedProject(data: unknown, connection: RevitInstanceConnection): RevitTarget {
+  if (!isRecord(data) || data.activated !== true || !isRecord(data.document) || !isRecord(data.activationConfirmation)) {
+    throw new RoutingError(
+      "TARGET_ACTIVATION_UNCONFIRMED",
+      "Revit created a project but did not return a valid activation confirmation. No session target was changed. Call revit.list_documents and select the exact instance and documentFingerprint."
+    );
+  }
+
+  const document = data.document;
+  const confirmation = data.activationConfirmation;
+  const fingerprint = recordString(document, "fingerprint");
+  const path = recordString(document, "path");
+  const generation = recordInteger(document, "generation");
+  const confirmedFingerprint = recordString(confirmation, "documentFingerprint");
+  const confirmedPath = recordString(confirmation, "documentPath");
+  const centralModelPath = recordString(document, "centralModelPath");
+  const confirmedCentralModelPath = recordString(confirmation, "centralModelPath");
+  const confirmedInstance = recordString(confirmation, "instanceId");
+  const confirmedGeneration = recordInteger(confirmation, "generation");
+  if (
+    confirmation.confirmed !== true ||
+    confirmation.uiActive !== true ||
+    document.isActive !== true ||
+    !fingerprint ||
+    generation === undefined ||
+    !path ||
+    fingerprint !== confirmedFingerprint ||
+    normalizeWindowsPath(path) !== normalizeWindowsPath(confirmedPath) ||
+    normalizeWindowsPath(centralModelPath) !== normalizeWindowsPath(confirmedCentralModelPath) ||
+    generation !== confirmedGeneration ||
+    confirmedInstance !== connection.metadata.instanceId
+  ) {
+    throw new RoutingError(
+      "TARGET_ACTIVATION_UNCONFIRMED",
+      "The created project identity did not match Revit's active UI document. No session target was changed. Call revit.list_documents and select the exact instance and documentFingerprint."
+    );
+  }
+
+  return {
+    instanceId: connection.metadata.instanceId,
+    processId: connection.metadata.processId,
+    revitVersion: connection.metadata.revitVersion,
+    documentFingerprint: fingerprint,
+    documentTitle: recordString(document, "title") ?? fingerprint,
+    documentPath: path,
+    isWorkshared: document.isWorkshared === true,
+    centralModelPath,
+    generation,
+    isUiActive: true,
+    selectionMode: "explicit",
+  };
+}
+
+function normalizeWindowsPath(value: string | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  return value.trim().replaceAll("/", "\\").replace(/\\+$/, "").toLocaleLowerCase("en-US");
 }
 
 function publicInstanceMetadata(connection: RevitInstanceConnection): Omit<RevitInstanceSummary, "connected" | "documents"> {

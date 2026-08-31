@@ -76,7 +76,9 @@ function appendTargetIdentity(text: string, target: RevitTarget | undefined): st
   if (!target) return text;
   const version = target.revitVersion ? `Revit ${target.revitVersion}` : "Revit";
   const process = target.processId ? ` process ${target.processId}` : "";
-  return `${text} Target: ${version}${process}, instance ${target.instanceId}, document "${target.documentTitle}" (${target.documentFingerprint}), generation ${target.generation}.`;
+  const path = target.documentPath ? `, path ${target.documentPath}` : "";
+  const central = target.centralModelPath ? `, central ${target.centralModelPath}` : "";
+  return `${text} Target: ${version}${process}, instance ${target.instanceId}, document "${target.documentTitle}" (${target.documentFingerprint}), generation ${target.generation}${path}${central}.`;
 }
 
 function isRecord(value: unknown): value is ToolDataShape {

@@ -631,6 +631,16 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(rooms.structuredContent?.data?.items?.[0]?.number, "101");
     assert.equal(rooms.structuredContent?.data?.items?.[0]?.name, "Conference");
 
+    const restoredSampleTarget = (await client.callTool({
+      name: "revit.set_target",
+      arguments: {
+        instanceId: "legacy-default",
+        documentFingerprint: "sample-doc-fingerprint",
+        generation: 7,
+      },
+    })) as { isError?: boolean };
+    assert.equal(restoredSampleTarget.isError, undefined);
+
     const queryTool = tools.tools.find((tool) => tool.name === "revit.query");
     assert.ok(queryTool?.inputSchema, "revit.query should declare inputSchema");
     const querySchema = JSON.stringify(queryTool.inputSchema);
@@ -673,12 +683,13 @@ test("broker exposes annotated tools with output schemas and callable structured
     const staleQuery = (await client.callTool({
       name: "revit.query",
       arguments: {
+        documentFingerprint: "sample-doc-fingerprint",
         expectedGeneration: 6,
         filter: { elementIds: ["501"] },
       },
     })) as { isError?: boolean; content?: Array<{ type: "text"; text: string }> };
     assert.equal(staleQuery.isError, true);
-    assert.match(staleQuery.content?.[0]?.text ?? "", /generation is 7.*expected 6/i);
+    assert.match(staleQuery.content?.[0]?.text ?? "", /generation is 7.*6 was requested/i);
 
     const geometryQuery = (await client.callTool({
       name: "revit.query",

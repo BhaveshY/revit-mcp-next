@@ -1110,14 +1110,15 @@ try {
         "-RevitYears", "2025"
     ) "*Revit 2025 packaging is not supported yet*" "Unsupported Revit year package gate"
 
+    $contractVersion = "0.2.0-rc.999"
     Invoke-RepoScript $packageScript @(
         "-OutputRoot", $packageOutputRoot,
         "-AddinOutputRoot", $syntheticAddinRoot,
+        "-Version", $contractVersion,
         "-RevitYears", "2024,2027"
     )
 
-    $rootPackage = Read-JsonFile (Join-Path $repoRoot "package.json")
-    $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$($rootPackage.version)-windows"
+    $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$contractVersion-windows"
     Assert-DirectoryExists $packageRoot "staged package"
     Assert-FileExists "$packageRoot.zip" "package zip"
     Assert-FileExists (Join-Path $packageRoot "release-manifest.json") "release manifest"
@@ -1125,6 +1126,10 @@ try {
     Assert-FileExists (Join-Path $packageRoot "SHARING-NOTICE.md") "package sharing notice"
     Assert-FileExists (Join-Path $packageRoot "LICENSE") "packaged license"
     Assert-FileExists (Join-Path $packageRoot "SECURITY.md") "packaged security policy"
+    Assert-FileExists (Join-Path $packageRoot "installer\pilot-install.ps1") "packaged pilot installer"
+    Assert-FileExists (Join-Path $packageRoot "installer\uninstall-windows.ps1") "packaged uninstaller"
+    Assert-FileExists (Join-Path $packageRoot "scripts\package-pilot-rc.ps1") "packaged pilot RC packager"
+    Assert-FileExists (Join-Path $packageRoot "docs\controlled-pilot-runbook.md") "packaged architect pilot runbook"
     Assert-FileExists (Join-Path $packageRoot "payload\addin\2024\RevitMcpNext.Addin.dll") "packaged Revit 2024 add-in"
     Assert-FileExists (Join-Path $packageRoot "payload\addin\2027\RevitMcpNext.Addin.dll") "packaged Revit 2027 add-in"
     $packagedRevitCtl = Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js"
@@ -1164,6 +1169,17 @@ try {
     Assert-FileExists (Join-Path $packageRoot "integrations\dynamo\revit_mcp_next_host_smoke.dyn") "packaged Dynamo host-smoke graph"
 
     $installerScript = Join-Path $packageRoot "installer\install-windows.ps1"
+    Invoke-RepoScript (Join-Path $packageRoot "installer\pilot-install.ps1") @(
+        "-Action", "ValidatePackage",
+        "-PackageRoot", $packageRoot,
+        "-RevitYears", "2024,2027"
+    )
+    Assert-ScriptFailsLike $installerScript @(
+        "-PackageRoot", $packageRoot,
+        "-InstallRoot", (Join-Path $runRoot "signed-policy-rejection"),
+        "-RevitYears", "2024",
+        "-RequireSignedPackage"
+    ) "*explicitly unsigned*" "Unsigned pilot rejected by production signing policy"
     Assert-ScriptFailsLike $installerScript @(
         "-PackageRoot", $packageRoot,
         "-InstallRoot", (Join-Path $runRoot "unsupported-year-install"),
@@ -1183,6 +1199,10 @@ try {
     Assert-FileExists (Join-Path $installRoot "addin\2024\RevitMcpNext.Addin.dll") "installed Revit 2024 add-in"
     Assert-FileExists (Join-Path $install2027Root "addin\2027\RevitMcpNext.Addin.dll") "installed Revit 2027 add-in"
     $clientDiscovery2027 = Read-JsonFile (Join-Path $install2027Root "config\client-discovery.json")
+    $installReceipt = Read-JsonFile (Join-Path $installRoot "install-receipt.json")
+    if ([string] $installReceipt.product -ne "revit-mcp-next" -or $installReceipt.checksumVerification -ne $true -or [string] $installReceipt.signatureVerification -ne "not-requested") {
+        throw "Pilot install receipt did not record product identity, checksum verification, and unsigned signature policy."
+    }
     if (-not $clientDiscovery2027.addinAssemblyPaths.PSObject.Properties["2027"]) {
         throw "Client discovery did not record the Revit 2027 add-in assembly path."
     }

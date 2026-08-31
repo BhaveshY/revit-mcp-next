@@ -103,8 +103,8 @@ namespace RevitMcpNext.Addin.Revit
             _transactions = transactions;
             _generations = generations ?? new DocumentGenerationTracker();
             _previewTokens = previewTokens ?? new PreviewTokenStore();
-            _modelDelivery = new ModelDeliveryWorkflow();
             _runtimeInstanceId = string.IsNullOrWhiteSpace(runtimeInstanceId) ? "in-process" : runtimeInstanceId;
+            _modelDelivery = new ModelDeliveryWorkflow(_runtimeInstanceId, document => _generations.GetGeneration(document));
         }
 
         public void Execute(UIApplication app)
@@ -1653,15 +1653,34 @@ namespace RevitMcpNext.Addin.Revit
                 Document resultDocument = ActivateCreatedProject(app, createdDocument, outputPath);
                 createdDocument = resultDocument;
                 Document activeDocument = app.ActiveUIDocument?.Document;
-                bool activated = ReferenceEquals(resultDocument, activeDocument);
+                bool activated = IsExactDocumentIdentity(resultDocument, activeDocument, outputPath);
+                if (!activated)
+                {
+                    throw new InvalidOperationException(
+                        "Revit created the project, but the active UI document identity did not match the saved output. " +
+                        "Expected path: " + outputPath + ". No target confirmation was issued.");
+                }
                 long generation = _generations.GetGeneration(resultDocument);
+                string fingerprint = ComputeDocumentFingerprint(resultDocument);
+                string centralModelPath = GetDocumentCentralModelPath(resultDocument);
                 var data = new Dictionary<string, object>
                 {
                     ["templatePath"] = templatePath,
                     ["outputPath"] = outputPath,
                     ["overwritten"] = outputExists,
                     ["activated"] = activated,
+                    ["instanceId"] = _runtimeInstanceId,
                     ["document"] = BuildDocumentSummary(resultDocument, activeDocument),
+                    ["activationConfirmation"] = new Dictionary<string, object>
+                    {
+                        ["confirmed"] = true,
+                        ["instanceId"] = _runtimeInstanceId,
+                        ["documentFingerprint"] = fingerprint,
+                        ["documentPath"] = resultDocument.PathName,
+                        ["centralModelPath"] = centralModelPath,
+                        ["generation"] = generation,
+                        ["uiActive"] = true
+                    },
                     ["source"] = "revit-api"
                 };
 
@@ -1688,9 +1707,9 @@ namespace RevitMcpNext.Addin.Revit
         private static Document ActivateCreatedProject(UIApplication app, Document createdDocument, string outputPath)
         {
             Document activeDocument = app.ActiveUIDocument?.Document;
-            if (ReferenceEquals(createdDocument, activeDocument))
+            if (IsExactDocumentIdentity(createdDocument, activeDocument, outputPath))
             {
-                return createdDocument;
+                return activeDocument;
             }
 
             if (createdDocument != null)
@@ -1703,8 +1722,39 @@ namespace RevitMcpNext.Addin.Revit
             {
                 throw new InvalidOperationException("Revit created the project but did not activate it in the UI: " + outputPath);
             }
+            Document confirmedActiveDocument = app.ActiveUIDocument?.Document;
+            if (!IsExactDocumentIdentity(activatedDocument.Document, confirmedActiveDocument, outputPath))
+            {
+                throw new InvalidOperationException(
+                    "Revit opened the created project, but the active UI document did not match its exact path and fingerprint: " + outputPath);
+            }
 
-            return activatedDocument.Document;
+            return confirmedActiveDocument;
+        }
+
+        private static bool IsExactDocumentIdentity(Document expectedDocument, Document actualDocument, string expectedPath = null)
+        {
+            if (expectedDocument == null || actualDocument == null) return false;
+            string expectedFingerprint = ComputeDocumentFingerprint(expectedDocument);
+            string actualFingerprint = ComputeDocumentFingerprint(actualDocument);
+            if (!string.Equals(expectedFingerprint, actualFingerprint, StringComparison.OrdinalIgnoreCase)) return false;
+
+            string requiredPath = string.IsNullOrWhiteSpace(expectedPath) ? expectedDocument.PathName : expectedPath;
+            if (string.IsNullOrWhiteSpace(requiredPath)) return true;
+            return DocumentPathsEqual(requiredPath, actualDocument.PathName);
+        }
+
+        private static bool DocumentPathsEqual(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+            try
+            {
+                return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         private BridgeResponseEnvelope HandleApplyChange(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
@@ -1856,7 +1906,9 @@ namespace RevitMcpNext.Addin.Revit
         {
             try
             {
-                return Success(request, _modelDelivery.Preview(app, request.SessionId, request.Payload), sw);
+                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out BridgeResponseEnvelope failure);
+                if (failure != null) return failure;
+                return Success(request, _modelDelivery.Preview(app, request.SessionId, target, request.Payload), sw, generation: target.Generation);
             }
             catch (ModelDeliveryException ex)
             {
@@ -1868,7 +1920,9 @@ namespace RevitMcpNext.Addin.Revit
         {
             try
             {
-                return Success(request, _modelDelivery.Inspect(app, request.Payload), sw);
+                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out BridgeResponseEnvelope failure);
+                if (failure != null) return failure;
+                return Success(request, _modelDelivery.Inspect(app, target, request.Payload), sw, generation: target.Generation);
             }
             catch (ModelDeliveryException ex)
             {
@@ -1880,12 +1934,42 @@ namespace RevitMcpNext.Addin.Revit
         {
             try
             {
-                return Success(request, _modelDelivery.Execute(app, request.SessionId, request.Payload), sw);
+                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out BridgeResponseEnvelope failure);
+                if (failure != null) return failure;
+                return Success(request, _modelDelivery.Execute(app, request.SessionId, target, request.Payload), sw, generation: target.Generation);
             }
             catch (ModelDeliveryException ex)
             {
                 return Failure(request, ex.Code, ex.Message, sw);
             }
+        }
+
+        private DeliveryTargetBinding ResolveDeliveryTarget(
+            UIApplication app,
+            BridgeRequestEnvelope request,
+            Stopwatch sw,
+            out BridgeResponseEnvelope failure)
+        {
+            failure = null;
+            Document document = ResolveDocument(app, request);
+            if (document == null)
+            {
+                failure = Failure(
+                    request,
+                    "TARGET_SELECTION_REQUIRED",
+                    "Model Delivery requires an exact Revit session target. Open a pilot control project, call revit.list_documents, then revit.set_target with instanceId and documentFingerprint.",
+                    sw);
+                return null;
+            }
+
+            failure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            if (failure != null) return null;
+            return new DeliveryTargetBinding(
+                _runtimeInstanceId,
+                ComputeDocumentFingerprint(document),
+                generation,
+                document.PathName,
+                GetDocumentCentralModelPath(document));
         }
 
         private BridgeResponseEnvelope HandleGetModelDeliveryStatus(BridgeRequestEnvelope request, Stopwatch sw)
@@ -9756,6 +9840,8 @@ namespace RevitMcpNext.Addin.Revit
             };
 
             if (!string.IsNullOrWhiteSpace(document.PathName)) summary["path"] = document.PathName;
+            string centralModelPath = GetDocumentCentralModelPath(document);
+            if (!string.IsNullOrWhiteSpace(centralModelPath)) summary["centralModelPath"] = centralModelPath;
 
             View activeView = SafeActiveView(document);
             if (activeView != null)
@@ -10122,7 +10208,21 @@ namespace RevitMcpNext.Addin.Revit
 
         private static bool IsUiActiveDocument(UIApplication app, Document document)
         {
-            return app.ActiveUIDocument != null && ReferenceEquals(app.ActiveUIDocument.Document, document);
+            return app.ActiveUIDocument != null && IsExactDocumentIdentity(document, app.ActiveUIDocument.Document);
+        }
+
+        private static string GetDocumentCentralModelPath(Document document)
+        {
+            if (document == null || !document.IsWorkshared) return string.Empty;
+            try
+            {
+                ModelPath modelPath = document.GetWorksharingCentralModelPath();
+                return modelPath == null ? string.Empty : ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static string GetDocumentId(Document document)

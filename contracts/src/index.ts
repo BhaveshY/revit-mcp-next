@@ -140,6 +140,7 @@ export interface RevitDocumentSummary {
   fingerprint: string;
   isActive: boolean;
   isWorkshared?: boolean;
+  centralModelPath?: string;
   isModified?: boolean;
   activeView?: RevitViewSummary;
   generation: number;
@@ -152,6 +153,8 @@ export interface RevitTarget {
   documentFingerprint: string;
   documentTitle: string;
   documentPath?: string;
+  isWorkshared?: boolean;
+  centralModelPath?: string;
   generation: number;
   isUiActive?: boolean;
   selectionMode?: "explicit" | "implicit-single-document";
@@ -315,7 +318,17 @@ export interface CreateProjectFromTemplateResult {
   outputPath: string;
   overwritten: boolean;
   activated: boolean;
+  instanceId: string;
   document: RevitDocumentSummary;
+  activationConfirmation: {
+    confirmed: true;
+    instanceId: string;
+    documentFingerprint: string;
+    documentPath: string;
+    centralModelPath?: string;
+    generation: number;
+    uiActive: true;
+  };
   source: "revit-api";
 }
 
@@ -461,6 +474,7 @@ export interface ModelDeliveryDetectedChange {
 export interface ModelDeliveryInspectResult {
   mode: "firstTime" | "repeat";
   recipeReusable: boolean;
+  targetBinding: ModelDeliveryTargetBinding;
   models: ModelDeliveryInspectionModel[];
   detectedChanges: ModelDeliveryDetectedChange[];
   missingDecisions: ModelDeliveryInspectionDecision[];
@@ -480,6 +494,7 @@ export interface ModelDeliveryModelPlan {
   outputPath: string;
   sourceBytes: number;
   sourceLastWriteUtc: string;
+  sourceSha256: string;
   sourceIsWorkshared: boolean;
   targetIsWorkshared: false;
   linkCount: number;
@@ -499,9 +514,18 @@ export interface ModelDeliveryPreviewResult {
   deliveryId: string;
   packagePath: string;
   stagingPath: string;
+  targetBinding: ModelDeliveryTargetBinding;
   models: ModelDeliveryModelPlan[];
   blockers: ModelDeliveryPlanIssue[];
   warnings: ModelDeliveryPlanIssue[];
+}
+
+export interface ModelDeliveryTargetBinding {
+  instanceId: string;
+  documentFingerprint: string;
+  generation: number;
+  documentPath?: string;
+  centralModelPath?: string;
 }
 
 export interface ModelDeliveryExecuteRequest extends ModelDeliveryPreviewRequest {
@@ -556,6 +580,7 @@ export interface ModelDeliveryJobResult {
   published: boolean;
   packagePath: string;
   stagingPath: string;
+  targetBinding: ModelDeliveryTargetBinding;
   completedUnits: number;
   totalUnits: number;
   progressPercent: number;

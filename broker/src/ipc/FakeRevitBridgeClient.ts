@@ -35,6 +35,7 @@ import type {
   ModelDeliveryPreviewResult,
   ModelDeliveryStatusRequest,
   ModelDeliveryStatusResult,
+  ModelDeliveryTargetBinding,
   ModelContextRequest,
   ModelContextResult,
   ModelReadinessRequest,
@@ -693,7 +694,16 @@ function resolveParameterDescribeOptions(payload: ParameterDescribeRequest): {
 
 export class FakeRevitBridgeClient implements RevitBridgeClient {
   private readonly mutableCatalogItems: FakeCatalogItem[] = catalogItems.map(cloneCatalogItem);
+  private openDocuments: RevitDocumentSummary[] = [{ ...activeDocument }];
   private readonly deliveryJobs = new Map<string, ModelDeliveryJobResult>();
+  private readonly deliveryPreviews = new Map<string, {
+    sessionId: string;
+    instanceId: string;
+    documentFingerprint: string;
+    generation: number;
+    planHash: string;
+    recipe: string;
+  }>();
   private nextDuplicateTypeId = 9901;
 
   async bridgeHealth(
@@ -762,7 +772,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         build: "fake",
         processId: 1234,
       },
-      activeDocument,
+      activeDocument: this.openDocuments.find((document) => document.isActive) ?? this.openDocuments[0],
       selection: { count: 1 },
       diagnostics: {
         queue: {
@@ -798,7 +808,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitDocumentSummary[]>> {
     maybeAbort(options);
-    return ok(request, [activeDocument]);
+    return ok(request, this.openDocuments.map((document) => ({ ...document })));
   }
 
   async createProjectFromTemplate(
@@ -819,13 +829,27 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       isActive: true,
       generation: activeDocument.generation + 1,
     };
+    this.openDocuments = [
+      ...this.openDocuments.map((openDocument) => ({ ...openDocument, isActive: false })),
+      document,
+    ];
 
     return ok(request, {
       templatePath: request.payload.templatePath,
       outputPath,
       overwritten: request.payload.overwrite === true,
       activated: true,
+      instanceId: request.instanceId ?? "fake-instance",
       document,
+      activationConfirmation: {
+        confirmed: true,
+        instanceId: request.instanceId ?? "fake-instance",
+        documentFingerprint: document.fingerprint,
+        documentPath: outputPath,
+        centralModelPath: document.centralModelPath ?? "",
+        generation: document.generation,
+        uiActive: true,
+      },
       source: "revit-api",
     });
   }
@@ -881,6 +905,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     return ok(request, {
       mode: repeat ? "repeat" : "firstTime",
       recipeReusable: repeat,
+      targetBinding: fakeDeliveryTarget(request),
       models: request.payload.sourcePaths.map((sourcePath, index) => ({
         sourcePath,
         suggestedId: request.payload.previousRecipe?.sourceModels[index]?.id ?? `model-${index + 1}`,
@@ -917,10 +942,20 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   ): Promise<BridgeResponse<ModelDeliveryPreviewResult>> {
     maybeAbort(options);
     const recipe = request.payload.recipe;
-    const planHash = createHash("sha256").update(JSON.stringify(recipe)).digest("hex");
+    const targetBinding = fakeDeliveryTarget(request);
+    const planHash = createHash("sha256").update(`${JSON.stringify(targetBinding)}|${JSON.stringify(recipe)}`).digest("hex");
     const packagePath = `${recipe.destinationRoot}\\${recipe.packageName}`;
+    const previewId = `delivery-preview-${createHash("sha256").update(`${request.sessionId}|${planHash}`).digest("hex").slice(0, 16)}`;
+    this.deliveryPreviews.set(previewId, {
+      sessionId: request.sessionId,
+      instanceId: targetBinding.instanceId,
+      documentFingerprint: targetBinding.documentFingerprint,
+      generation: targetBinding.generation,
+      planHash,
+      recipe: JSON.stringify(recipe),
+    });
     return ok(request, {
-      previewId: `delivery-preview-${planHash.slice(0, 16)}`,
+      previewId,
       planHash,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       ready: true,
@@ -928,6 +963,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       deliveryId: recipe.deliveryId,
       packagePath,
       stagingPath: `${recipe.destinationRoot}\\.revit-mcp-staging\\${recipe.deliveryId}`,
+      targetBinding,
       models: recipe.sourceModels.map((model, index) => ({
         modelId: model.id,
         role: model.role,
@@ -935,6 +971,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
         outputPath: `${packagePath}\\${model.targetFileName}`,
         sourceBytes: 1000 + index,
         sourceLastWriteUtc: "2026-08-28T00:00:00.000Z",
+        sourceSha256: createHash("sha256").update(model.sourcePath).digest("hex"),
         sourceIsWorkshared: true,
         targetIsWorkshared: false as const,
         linkCount: 0,
@@ -958,6 +995,24 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       return fail(request, "CONFIRMATION_REQUIRED", "revit.execute_model_delivery requires confirm=true.");
     }
 
+    const approved = this.deliveryPreviews.get(request.payload.previewId);
+    if (!approved) {
+      return fail(request, "DELIVERY_PREVIEW_NOT_FOUND", "The delivery preview is stale, belongs to another session, was consumed, or the Revit instance restarted. Select the target and preview again.");
+    }
+    const targetBinding = fakeDeliveryTarget(request);
+    if (
+      approved.sessionId !== request.sessionId ||
+      approved.instanceId !== targetBinding.instanceId ||
+      approved.documentFingerprint !== targetBinding.documentFingerprint ||
+      approved.generation !== targetBinding.generation
+    ) {
+      return fail(request, "DELIVERY_TARGET_CHANGED", `The approved preview targets instance ${approved.instanceId}, document ${approved.documentFingerprint}, generation ${approved.generation}. Call revit.list_documents and revit.set_target, then preview again.`);
+    }
+    if (approved.planHash !== request.payload.planHash || approved.recipe !== JSON.stringify(request.payload.recipe)) {
+      return fail(request, "DELIVERY_PREVIEW_MISMATCH", "The delivery recipe or plan hash changed after preview. Preview again.");
+    }
+    this.deliveryPreviews.delete(request.payload.previewId);
+
     const recipe = request.payload.recipe;
     const packagePath = `${recipe.destinationRoot}\\${recipe.packageName}`;
     const now = new Date().toISOString();
@@ -974,6 +1029,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
       published: false,
       packagePath,
       stagingPath: `${recipe.destinationRoot}\\.revit-mcp-staging\\${recipe.deliveryId}`,
+      targetBinding,
       completedUnits: 0,
       totalUnits: recipe.sourceModels.length * 3 + 2,
       progressPercent: 0,
@@ -2982,6 +3038,15 @@ function isMediumRiskOperation(operation: ChangeOperation): boolean {
 
 function assertNever(value: never): never {
   throw new Error(`Unsupported change operation: ${JSON.stringify(value)}`);
+}
+
+function fakeDeliveryTarget(request: BridgeRequest): ModelDeliveryTargetBinding {
+  return {
+    instanceId: request.instanceId ?? "fake-instance",
+    documentFingerprint: request.documentFingerprint ?? activeDocument.fingerprint,
+    generation: request.expectedGeneration ?? activeDocument.generation,
+    documentPath: activeDocument.path,
+  };
 }
 
 function ok<T>(request: BridgeRequest, data: T): BridgeResponse<T> {

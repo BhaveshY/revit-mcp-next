@@ -14,6 +14,7 @@ const fixtureRoot = path.resolve(required(options, "fixtureRoot"));
 const summaryPath = options.summaryPath ? path.resolve(options.summaryPath) : path.join(fixtureRoot, "live-smoke-summary.json");
 const sessionId = `model-delivery-live-${expectedYear}-${process.pid}-${Date.now()}`;
 const timeoutMs = 300_000;
+let deliveryTarget;
 
 const { NamedPipeBridgeClient } = await import(
   pathToFileURL(path.join(installRoot, "broker", "dist", "src", "ipc", "NamedPipeBridgeClient.js")).href
@@ -45,6 +46,14 @@ try {
   assert(String(status.revit?.version) === expectedYear, `Expected Revit ${expectedYear}, received ${status.revit?.version}.`);
   summary.revit = status.revit;
   summary.addinAssembly = status.addinAssembly;
+  assert(status.instanceId, "Status did not report a runtime instance ID.");
+  assert(status.activeDocument?.fingerprint, "Open and target a disposable pilot control RVT before running Model Delivery smoke.");
+  deliveryTarget = {
+    instanceId: status.instanceId,
+    documentFingerprint: status.activeDocument.fingerprint,
+    expectedGeneration: status.activeDocument.generation,
+  };
+  summary.target = deliveryTarget;
 
   assert(!fs.existsSync(fixtureRoot), `Fixture root already exists: ${fixtureRoot}`);
   const fixture = await call("createModelDeliveryFixture", "create_model_delivery_fixture", "write", {
@@ -214,7 +223,19 @@ async function call(method, operation, operationKind, payload) {
 }
 
 async function rawCall(method, operation, operationKind, payload) {
-  const request = makeRequest(sessionId, operation, operationKind, payload, timeoutMs);
+  const targetScoped = operation === "inspect_model_delivery" || operation === "preview_model_delivery" || operation === "execute_model_delivery";
+  const request = makeRequest(
+    sessionId,
+    operation,
+    operationKind,
+    targetScoped ? { ...payload, ...deliveryTarget } : payload,
+    timeoutMs
+  );
+  if (targetScoped) {
+    request.instanceId = deliveryTarget.instanceId;
+    request.documentFingerprint = deliveryTarget.documentFingerprint;
+    request.expectedGeneration = deliveryTarget.expectedGeneration;
+  }
   return bridge[method](request);
 }
 

@@ -4,6 +4,11 @@ import type {
   BridgeRequest,
   BridgeResponse,
   BridgeSuccess,
+  CreateProjectFromTemplateRequest,
+  CreateProjectFromTemplateResult,
+  ModelDeliveryExecuteRequest,
+  ModelDeliveryPreviewRequest,
+  ModelDeliveryRecipe,
   QueryRequest,
   QueryResult,
   RevitDocumentSummary,
@@ -56,6 +61,35 @@ class TargetTestBridge extends FakeRevitBridgeClient {
         source: "target-test",
       });
     return { ...response, generation: document.generation };
+  }
+}
+
+class ProjectCreationBridge extends TargetTestBridge {
+  constructor(
+    documents: RevitDocumentSummary[],
+    private readonly confirmActivation = true,
+    private readonly confirmedCentralModelPath?: string
+  ) {
+    super(documents);
+  }
+
+  override async createProjectFromTemplate(
+    request: BridgeRequest<CreateProjectFromTemplateRequest>,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<CreateProjectFromTemplateResult>> {
+    const response = await super.createProjectFromTemplate(request, options);
+    if (!response.ok) return response;
+    if (!this.confirmActivation) {
+      return success(request, {
+        ...response.data,
+        activated: false,
+      } as CreateProjectFromTemplateResult);
+    }
+    if (this.confirmedCentralModelPath !== undefined) {
+      response.data.activationConfirmation.centralModelPath = this.confirmedCentralModelPath;
+    }
+    this.documents = [response.data.document];
+    return response;
   }
 }
 
@@ -200,6 +234,130 @@ test("duplicate project titles remain distinguishable only by instance and finge
   }
 });
 
+test("created project becomes the session target only after exact activation confirmation", async () => {
+  const bridge = new ProjectCreationBridge([project1]);
+  const router = routerFor("session-create", [connection("instance-2024", 2401, "2024", bridge)]);
+  const created = await router.bridge.createProjectFromTemplate({
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    requestId: "create-project",
+    sessionId: "session-create",
+    operation: "create_project_from_template",
+    operationKind: "write",
+    timeoutMs: 1000,
+    payload: {
+      templatePath: "C:\\Templates\\Pilot.rte",
+      outputPath: "C:\\Pilot\\Created.rvt",
+      confirm: true,
+    },
+  });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(created.data.activated, true);
+  assert.equal(created.target?.documentFingerprint, created.data.document.fingerprint);
+  assert.equal(created.target?.documentPath, created.data.outputPath);
+  assert.equal((await router.getTarget()).target?.documentFingerprint, created.data.document.fingerprint);
+
+  const unconfirmedBridge = new ProjectCreationBridge([project1], false);
+  const unconfirmedRouter = routerFor("session-unconfirmed", [connection("instance-2024", 2401, "2024", unconfirmedBridge)]);
+  const rejected = await unconfirmedRouter.bridge.createProjectFromTemplate({
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    requestId: "create-project-unconfirmed",
+    sessionId: "session-unconfirmed",
+    operation: "create_project_from_template",
+    operationKind: "write",
+    timeoutMs: 1000,
+    payload: { templatePath: "C:\\Templates\\Pilot.rte", outputPath: "C:\\Pilot\\Rejected.rvt", confirm: true },
+  });
+  assert.equal(rejected.ok, false);
+  if (!rejected.ok) assert.equal(rejected.error.code, "TARGET_ACTIVATION_UNCONFIRMED");
+  assert.equal((await unconfirmedRouter.getTarget()).ok, true);
+  assert.equal((await unconfirmedRouter.getTarget()).target, undefined);
+
+  const mismatchedBridge = new ProjectCreationBridge([project1], true, "C:\\Central\\Wrong.rvt");
+  const mismatchedRouter = routerFor("session-central-mismatch", [connection("instance-2024", 2401, "2024", mismatchedBridge)]);
+  const mismatched = await mismatchedRouter.bridge.createProjectFromTemplate({
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    requestId: "create-project-central-mismatch",
+    sessionId: "session-central-mismatch",
+    operation: "create_project_from_template",
+    operationKind: "write",
+    timeoutMs: 1000,
+    payload: { templatePath: "C:\\Templates\\Pilot.rte", outputPath: "C:\\Pilot\\Mismatch.rvt", confirm: true },
+  });
+  assert.equal(mismatched.ok, false);
+  if (!mismatched.ok) assert.equal(mismatched.error.code, "TARGET_ACTIVATION_UNCONFIRMED");
+});
+
+test("model delivery preview is bound to session target and rejected after switch, close, or restart", async () => {
+  const bridge = new TargetTestBridge([project1, project2]);
+  const router = routerFor("delivery-session", [connection("instance-2024", 2401, "2024", bridge)]);
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint });
+  const previewRequest = deliveryPreviewRequest("delivery-session");
+  const preview = await router.bridge.previewModelDelivery(previewRequest);
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.equal(preview.target?.documentFingerprint, project1.fingerprint);
+  assert.equal(preview.data.targetBinding.documentFingerprint, project1.fingerprint);
+
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project2.fingerprint });
+  const switched = await router.bridge.executeModelDelivery(deliveryExecuteRequest("delivery-session", previewRequest.payload, preview.data));
+  assert.equal(switched.ok, false);
+  if (!switched.ok) assert.equal(switched.error.code, "DELIVERY_TARGET_CHANGED");
+
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint });
+  bridge.documents = [{ ...project1, generation: project1.generation + 1 }, project2];
+  const stale = await router.bridge.executeModelDelivery(deliveryExecuteRequest("delivery-session", previewRequest.payload, preview.data));
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.error.code, "TARGET_GENERATION_CHANGED");
+
+  bridge.documents = [project1, project2];
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint });
+  bridge.documents = [project2];
+  const closed = await router.bridge.executeModelDelivery(deliveryExecuteRequest("delivery-session", previewRequest.payload, preview.data));
+  assert.equal(closed.ok, false);
+  if (!closed.ok) assert.equal(closed.error.code, "TARGET_DOCUMENT_UNAVAILABLE");
+
+  const restartedBridge = new TargetTestBridge([project1]);
+  const restarted = routerFor("delivery-session", [connection("instance-2024-restarted", 2402, "2024", restartedBridge)]);
+  await restarted.setTarget({ instanceId: "instance-2024-restarted", documentFingerprint: project1.fingerprint });
+  const afterRestart = await restarted.bridge.executeModelDelivery(deliveryExecuteRequest("delivery-session", previewRequest.payload, preview.data));
+  assert.equal(afterRestart.ok, false);
+  if (!afterRestart.ok) assert.equal(afterRestart.error.code, "DELIVERY_PREVIEW_NOT_FOUND");
+});
+
+test("model delivery job status remains routed to its original target after the session switches", async () => {
+  const bridge = new TargetTestBridge([project1, project2]);
+  const router = routerFor("delivery-job-session", [connection("instance-2024", 2401, "2024", bridge)]);
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint });
+  const previewRequest = deliveryPreviewRequest("delivery-job-session");
+  const preview = await router.bridge.previewModelDelivery(previewRequest);
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  const execution = await router.bridge.executeModelDelivery(
+    deliveryExecuteRequest("delivery-job-session", previewRequest.payload, preview.data)
+  );
+  assert.equal(execution.ok, true);
+  if (!execution.ok) return;
+
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project2.fingerprint });
+  const statusRequest = {
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    requestId: "delivery-status-after-switch",
+    sessionId: "delivery-job-session",
+    operation: "get_model_delivery_status" as const,
+    operationKind: "read" as const,
+    timeoutMs: 1000,
+    payload: { jobId: execution.data.jobId },
+  };
+  const firstStatus = await router.bridge.getModelDeliveryStatus(statusRequest);
+  const repeatedStatus = await router.bridge.getModelDeliveryStatus({ ...statusRequest, requestId: "delivery-status-repeated" });
+  assert.equal(firstStatus.ok, true);
+  assert.equal(repeatedStatus.ok, true);
+  assert.equal(firstStatus.target?.documentFingerprint, project1.fingerprint);
+  assert.equal(repeatedStatus.target?.documentFingerprint, project1.fingerprint);
+  assert.equal((await router.getTarget()).target?.documentFingerprint, project2.fingerprint);
+});
+
 function routerFor(sessionId: string, connections: RevitInstanceConnection[]): SessionTargetingBridgeRouter {
   return new SessionTargetingBridgeRouter(
     new TargetTestDirectory(connections),
@@ -257,6 +415,67 @@ function queryRequest(sessionId: string, operationKind: "read" | "write" = "read
     operationKind,
     timeoutMs: 1000,
     payload: { filter: {}, limit: 10 },
+  };
+}
+
+function deliveryPreviewRequest(sessionId: string): BridgeRequest<ModelDeliveryPreviewRequest> {
+  return {
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    requestId: `delivery-preview-${sessionId}`,
+    sessionId,
+    operation: "preview_model_delivery",
+    operationKind: "preview",
+    timeoutMs: 1000,
+    payload: { recipe: deliveryRecipe() },
+  };
+}
+
+function deliveryExecuteRequest(
+  sessionId: string,
+  previewPayload: ModelDeliveryPreviewRequest,
+  preview: { previewId: string; planHash: string; expiresAt: string }
+): BridgeRequest<ModelDeliveryExecuteRequest> {
+  return {
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    requestId: `delivery-execute-${sessionId}-${Date.now()}`,
+    sessionId,
+    operation: "execute_model_delivery",
+    operationKind: "destructive",
+    timeoutMs: 1000,
+    payload: { ...previewPayload, ...preview, confirm: true },
+  };
+}
+
+function deliveryRecipe(): ModelDeliveryRecipe {
+  return {
+    projectId: "pilot-project",
+    recipeVersion: "1",
+    deliveryId: "pilot-delivery",
+    packageName: "Pilot-Issue",
+    destinationRoot: "C:\\Pilot\\Delivery",
+    sourceModels: [{ id: "architecture", sourcePath: "C:\\Pilot\\Architecture.rvt", targetFileName: "Architecture-Issue.rvt" }],
+    linkRules: [],
+    coordinates: { preserveLinkTransforms: true, packagedLinkPathType: "relative" },
+    cleanup: {
+      deleteSheets: false,
+      deleteViews: false,
+      deleteSchedules: false,
+      deleteLegends: false,
+      deleteDraftingViews: false,
+      deleteViewTemplates: false,
+      deleteUnusedFilters: false,
+      removeUnmappedLinks: false,
+      purgeUnusedPasses: 0,
+      protectedViewNames: [],
+    },
+    exports: [],
+    qa: {
+      requireStandalone: true,
+      requireNoCentralPath: true,
+      requireSourceHashUnchanged: true,
+      requireCleanupMatchesPreview: true,
+      requireAllRequiredExports: true,
+    },
   };
 }
 

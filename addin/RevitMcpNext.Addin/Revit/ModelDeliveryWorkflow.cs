@@ -23,6 +23,14 @@ namespace RevitMcpNext.Addin.Revit
             new Dictionary<string, DeliveryPreviewToken>(StringComparer.Ordinal);
         private readonly Dictionary<string, DeliveryJob> _jobs =
             new Dictionary<string, DeliveryJob>(StringComparer.Ordinal);
+        private readonly string _runtimeInstanceId;
+        private readonly Func<Document, long> _generationProvider;
+
+        public ModelDeliveryWorkflow(string runtimeInstanceId, Func<Document, long> generationProvider)
+        {
+            _runtimeInstanceId = string.IsNullOrWhiteSpace(runtimeInstanceId) ? "in-process" : runtimeInstanceId;
+            _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
+        }
 
         public bool HasPendingWork
         {
@@ -35,9 +43,14 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        public Dictionary<string, object> Preview(UIApplication uiApplication, string sessionId, Dictionary<string, object> payload)
+        public Dictionary<string, object> Preview(
+            UIApplication uiApplication,
+            string sessionId,
+            DeliveryTargetBinding targetBinding,
+            Dictionary<string, object> payload)
         {
             if (uiApplication == null) throw new ModelDeliveryException("REVIT_APPLICATION_REQUIRED", "Revit is not available.");
+            VerifyTargetAvailable(uiApplication.Application, targetBinding);
             DeliveryRecipe recipe = ParseRecipe(payload);
             var blockers = new List<DeliveryIssue>();
             var warnings = new List<DeliveryIssue>();
@@ -89,7 +102,7 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             string canonicalRecipe = CanonicalJson.Serialize(GetDictionary(payload, "recipe"));
-            string planHash = Hash(canonicalRecipe + "|" + string.Join("|", sourceFingerprints
+            string planHash = Hash(targetBinding.CanonicalIdentity + "|" + canonicalRecipe + "|" + string.Join("|", sourceFingerprints
                 .OrderBy(pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair => pair.Key + ":" + pair.Value.Length.ToString(CultureInfo.InvariantCulture) + ":" + pair.Value.LastWriteUtcTicks.ToString(CultureInfo.InvariantCulture) + ":" + pair.Value.Sha256)));
             string previewId = "delivery-" + Guid.NewGuid().ToString("N");
@@ -101,6 +114,7 @@ namespace RevitMcpNext.Addin.Revit
                 planHash,
                 canonicalRecipe,
                 recipe,
+                targetBinding,
                 sourceFingerprints,
                 modelPlans,
                 ready,
@@ -121,15 +135,20 @@ namespace RevitMcpNext.Addin.Revit
                 ["deliveryId"] = recipe.DeliveryId,
                 ["packagePath"] = recipe.PackagePath,
                 ["stagingPath"] = recipe.StagingPath,
+                ["targetBinding"] = targetBinding.ToDictionary(),
                 ["models"] = modelPlans.Select(plan => plan.ToDictionary()).ToArray(),
                 ["blockers"] = blockers.Select(issue => issue.ToDictionary()).ToArray(),
                 ["warnings"] = warnings.Select(issue => issue.ToDictionary()).ToArray()
             };
         }
 
-        public Dictionary<string, object> Inspect(UIApplication uiApplication, Dictionary<string, object> payload)
+        public Dictionary<string, object> Inspect(
+            UIApplication uiApplication,
+            DeliveryTargetBinding targetBinding,
+            Dictionary<string, object> payload)
         {
             if (uiApplication == null) throw new ModelDeliveryException("REVIT_APPLICATION_REQUIRED", "Revit is not available.");
+            VerifyTargetAvailable(uiApplication.Application, targetBinding);
             IReadOnlyList<string> requestedPaths = GetStringList(payload, "sourcePaths");
             if (requestedPaths.Count == 0) throw new ModelDeliveryException("DELIVERY_SOURCES_REQUIRED", "At least one local, mapped-drive, or UNC RVT source path is required.");
             if (requestedPaths.Count > 64) throw new ModelDeliveryException("DELIVERY_SOURCE_LIMIT", "A maximum of 64 source RVTs can be inspected in one request.");
@@ -278,6 +297,7 @@ namespace RevitMcpNext.Addin.Revit
             return new Dictionary<string, object>
             {
                 ["mode"] = previousRecipe == null ? "firstTime" : "repeat",
+                ["targetBinding"] = targetBinding.ToDictionary(),
                 ["recipeReusable"] = previousRecipe != null && detectedChanges.Count == 0 && missingDecisions.Count == 0,
                 ["models"] = inspections.ToArray(),
                 ["detectedChanges"] = detectedChanges.ToArray(),
@@ -285,7 +305,11 @@ namespace RevitMcpNext.Addin.Revit
             };
         }
 
-        public Dictionary<string, object> Execute(UIApplication uiApplication, string sessionId, Dictionary<string, object> payload)
+        public Dictionary<string, object> Execute(
+            UIApplication uiApplication,
+            string sessionId,
+            DeliveryTargetBinding targetBinding,
+            Dictionary<string, object> payload)
         {
             if (uiApplication == null) throw new ModelDeliveryException("REVIT_APPLICATION_REQUIRED", "Revit is not available.");
             if (!GetBool(payload, "confirm", false))
@@ -313,6 +337,17 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     throw new ModelDeliveryException("DELIVERY_PLAN_HASH_MISMATCH", "The planHash does not match the approved delivery preview.");
                 }
+
+                if (!token.TargetBinding.Equals(targetBinding))
+                {
+                    throw new ModelDeliveryException(
+                        "DELIVERY_TARGET_CHANGED",
+                        "The approved delivery preview is bound to " + token.TargetBinding.Describe() +
+                        ", but this request targets " + targetBinding.Describe() +
+                        ". Call revit.list_documents, revit.set_target with the intended instanceId and documentFingerprint, then preview again.");
+                }
+
+                VerifyTargetAvailable(uiApplication.Application, targetBinding);
 
                 string canonicalRecipe = CanonicalJson.Serialize(GetDictionary(payload, "recipe"));
                 if (!string.Equals(token.CanonicalRecipe, canonicalRecipe, StringComparison.Ordinal))
@@ -446,8 +481,9 @@ namespace RevitMcpNext.Addin.Revit
             return job;
         }
 
-        private static void ProcessJobStep(Autodesk.Revit.ApplicationServices.Application application, DeliveryJob job)
+        private void ProcessJobStep(Autodesk.Revit.ApplicationServices.Application application, DeliveryJob job)
         {
+            VerifyTargetAvailable(application, job.Token.TargetBinding);
             DeliveryRecipe recipe = job.Token.Recipe;
             job.UpdatedAt = DateTimeOffset.UtcNow;
             switch (job.Phase)
@@ -596,6 +632,59 @@ namespace RevitMcpNext.Addin.Revit
                     break;
             }
             job.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
+        private void VerifyTargetAvailable(
+            Autodesk.Revit.ApplicationServices.Application application,
+            DeliveryTargetBinding targetBinding)
+        {
+            if (targetBinding == null)
+            {
+                throw new ModelDeliveryException(
+                    "DELIVERY_TARGET_REQUIRED",
+                    "Model Delivery requires an exact session target. Call revit.list_documents, then revit.set_target with instanceId and documentFingerprint.");
+            }
+            if (!string.Equals(targetBinding.InstanceId, _runtimeInstanceId, StringComparison.Ordinal))
+            {
+                throw new ModelDeliveryException(
+                    "DELIVERY_TARGET_INSTANCE_CHANGED",
+                    "The delivery target belongs to instance " + targetBinding.InstanceId +
+                    " but this is instance " + _runtimeInstanceId +
+                    ". Call revit.list_instances and select the intended instance again.");
+            }
+
+            Document document = application.Documents
+                .Cast<Document>()
+                .FirstOrDefault(candidate =>
+                    candidate != null &&
+                    candidate.IsValidObject &&
+                    !candidate.IsLinked &&
+                    string.Equals(
+                        DocumentGenerationTracker.ComputeDocumentFingerprint(candidate),
+                        targetBinding.DocumentFingerprint,
+                        StringComparison.OrdinalIgnoreCase));
+            if (document == null)
+            {
+                throw new ModelDeliveryException(
+                    "DELIVERY_TARGET_UNAVAILABLE",
+                    "The delivery target " + targetBinding.Describe() +
+                    " is closed, changed, or unavailable. Call revit.list_documents and revit.set_target before previewing again.");
+            }
+
+            var current = new DeliveryTargetBinding(
+                _runtimeInstanceId,
+                DocumentGenerationTracker.ComputeDocumentFingerprint(document),
+                _generationProvider(document),
+                document.PathName,
+                GetCentralModelPath(document));
+            if (!targetBinding.Equals(current))
+            {
+                throw new ModelDeliveryException(
+                    "DELIVERY_TARGET_CHANGED",
+                    "The delivery target changed from " + targetBinding.Describe() +
+                    " to " + current.Describe() +
+                    ". Call revit.list_documents, select the exact target again, and create a new preview.");
+            }
         }
 
         private static void VerifySourceFingerprints(DeliveryPreviewToken token, string checkpoint)
@@ -979,6 +1068,7 @@ namespace RevitMcpNext.Addin.Revit
                         OutputPath = Path.Combine(recipe.PackagePath, source.TargetFileName),
                         SourceBytes = fingerprint.Length,
                         SourceLastWriteUtc = new DateTimeOffset(fingerprint.LastWriteUtcTicks, TimeSpan.Zero).ToString("o"),
+                        SourceSha256 = fingerprint.Sha256,
                         SourceIsWorkshared = basic.IsWorkshared,
                         LinkCount = linkActions.Sum(action => action.InstanceCount),
                         SheetDeleteCount = cleanup.SheetIds.Count,
@@ -2125,13 +2215,14 @@ namespace RevitMcpNext.Addin.Revit
 
         private sealed class DeliveryPreviewToken
         {
-            public DeliveryPreviewToken(string previewId, string sessionId, string planHash, string canonicalRecipe, DeliveryRecipe recipe, Dictionary<string, SourceFingerprint> sourceFingerprints, List<DeliveryModelPlan> modelPlans, bool ready, DateTimeOffset expiresAt)
+            public DeliveryPreviewToken(string previewId, string sessionId, string planHash, string canonicalRecipe, DeliveryRecipe recipe, DeliveryTargetBinding targetBinding, Dictionary<string, SourceFingerprint> sourceFingerprints, List<DeliveryModelPlan> modelPlans, bool ready, DateTimeOffset expiresAt)
             {
                 PreviewId = previewId;
                 SessionId = sessionId ?? string.Empty;
                 PlanHash = planHash;
                 CanonicalRecipe = canonicalRecipe;
                 Recipe = recipe;
+                TargetBinding = targetBinding;
                 SourceFingerprints = sourceFingerprints;
                 ModelPlans = modelPlans;
                 Ready = ready;
@@ -2142,6 +2233,7 @@ namespace RevitMcpNext.Addin.Revit
             public string PlanHash { get; }
             public string CanonicalRecipe { get; }
             public DeliveryRecipe Recipe { get; }
+            public DeliveryTargetBinding TargetBinding { get; }
             public Dictionary<string, SourceFingerprint> SourceFingerprints { get; }
             public List<DeliveryModelPlan> ModelPlans { get; }
             public bool Ready { get; }
@@ -2224,6 +2316,7 @@ namespace RevitMcpNext.Addin.Revit
                     ["published"] = Published,
                     ["packagePath"] = Token.Recipe.PackagePath,
                     ["stagingPath"] = Token.Recipe.StagingPath,
+                    ["targetBinding"] = Token.TargetBinding.ToDictionary(),
                     ["completedUnits"] = CompletedUnits,
                     ["totalUnits"] = TotalUnits,
                     ["progressPercent"] = TotalUnits == 0 ? 0 : Math.Min(100, (int)Math.Round(CompletedUnits * 100.0 / TotalUnits)),
@@ -2282,6 +2375,7 @@ namespace RevitMcpNext.Addin.Revit
             public string OutputPath;
             public long SourceBytes;
             public string SourceLastWriteUtc;
+            public string SourceSha256;
             public bool SourceIsWorkshared;
             public int LinkCount;
             public int SheetDeleteCount;
@@ -2299,6 +2393,7 @@ namespace RevitMcpNext.Addin.Revit
                     ["outputPath"] = OutputPath,
                     ["sourceBytes"] = SourceBytes,
                     ["sourceLastWriteUtc"] = SourceLastWriteUtc,
+                    ["sourceSha256"] = SourceSha256,
                     ["sourceIsWorkshared"] = SourceIsWorkshared,
                     ["targetIsWorkshared"] = false,
                     ["linkCount"] = LinkCount,
@@ -2406,6 +2501,97 @@ namespace RevitMcpNext.Addin.Revit
             public List<ElementId> ViewIds = new List<ElementId>();
             public List<ElementId> TemplateIds = new List<ElementId>();
             public List<ElementId> FilterIds = new List<ElementId>();
+        }
+    }
+
+    internal sealed class DeliveryTargetBinding : IEquatable<DeliveryTargetBinding>
+    {
+        public DeliveryTargetBinding(
+            string instanceId,
+            string documentFingerprint,
+            long generation,
+            string documentPath,
+            string centralModelPath)
+        {
+            InstanceId = instanceId ?? string.Empty;
+            DocumentFingerprint = documentFingerprint ?? string.Empty;
+            Generation = generation;
+            DocumentPath = NormalizePath(documentPath);
+            CentralModelPath = NormalizePath(centralModelPath);
+        }
+
+        public string InstanceId { get; }
+        public string DocumentFingerprint { get; }
+        public long Generation { get; }
+        public string DocumentPath { get; }
+        public string CentralModelPath { get; }
+
+        public string CanonicalIdentity =>
+            InstanceId + "|" + DocumentFingerprint + "|" + Generation.ToString(CultureInfo.InvariantCulture) + "|" +
+            DocumentPath + "|" + CentralModelPath;
+
+        public bool Equals(DeliveryTargetBinding other)
+        {
+            return other != null &&
+                   string.Equals(InstanceId, other.InstanceId, StringComparison.Ordinal) &&
+                   string.Equals(DocumentFingerprint, other.DocumentFingerprint, StringComparison.OrdinalIgnoreCase) &&
+                   Generation == other.Generation &&
+                   string.Equals(DocumentPath, other.DocumentPath, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(CentralModelPath, other.CentralModelPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public override bool Equals(object obj) => Equals(obj as DeliveryTargetBinding);
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = StringComparer.Ordinal.GetHashCode(InstanceId);
+                hash = (hash * 397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(DocumentFingerprint);
+                hash = (hash * 397) ^ Generation.GetHashCode();
+                hash = (hash * 397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(DocumentPath);
+                hash = (hash * 397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(CentralModelPath);
+                return hash;
+            }
+        }
+
+        public string Describe()
+        {
+            string path = string.IsNullOrWhiteSpace(DocumentPath) ? "(unsaved document)" : DocumentPath;
+            string central = string.IsNullOrWhiteSpace(CentralModelPath) ? "none" : CentralModelPath;
+            return "instance " + InstanceId + ", document " + DocumentFingerprint + ", generation " +
+                   Generation.ToString(CultureInfo.InvariantCulture) + ", path " + path + ", central " + central;
+        }
+
+        public Dictionary<string, object> ToDictionary()
+        {
+            var data = new Dictionary<string, object>
+            {
+                ["instanceId"] = InstanceId,
+                ["documentFingerprint"] = DocumentFingerprint,
+                ["generation"] = Generation
+            };
+            if (!string.IsNullOrWhiteSpace(DocumentPath)) data["documentPath"] = DocumentPath;
+            if (!string.IsNullOrWhiteSpace(CentralModelPath)) data["centralModelPath"] = CentralModelPath;
+            return data;
+        }
+
+        private static string NormalizePath(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string trimmed = value.Trim();
+            if (trimmed.IndexOf("://", StringComparison.Ordinal) >= 0)
+            {
+                return trimmed.TrimEnd('/');
+            }
+            try
+            {
+                return Path.GetFullPath(trimmed).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                return trimmed.Replace('/', '\\').TrimEnd('\\');
+            }
         }
     }
 

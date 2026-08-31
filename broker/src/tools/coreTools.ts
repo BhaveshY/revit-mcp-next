@@ -1089,6 +1089,8 @@ const targetSchema = z
     documentFingerprint: z.string(),
     documentTitle: z.string(),
     documentPath: z.string().optional(),
+    isWorkshared: z.boolean().optional(),
+    centralModelPath: z.string().optional(),
     generation: z.number().int().min(0),
     isUiActive: z.boolean().optional(),
     selectionMode: z.enum(["explicit", "implicit-single-document"]).optional(),
@@ -1283,6 +1285,7 @@ const documentSummarySchema = documentReferenceSchema
     documentId: z.string().optional(),
     isActive: z.boolean().optional(),
     isWorkshared: z.boolean().optional(),
+    centralModelPath: z.string().optional(),
     isModified: z.boolean().optional(),
     activeView: viewSummarySchema.nullable().optional(),
   })
@@ -1420,7 +1423,17 @@ const createProjectFromTemplateResultSchema = z
     outputPath: z.string(),
     overwritten: z.boolean(),
     activated: z.boolean(),
+    instanceId: z.string(),
     document: documentSummarySchema,
+    activationConfirmation: z.object({
+      confirmed: z.literal(true),
+      instanceId: z.string(),
+      documentFingerprint: z.string(),
+      documentPath: z.string(),
+      centralModelPath: z.string().optional(),
+      generation: z.number().int().min(0),
+      uiActive: z.literal(true),
+    }).strict(),
     source: z.literal("revit-api"),
   })
   .passthrough();
@@ -1469,10 +1482,20 @@ const modelDeliveryIssueSchema = z
     path: z.string().optional(),
   })
   .passthrough();
+const modelDeliveryTargetBindingSchema = z
+  .object({
+    instanceId: z.string(),
+    documentFingerprint: z.string(),
+    generation: z.number().int().min(0),
+    documentPath: z.string().optional(),
+    centralModelPath: z.string().optional(),
+  })
+  .strict();
 const modelDeliveryInspectResultSchema = z
   .object({
     mode: z.enum(["firstTime", "repeat"]),
     recipeReusable: z.boolean(),
+    targetBinding: modelDeliveryTargetBindingSchema,
     models: z.array(
       z
         .object({
@@ -1518,6 +1541,7 @@ const modelDeliveryModelPlanSchema = z
     outputPath: z.string(),
     sourceBytes: z.number(),
     sourceLastWriteUtc: z.string(),
+    sourceSha256: z.string().regex(/^[a-f0-9]{64}$/i),
     sourceIsWorkshared: z.boolean(),
     targetIsWorkshared: z.literal(false),
     linkCount: z.number(),
@@ -1538,6 +1562,7 @@ const modelDeliveryPreviewResultSchema = z
     deliveryId: z.string(),
     packagePath: z.string(),
     stagingPath: z.string(),
+    targetBinding: modelDeliveryTargetBindingSchema,
     models: z.array(modelDeliveryModelPlanSchema),
     blockers: z.array(modelDeliveryIssueSchema),
     warnings: z.array(modelDeliveryIssueSchema),
@@ -1578,6 +1603,7 @@ const modelDeliveryExecuteResultSchema = z
     published: z.boolean(),
     packagePath: z.string(),
     stagingPath: z.string(),
+    targetBinding: modelDeliveryTargetBindingSchema,
     completedUnits: z.number(),
     totalUnits: z.number(),
     progressPercent: z.number(),

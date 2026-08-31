@@ -6,7 +6,9 @@ param(
     [string] $InstallRoot = "$env:LOCALAPPDATA\RevitMcpNext",
     [string] $NodePath = "",
     [string] $PackageRoot = "",
-    [switch] $TrustRevitAlwaysLoad
+    [switch] $TrustRevitAlwaysLoad,
+    [switch] $RequireSignedPackage,
+    [switch] $RequireTrustedSignatures
 )
 
 $ErrorActionPreference = "Stop"
@@ -450,6 +452,7 @@ if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
 $sourceMode = "repository"
 $resolvedPackageRoot = ""
 $repoRoot = $scriptRootParent
+$signatureVerification = "not-requested"
 
 if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
     $sourceMode = "package"
@@ -470,6 +473,27 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
             }
         }
     }
+
+    if ($RequireSignedPackage -or $RequireTrustedSignatures) {
+        if (-not (Test-Path -LiteralPath $releaseManifestPath -PathType Leaf)) {
+            throw "Signed-package verification requires release-manifest.json."
+        }
+        if ($releaseManifest.signing.requested -ne $true) {
+            throw "This package is explicitly unsigned. A signed production package is required by the selected installer policy."
+        }
+        $signScript = Resolve-RequiredFile (Join-Path $resolvedPackageRoot "scripts\sign-release.ps1") "Packaged signing verifier is missing."
+        $signArguments = @("-PackageRoot", $resolvedPackageRoot, "-VerifyOnly", "-RequireSigned")
+        if ($RequireTrustedSignatures) {
+            $signArguments += "-RequireTrusted"
+        }
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $signScript @signArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Package Authenticode verification failed with exit code $LASTEXITCODE."
+        }
+        $signatureVerification = if ($RequireTrustedSignatures) { "trusted" } else { "signed" }
+    }
+} elseif ($RequireSignedPackage -or $RequireTrustedSignatures) {
+    throw "Signed-package verification is available only when installing an extracted package with -PackageRoot."
 }
 
 $nodeExe = Resolve-NodeExe
@@ -822,6 +846,7 @@ if ($sourceMode -eq "package") {
 }
 
 $installReceipt = [ordered] @{
+    product = "revit-mcp-next"
     installedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     version = $releaseVersion
     sourceMode = $sourceMode
@@ -835,6 +860,7 @@ $installReceipt = [ordered] @{
     }
     packagedNodeModules = -not [string]::IsNullOrWhiteSpace($packagedNodeModules)
     checksumVerification = ($sourceMode -ne "package" -or -not $SkipChecksumVerification)
+    signatureVerification = $signatureVerification
     nodePath = $nodeExe
     authConfig = [ordered] @{
         path = $authConfig
