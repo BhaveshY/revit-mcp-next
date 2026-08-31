@@ -79,18 +79,32 @@ namespace RevitMcpNext.Addin.Revit
         private readonly DocumentGenerationTracker _generations;
         private readonly PreviewTokenStore _previewTokens;
         private readonly ModelDeliveryWorkflow _modelDelivery;
+        private readonly string _runtimeInstanceId;
+
+        private sealed class TargetResolutionException : Exception
+        {
+            public TargetResolutionException(string code, string message)
+                : base(message)
+            {
+                Code = code;
+            }
+
+            public string Code { get; }
+        }
 
         public RevitExternalEventHandler(
             RevitRequestQueue queue,
             TransactionService transactions,
             DocumentGenerationTracker generations = null,
-            PreviewTokenStore previewTokens = null)
+            PreviewTokenStore previewTokens = null,
+            string runtimeInstanceId = null)
         {
             _queue = queue;
             _transactions = transactions;
             _generations = generations ?? new DocumentGenerationTracker();
             _previewTokens = previewTokens ?? new PreviewTokenStore();
             _modelDelivery = new ModelDeliveryWorkflow();
+            _runtimeInstanceId = string.IsNullOrWhiteSpace(runtimeInstanceId) ? "in-process" : runtimeInstanceId;
         }
 
         public void Execute(UIApplication app)
@@ -164,6 +178,17 @@ namespace RevitMcpNext.Addin.Revit
             var sw = Stopwatch.StartNew();
             try
             {
+                if (!string.IsNullOrWhiteSpace(request.InstanceId) &&
+                    !string.Equals(request.InstanceId, _runtimeInstanceId, StringComparison.Ordinal))
+                {
+                    return Failure(
+                        request,
+                        "TARGET_INSTANCE_MISMATCH",
+                        "This request targets Revit instance " + request.InstanceId +
+                        " but reached instance " + _runtimeInstanceId + ". Refresh revit.list_instances before retrying.",
+                        sw);
+                }
+
                 BridgeResponseEnvelope operationKindFailure = ValidateOperationKind(request, sw);
                 if (operationKindFailure != null) return operationKindFailure;
 
@@ -233,6 +258,10 @@ namespace RevitMcpNext.Addin.Revit
                             return Failure(request, "UNSUPPORTED_OPERATION", "Unsupported Revit MCP operation: " + request.Operation, sw);
                     }
                 });
+            }
+            catch (TargetResolutionException ex)
+            {
+                return Failure(request, ex.Code, ex.Message, sw);
             }
             catch (Exception ex)
             {
@@ -747,6 +776,10 @@ namespace RevitMcpNext.Addin.Revit
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_current_view.", sw);
             }
+            if (!IsUiActiveDocument(app, document))
+            {
+                return Failure(request, "TARGET_DOCUMENT_NOT_ACTIVE", "The targeted document is open but is not the UI-active Revit document required by revit.get_current_view.", sw);
+            }
 
             BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
@@ -785,6 +818,10 @@ namespace RevitMcpNext.Addin.Revit
             if (document == null)
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_current_view_elements.", sw);
+            }
+            if (!IsUiActiveDocument(app, document))
+            {
+                return Failure(request, "TARGET_DOCUMENT_NOT_ACTIVE", "The targeted document is open but is not the UI-active Revit document required by revit.get_current_view_elements.", sw);
             }
 
             BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
@@ -830,6 +867,10 @@ namespace RevitMcpNext.Addin.Revit
             if (document == null)
             {
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_selection.", sw);
+            }
+            if (!IsUiActiveDocument(app, document))
+            {
+                return Failure(request, "TARGET_DOCUMENT_NOT_ACTIVE", "The targeted document is open but is not the UI-active Revit document required by revit.get_selection.", sw);
             }
 
             BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
@@ -1500,6 +1541,7 @@ namespace RevitMcpNext.Addin.Revit
             PreviewToken token = _previewTokens.Issue(
                 previewId,
                 request.SessionId,
+                _runtimeInstanceId,
                 documentFingerprint,
                 generation,
                 transactionName,
@@ -1512,6 +1554,7 @@ namespace RevitMcpNext.Addin.Revit
             var data = new Dictionary<string, object>
             {
                 ["previewId"] = previewId,
+                ["instanceId"] = _runtimeInstanceId,
                 ["documentFingerprint"] = documentFingerprint,
                 ["changeSetHash"] = changeSetHash,
                 ["baseGeneration"] = generation,
@@ -1724,6 +1767,7 @@ namespace RevitMcpNext.Addin.Revit
             PreviewTokenValidation metadataValidation = _previewTokens.ValidateMetadata(
                 providedPreviewId,
                 request.SessionId,
+                _runtimeInstanceId,
                 documentFingerprint,
                 generation,
                 providedChangeSetHash);
@@ -1743,6 +1787,7 @@ namespace RevitMcpNext.Addin.Revit
             PreviewTokenValidation tokenValidation = _previewTokens.Validate(
                 providedPreviewId,
                 request.SessionId,
+                _runtimeInstanceId,
                 documentFingerprint,
                 generation,
                 transactionName,
@@ -1754,7 +1799,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, tokenValidation.Code, tokenValidation.Message, sw);
             }
 
-            _previewTokens.Consume(request.SessionId, providedPreviewId);
+            _previewTokens.Consume(request.SessionId, _runtimeInstanceId, providedPreviewId);
             List<Dictionary<string, object>> appliedChanges = _transactions.Write(document, transactionName, () =>
             {
                 var results = new List<Dictionary<string, object>>();
@@ -1769,6 +1814,7 @@ namespace RevitMcpNext.Addin.Revit
             var data = new Dictionary<string, object>
             {
                 ["previewId"] = expectedPreviewId,
+                ["instanceId"] = _runtimeInstanceId,
                 ["documentFingerprint"] = documentFingerprint,
                 ["changeSetHash"] = tokenValidation.Token.ChangeSetHash,
                 ["baseGeneration"] = tokenValidation.Token.Generation,
@@ -7003,9 +7049,9 @@ namespace RevitMcpNext.Addin.Revit
             return string.IsNullOrWhiteSpace(name) ? "Revit MCP Next change" : name.Trim();
         }
 
-        private static string ComputePreviewId(Document document, string transactionName, List<Dictionary<string, object>> operations)
+        private string ComputePreviewId(Document document, string transactionName, List<Dictionary<string, object>> operations)
         {
-            string raw = ComputeDocumentFingerprint(document) + "|" + transactionName + "|" + Canonicalize(operations);
+            string raw = _runtimeInstanceId + "|" + ComputeDocumentFingerprint(document) + "|" + transactionName + "|" + Canonicalize(operations);
             return HashString(raw).Substring(0, 24);
         }
 
@@ -7674,6 +7720,7 @@ namespace RevitMcpNext.Addin.Revit
             var data = new Dictionary<string, object>
             {
                 ["connected"] = true,
+                ["instanceId"] = _runtimeInstanceId,
                 ["brokerVersion"] = "unknown",
                 ["addinVersion"] = AddinVersion,
                 ["addinAssembly"] = BuildAddinAssemblyIdentity(),
@@ -8106,9 +8153,9 @@ namespace RevitMcpNext.Addin.Revit
                 UIDocument uidocument = app.ActiveUIDocument;
                 if (uidocument == null || !ReferenceEquals(uidocument.Document, document))
                 {
-                    scope = "selection";
-                    warnings.Add(new BridgeWarning { Code = "SELECTION_UNAVAILABLE", Message = "Selection is only available on the active document." });
-                    return Enumerable.Empty<Element>();
+                    throw new TargetResolutionException(
+                        "TARGET_DOCUMENT_NOT_ACTIVE",
+                        "The targeted document is open but is not the UI-active Revit document required for selection-scoped operations.");
                 }
 
                 scope = "selection";
@@ -10033,22 +10080,49 @@ namespace RevitMcpNext.Addin.Revit
         {
             foreach (Document document in app.Application.Documents)
             {
-                yield return document;
+                if (IsTargetableTopLevelDocument(document)) yield return document;
+            }
+        }
+
+        private static bool IsTargetableTopLevelDocument(Document document)
+        {
+            if (document == null) return false;
+            try
+            {
+                return document.IsValidObject && !document.IsLinked;
+            }
+            catch
+            {
+                return false;
             }
         }
 
         private static Document ResolveDocument(UIApplication app, BridgeRequestEnvelope request)
         {
             string requestedFingerprint = request.DocumentFingerprint ?? GetString(request.Payload, "documentFingerprint");
-            Document activeDocument = app.ActiveUIDocument?.Document;
+            List<Document> documents = EnumerateDocuments(app).ToList();
 
             if (string.IsNullOrWhiteSpace(requestedFingerprint))
             {
-                return activeDocument ?? EnumerateDocuments(app).FirstOrDefault();
+                if (documents.Count == 0) return null;
+                if (documents.Count == 1) return documents[0];
+                throw new TargetResolutionException(
+                    "TARGET_SELECTION_REQUIRED",
+                    "Multiple Revit documents are open. Select an exact documentFingerprint before running a document-scoped operation.");
             }
 
-            return EnumerateDocuments(app)
+            Document match = documents
                 .FirstOrDefault(document => string.Equals(ComputeDocumentFingerprint(document), requestedFingerprint, StringComparison.OrdinalIgnoreCase));
+            if (match != null) return match;
+
+            throw new TargetResolutionException(
+                "TARGET_DOCUMENT_UNAVAILABLE",
+                "The targeted Revit document is closed, changed, or unavailable. Refresh revit.list_documents and select it again.");
+        }
+
+        private static bool IsUiActiveDocument(UIApplication app, Document document)
+        {
+            return app.ActiveUIDocument != null && ReferenceEquals(app.ActiveUIDocument.Document, document);
         }
 
         private static string GetDocumentId(Document document)

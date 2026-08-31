@@ -697,7 +697,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   private nextDuplicateTypeId = 9901;
 
   async bridgeHealth(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<BridgeHealthResult>> {
     maybeAbort(options);
@@ -741,7 +741,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   }
 
   async status(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitStatus>> {
     maybeAbort(options);
@@ -794,7 +794,7 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
   }
 
   async listDocuments(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitDocumentSummary[]>> {
     maybeAbort(options);

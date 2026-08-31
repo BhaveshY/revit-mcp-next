@@ -66,6 +66,51 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(result.structuredContent?.data?.diagnostics?.queue?.pendingCount, 0);
     assert.equal(result.structuredContent?.data?.diagnostics?.previewTokens?.activeCount, 0);
 
+    const instances = (await client.callTool({ name: "revit.list_instances", arguments: {} })) as {
+      isError?: boolean;
+      structuredContent?: { data?: Array<{ instanceId: string; documents: Array<{ fingerprint: string }> }> };
+    };
+    assert.equal(instances.isError, undefined);
+    assert.equal(instances.structuredContent?.data?.length, 1);
+    assert.equal(instances.structuredContent?.data?.[0]?.instanceId, "legacy-default");
+
+    const setTarget = (await client.callTool({
+      name: "revit.set_target",
+      arguments: {
+        instanceId: "legacy-default",
+        documentFingerprint: "sample-doc-fingerprint",
+        generation: 7,
+      },
+    })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { selected?: boolean }; target?: { documentFingerprint?: string } };
+    };
+    assert.equal(setTarget.isError, undefined);
+    assert.equal(setTarget.structuredContent?.data?.selected, true);
+    assert.equal(setTarget.structuredContent?.target?.documentFingerprint, "sample-doc-fingerprint");
+
+    const getTarget = (await client.callTool({ name: "revit.get_target", arguments: {} })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { target?: { instanceId?: string; documentFingerprint?: string } } };
+    };
+    assert.equal(getTarget.isError, undefined);
+    assert.equal(getTarget.structuredContent?.data?.target?.instanceId, "legacy-default");
+
+    const targetedStatus = (await client.callTool({ name: "revit.status", arguments: {} })) as {
+      content: Array<{ type: "text"; text: string }>;
+      structuredContent?: { target?: { documentFingerprint?: string; generation?: number } };
+    };
+    assert.match(targetedStatus.content[0]?.text ?? "", /Target: Revit, instance legacy-default/);
+    assert.equal(targetedStatus.structuredContent?.target?.documentFingerprint, "sample-doc-fingerprint");
+    assert.equal(targetedStatus.structuredContent?.target?.generation, 7);
+
+    const clearTarget = (await client.callTool({ name: "revit.clear_target", arguments: {} })) as {
+      isError?: boolean;
+      structuredContent?: { data?: { selected?: boolean } };
+    };
+    assert.equal(clearTarget.isError, undefined);
+    assert.equal(clearTarget.structuredContent?.data?.selected, false);
+
     const bridgeHealthTool = tools.tools.find((tool) => tool.name === "revit.bridge_health");
     assert.ok(bridgeHealthTool, "revit.bridge_health tool should be listed");
     assert.equal(bridgeHealthTool.annotations?.readOnlyHint, true);
@@ -108,6 +153,10 @@ test("broker exposes annotated tools with output schemas and callable structured
     assert.equal(requestResult.structuredContent?.data?.state, "failed");
 
     for (const expected of [
+      "revit.list_instances",
+      "revit.set_target",
+      "revit.get_target",
+      "revit.clear_target",
       "revit.bridge_health",
       "revit.get_request_result",
       "revit.get_current_view",
@@ -1342,7 +1391,6 @@ test("broker exposes annotated tools with output schemas and callable structured
       name: "revit.apply_change_set",
       arguments: {
         transactionName: "Update Mark Wall Move",
-        documentFingerprint: preview.structuredContent?.data?.documentFingerprint,
         baseGeneration: preview.structuredContent?.data?.baseGeneration,
         changeSetHash: preview.structuredContent?.data?.changeSetHash,
         expiresAt: preview.structuredContent?.data?.expiresAt,

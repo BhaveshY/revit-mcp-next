@@ -1,11 +1,12 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import type { BridgeProtocolVersion, BridgeResponse } from "@revit-mcp-next/contracts";
+import type { BridgeProtocolVersion, BridgeResponse, RevitTarget } from "@revit-mcp-next/contracts";
 import type { RevitBridgeClient } from "../ipc/RevitBridgeClient.js";
 import { makeRequest } from "../ipc/RequestFactory.js";
 import { applyDecodedPageCursor, decodePageCursor, encodePageCursorResponse } from "./pageCursor.js";
 import { asToolResult } from "./toolResult.js";
 import type { ModelDeliveryRecipeStore } from "../recipes/ModelDeliveryRecipeStore.js";
+import type { SessionTargetingBridgeRouter } from "../targeting/SessionTargetingBridgeRouter.js";
 
 interface CoreToolContext {
   bridge: RevitBridgeClient;
@@ -13,6 +14,7 @@ interface CoreToolContext {
   sessionId: string;
   bridgeProtocolVersion: BridgeProtocolVersion;
   recipeStore: ModelDeliveryRecipeStore;
+  targeting: SessionTargetingBridgeRouter;
 }
 
 const boundedString = z.string().min(1).max(128);
@@ -55,6 +57,7 @@ const queryFilterSchema = z
 const scopedQueryFilterSchema = queryFilterSchema.omit({ viewId: true, selectionOnly: true });
 
 const documentGuardSchema = {
+  instanceId: boundedString.optional().describe("Optional stable Revit runtime instance ID from revit.list_instances."),
   documentFingerprint: boundedString.optional().describe("Optional active document fingerprint from revit.status."),
   expectedGeneration: generationSchema.optional().describe("Expected active document generation from revit.status."),
 };
@@ -536,6 +539,7 @@ const catalogFilterSchema = z
   .strict();
 
 const catalogSchema = {
+  instanceId: boundedString.optional().describe("Optional stable Revit runtime instance ID from revit.list_instances."),
   kind: z.enum(["elementTypes", "familySymbols", "titleBlocks", "viewFamilyTypes", "textNoteTypes", "dimensionTypes", "tagTypes"]),
   documentFingerprint: boundedString.optional().describe("Optional active document fingerprint from revit.status."),
   expectedGeneration: generationSchema.optional().describe("Expected active document generation from revit.status."),
@@ -1010,6 +1014,7 @@ const changeOperationSchema = z.union([
 ]);
 
 const changeSetSchema = {
+  instanceId: boundedString.optional().describe("Stable Revit runtime instance ID from revit.list_instances."),
   documentFingerprint: boundedString.optional().describe("Active document fingerprint from revit.status or preview output."),
   expectedGeneration: generationSchema.optional().describe("Expected active document generation before previewing/applying."),
   baseGeneration: generationSchema.optional().describe("Document generation captured by preview_change_set and echoed to apply."),
@@ -1021,7 +1026,9 @@ const changeSetSchema = {
 
 const applyChangeSchema = {
   ...changeSetSchema,
-  documentFingerprint: boundedString.describe("Active document fingerprint returned by preview_change_set."),
+  documentFingerprint: boundedString
+    .optional()
+    .describe("Optional exact document fingerprint returned by preview_change_set. When omitted, the MCP session target is injected."),
   baseGeneration: generationSchema.describe("Document generation captured by preview_change_set and echoed to apply."),
   changeSetHash: changeSetHashSchema.describe("Opaque hash for the exact previewed change set."),
   expiresAt: expiresAtSchema,
@@ -1074,6 +1081,20 @@ const errorDataSchema = z
   })
   .passthrough();
 
+const targetSchema = z
+  .object({
+    instanceId: z.string(),
+    processId: z.number().int().optional(),
+    revitVersion: z.string().optional(),
+    documentFingerprint: z.string(),
+    documentTitle: z.string(),
+    documentPath: z.string().optional(),
+    generation: z.number().int().min(0),
+    isUiActive: z.boolean().optional(),
+    selectionMode: z.enum(["explicit", "implicit-single-document"]).optional(),
+  })
+  .strict();
+
 function toolOutputSchema(dataSchema: z.ZodTypeAny) {
   return z
     .object({
@@ -1081,6 +1102,7 @@ function toolOutputSchema(dataSchema: z.ZodTypeAny) {
       warnings: z.array(warningSchema),
       metrics: metricsSchema,
       generation: z.number().optional(),
+      target: targetSchema.optional(),
     })
     .strict();
 }
@@ -1254,6 +1276,10 @@ const viewSummarySchema = z
 
 const documentSummarySchema = documentReferenceSchema
   .extend({
+    instanceId: z.string().optional(),
+    processId: z.number().int().optional(),
+    revitVersion: z.string().optional(),
+    revitBuild: z.string().optional(),
     documentId: z.string().optional(),
     isActive: z.boolean().optional(),
     isWorkshared: z.boolean().optional(),
@@ -1347,6 +1373,7 @@ const bridgeHealthDataSchema = z
 const statusDataSchema = z
   .object({
     connected: z.boolean(),
+    instanceId: z.string().optional(),
     brokerVersion: z.string().optional(),
     addinVersion: z.string().optional(),
     addinAssembly: z
@@ -1397,6 +1424,30 @@ const createProjectFromTemplateResultSchema = z
     source: z.literal("revit-api"),
   })
   .passthrough();
+
+const instanceSummarySchema = z
+  .object({
+    instanceId: z.string(),
+    processId: z.number().int().optional(),
+    revitVersion: z.string().optional(),
+    revitBuild: z.string().optional(),
+    addinVersion: z.string().optional(),
+    startedAtUtc: z.string().optional(),
+    lastSeenAtUtc: z.string().optional(),
+    connected: z.boolean(),
+    documents: z.array(documentSummarySchema),
+    error: bridgeErrorSchema.optional(),
+  })
+  .strict();
+
+const sessionTargetResultSchema = z
+  .object({
+    selected: z.boolean(),
+    sessionId: z.string(),
+    target: targetSchema.optional(),
+  })
+  .strict();
+
 const createModelDeliveryFixtureResultSchema = z
   .object({
     fixtureId: z.string(),
@@ -1888,9 +1939,12 @@ const outputSchemas = {
       warnings: z.array(warningSchema),
       metrics: metricsSchema,
       generation: z.number().optional(),
+      target: targetSchema.optional(),
     })
     .strict(),
   status: toolOutputSchema(statusDataSchema),
+  instances: toolOutputSchema(z.array(instanceSummarySchema)),
+  sessionTarget: toolOutputSchema(sessionTargetResultSchema),
   bridgeHealth: toolOutputSchema(bridgeHealthDataSchema),
   requestResult: toolOutputSchema(requestResultDataSchema),
   documents: toolOutputSchema(z.array(documentSummarySchema)),
@@ -1966,7 +2020,8 @@ function readBundleFailure(
   requestId: string,
   failed: Record<string, unknown>,
   warnings: Array<{ code: string; message: string }>,
-  startedAt: number
+  startedAt: number,
+  target: RevitTarget
 ): BridgeResponse<unknown> {
   return {
     ok: false,
@@ -1979,17 +2034,85 @@ function readBundleFailure(
     },
     warnings,
     metrics: { elapsedMs: Date.now() - startedAt },
+    target,
   };
 }
 
 export function registerCoreTools(server: McpServer, context: CoreToolContext): void {
+  server.registerTool(
+    "revit.list_instances",
+    {
+      title: "List Revit Instances",
+      description: "List every live Revit process, version, runtime instance ID, connection state, and open document.",
+      inputSchema: z.object({}),
+      outputSchema: outputSchemas.instances,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (_args, ctx) => {
+      const response = await context.targeting.listInstances({ signal: ctx.mcpReq.signal });
+      return asToolResult(response, (instances) =>
+        `${instances.length} live Revit instance(s), ${instances.reduce((total, instance) => total + instance.documents.length, 0)} open document(s).`
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.set_target",
+    {
+      title: "Set Revit Session Target",
+      description: "Select the exact Revit runtime instance and document for this MCP session. Titles are intentionally not accepted.",
+      inputSchema: {
+        instanceId: boundedString.describe("Stable runtime instance ID from revit.list_instances."),
+        documentFingerprint: boundedString.describe("Exact document fingerprint from revit.list_instances or revit.list_documents."),
+        generation: generationSchema.optional().describe("Optional generation guard from the same listing."),
+      },
+      outputSchema: outputSchemas.sessionTarget,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args, ctx) => {
+      const response = await context.targeting.setTarget(args, { signal: ctx.mcpReq.signal });
+      return asToolResult(response, (result) =>
+        result.target ? `Session target set to ${result.target.documentTitle}.` : "No Revit session target was set."
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.get_target",
+    {
+      title: "Get Revit Session Target",
+      description: "Return and validate the target stored only for this MCP session.",
+      inputSchema: z.object({}),
+      outputSchema: outputSchemas.sessionTarget,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (_args, ctx) => {
+      const response = await context.targeting.getTarget({ signal: ctx.mcpReq.signal });
+      return asToolResult(response, (result) =>
+        result.target ? `Session target is ${result.target.documentTitle}.` : "This MCP session has no selected Revit target."
+      );
+    }
+  );
+
+  server.registerTool(
+    "revit.clear_target",
+    {
+      title: "Clear Revit Session Target",
+      description: "Clear only this MCP session's selected Revit instance/document target.",
+      inputSchema: z.object({}),
+      outputSchema: outputSchemas.sessionTarget,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => asToolResult(context.targeting.clearTarget(), () => "This MCP session's Revit target was cleared.")
+  );
+
   server.registerTool(
     "revit.status",
     {
       title: "Revit Status",
       description:
         "Check Revit bridge health, active document/view, versions, capabilities, selection count, queue diagnostics, and preview-token health. Start every Revit workflow here.",
-      inputSchema: z.object({}),
+      inputSchema: { instanceId: boundedString.optional().describe("Optional runtime instance ID when no session target is set.") },
       outputSchema: outputSchemas.status,
       annotations: {
         readOnlyHint: true,
@@ -1998,8 +2121,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (_args, ctx) => {
-      const request = makeRequest(context.sessionId, "status", "read", {}, 5000);
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "status", "read", { instanceId: args.instanceId }, 5000);
+      request.instanceId = args.instanceId;
       const response = await context.bridge.status(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (data) =>
         data.connected
@@ -2103,6 +2227,17 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const warnings: Array<{ code: string; message: string }> = [];
       const sectionMetrics: Record<string, unknown> = {};
 
+      const targetResponse = await context.targeting.resolveTarget(
+        {
+          instanceId: args.instanceId,
+          documentFingerprint: args.documentFingerprint,
+          generation: args.expectedGeneration,
+        },
+        { signal: ctx.mcpReq.signal }
+      );
+      if (!targetResponse.ok) return asToolResult(targetResponse, () => "");
+      const effectiveTarget = targetResponse.data;
+
       const record = (
         name: string,
         response: BridgeResponse<unknown>,
@@ -2125,25 +2260,26 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
 
         const failed = sectionFailure(name, wrapped);
         failedSections.push(failed);
-        return continueOnError ? null : readBundleFailure(bundleRequest.requestId, failed, warnings, startedAt);
+        return continueOnError ? null : readBundleFailure(bundleRequest.requestId, failed, warnings, startedAt, effectiveTarget);
       };
 
-      const statusRequest = makeRequest(context.sessionId, "status", "read", {}, 5000);
+      const statusRequest = makeRequest(context.sessionId, "status", "read", { instanceId: effectiveTarget.instanceId }, 5000);
+      statusRequest.instanceId = effectiveTarget.instanceId;
       const statusResponse = await context.bridge.status(statusRequest, { signal: ctx.mcpReq.signal });
       const statusFailure = record("status", statusResponse, { forceReturn: include.status });
       if (statusFailure) return asToolResult(statusFailure, () => "");
       if (!statusResponse.ok) return asToolResult(statusResponse, () => "");
 
-      const status = statusResponse.data;
-      const documentFingerprint = args.documentFingerprint ?? status.activeDocument?.fingerprint;
-      const expectedGeneration = args.expectedGeneration ?? status.activeDocument?.generation;
+      const documentFingerprint = effectiveTarget.documentFingerprint;
+      const expectedGeneration = args.expectedGeneration ?? effectiveTarget.generation;
       const guard = compactObject({
+        instanceId: effectiveTarget.instanceId,
         documentFingerprint,
         expectedGeneration,
       });
 
       if (include.levels) {
-        const payload = compactObject({ documentFingerprint, expectedGeneration });
+        const payload = compactObject({ instanceId: effectiveTarget.instanceId, documentFingerprint, expectedGeneration });
         const request = makeRequest(context.sessionId, "get_levels", "read", payload, 10000);
         const failure = record("levels", await context.bridge.getLevels(request, { signal: ctx.mcpReq.signal }));
         if (failure) return asToolResult(failure, () => "");
@@ -2328,6 +2464,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
           totalCount: returnedSections.length + failedSections.length,
         },
         generation: typeof expectedGeneration === "number" ? expectedGeneration : undefined,
+        target: effectiveTarget,
       };
 
       return asToolResult(
@@ -2343,8 +2480,8 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     "revit.list_documents",
     {
       title: "List Revit Documents",
-      description: "List open Revit documents with title, path, active flag, fingerprint, active view, and generation.",
-      inputSchema: z.object({}),
+      description: "List open Revit documents across all live instances with process/version identity, active flag, fingerprint, active view, and generation.",
+      inputSchema: { instanceId: boundedString.optional().describe("Optional exact Revit runtime instance ID filter.") },
       outputSchema: outputSchemas.documents,
       annotations: {
         readOnlyHint: true,
@@ -2353,8 +2490,9 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
         openWorldHint: false,
       },
     },
-    async (_args, ctx) => {
-      const request = makeRequest(context.sessionId, "list_documents", "read", {}, 10000);
+    async (args, ctx) => {
+      const request = makeRequest(context.sessionId, "list_documents", "read", { instanceId: args.instanceId }, 10000);
+      request.instanceId = args.instanceId;
       const response = await context.bridge.listDocuments(request, { signal: ctx.mcpReq.signal });
       return asToolResult(response, (docs) => `${docs.length} Revit document(s) open.`);
     }
@@ -2639,6 +2777,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -2678,6 +2817,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -2717,6 +2857,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -2756,6 +2897,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         scheduleId: args.scheduleId,
@@ -2818,6 +2960,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -2856,6 +2999,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: { ...(args.filter ?? {}), selectionOnly: true },
@@ -2920,6 +3064,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const payload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         scenarios: args.scenarios,
@@ -2951,6 +3096,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const payload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         includeProjectInfo: args.includeProjectInfo ?? true,
@@ -2991,6 +3137,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -3030,6 +3177,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -3068,6 +3216,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter ?? {},
@@ -3107,6 +3256,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         kind: args.kind,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
@@ -3146,6 +3296,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     },
     async (args, ctx) => {
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter,
@@ -3185,6 +3336,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     async (args, ctx) => {
       const options = resolveParameterDescribeOptions(args);
       const basePayload = {
+        instanceId: args.instanceId,
         documentFingerprint: args.documentFingerprint,
         expectedGeneration: args.expectedGeneration,
         filter: args.filter,

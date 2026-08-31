@@ -288,7 +288,11 @@ The included scripts search the auth-config install root,
 - `revit.get_request_result`
 - `revit.status`
 - `revit.read_bundle`
+- `revit.list_instances`
 - `revit.list_documents`
+- `revit.set_target`
+- `revit.get_target`
+- `revit.clear_target`
 - `revit.create_project_from_template`
 - `revit.get_levels`
 - `revit.get_views`
@@ -314,6 +318,8 @@ The included scripts search the auth-config install root,
 Use `revit.bridge_health` when normal calls stall or disconnect. It runs over a reserved control pipe and reports listener, connection, queue, fault, and request-outcome state without joining the Revit work queue. Use `revit.status` for active-document and Revit API diagnostics before retrying a workflow.
 
 Use `revit.get_request_result` with the original request ID when a sent write returns `BRIDGE_WRITE_OUTCOME_UNKNOWN`. It reads the current add-in process's bounded outcome ledger and never replays the write.
+
+When several projects or Revit processes are open, call `revit.list_instances`, then `revit.set_target` with the exact `instanceId`, `documentFingerprint`, and optional `generation`. That target is held only inside the current MCP server session and is injected into later document-scoped reads, previews, and writes. `revit.get_target` validates it; `revit.clear_target` removes it. With exactly one open document the broker selects it implicitly. With more than one, calls are blocked until an exact target is selected; Revit window/tab activity is never used as a silent fallback. Current-view and selection operations return `TARGET_DOCUMENT_NOT_ACTIVE` when the selected document is not the UI-active tab.
 
 Read tools are intentionally compact and paginated where results can grow. Use `revit.status` diagnostics for queue health, ExternalEvent raise state, preview-token pressure, and recovery hints before retrying a stalled workflow. Use `revit.read_bundle` as the compact first MCP call when an agent needs status, levels, readiness, current view, scoped elements, selection, and a few small catalog or parameter sections for planning. Use `revit.get_views` and `revit.get_sheets` for view/sheet planning, `revit.get_schedules` and `revit.get_schedule_fields` for schedule inventory and exact schedulable field IDs before schedule writes, `revit.get_current_view_elements` and `revit.get_selection` for ergonomic scoped reads, `revit.query` for custom filters or explicit `elementIds`/`uniqueIds`, `revit.describe_parameters` before parameter edits, `revit.analyze_model` for bounded model statistics, `revit.get_model_readiness` for agent preflight checks, `revit.get_model_context` for phase/workset/design-option/link planning IDs, `revit.get_material_quantities` for normalized material takeoffs, `revit.get_warnings` for compact model-health warning lists, and `revit.get_rooms` for compact room export data with room numbers, names, levels, areas, volumes, locations, and schedule fields. `revit.create_project_from_template` is a direct fixture/setup write tool, not a preview/apply model edit; it requires `confirm: true` and creates a disposable `.rvt` from a local `.rte`. For element placement work, use `preset: "geometrySummary"` on `revit.query` or scoped element reads to return compact `location` and model-space `bounds` in millimeters without dumping parameters. Prefer cursor-first reads with `includeTotalCount: false`; exact counts are opt-in because they can require scanning every match in large projects. MCP cursors are opaque continuation tokens: do not parse, increment, shorten, construct, or reuse them after changing any argument. For the next page, repeat the same tool call with the same arguments and only add `cursor` from `structuredContent.data.cursor`; if a cursor came from a `revit.read_bundle` section, continue with that section's underlying tool and the same section arguments. `revit.describe_parameters` defaults to `preset: "writableEdit"` for compact writable instance parameter metadata; use `preset: "namesOnly"` for broader name discovery without values or `preset: "full"` for legacy read-only/type/value detail.
 

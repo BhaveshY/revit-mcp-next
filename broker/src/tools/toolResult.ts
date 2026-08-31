@@ -1,5 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import type { BridgeResponse } from "@revit-mcp-next/contracts";
+import type { BridgeResponse, RevitTarget } from "@revit-mcp-next/contracts";
 
 type ToolDataShape = {
   truncated?: unknown;
@@ -12,6 +12,7 @@ type RevitToolResult = CallToolResult & {
     warnings: unknown;
     metrics: unknown;
     generation?: unknown;
+    target?: unknown;
   };
 };
 
@@ -29,7 +30,7 @@ export function asToolResult<T>(
       content: [
         {
           type: "text",
-          text: `${response.error.code}: ${response.error.message}${suggestedNextAction}`,
+          text: appendTargetIdentity(`${response.error.code}: ${response.error.message}${suggestedNextAction}`, response.target),
         },
       ],
       structuredContent: {
@@ -38,6 +39,7 @@ export function asToolResult<T>(
         },
         warnings: response.warnings,
         metrics: response.metrics ?? { elapsedMs: 0 },
+        ...(response.target ? { target: sanitizeStructuredValue(response.target) } : {}),
       },
     };
   }
@@ -46,14 +48,15 @@ export function asToolResult<T>(
     content: [
       {
         type: "text",
-        text: appendResultHints(summarize(response.data), response.data),
+        text: appendTargetIdentity(appendResultHints(summarize(response.data), response.data), response.target),
       },
     ],
     structuredContent: {
       data: sanitizeStructuredValue(response.data),
       warnings: response.warnings,
       metrics: response.metrics,
-      generation: response.generation,
+      ...(response.generation === undefined ? {} : { generation: response.generation }),
+      ...(response.target ? { target: sanitizeStructuredValue(response.target) } : {}),
     },
   };
 }
@@ -67,6 +70,13 @@ function appendResultHints(text: string, data: unknown): string {
     : "Result was truncated; narrow the filters or request the next page if the tool returned a cursor.";
   const separator = text.endsWith(".") ? " " : ". ";
   return `${text}${separator}${hint}`;
+}
+
+function appendTargetIdentity(text: string, target: RevitTarget | undefined): string {
+  if (!target) return text;
+  const version = target.revitVersion ? `Revit ${target.revitVersion}` : "Revit";
+  const process = target.processId ? ` process ${target.processId}` : "";
+  return `${text} Target: ${version}${process}, instance ${target.instanceId}, document "${target.documentTitle}" (${target.documentFingerprint}), generation ${target.generation}.`;
 }
 
 function isRecord(value: unknown): value is ToolDataShape {

@@ -93,6 +93,7 @@ export interface BridgeRequest<TPayload = unknown> {
   operation: string;
   operationKind: OperationKind;
   timeoutMs: number;
+  instanceId?: string;
   documentFingerprint?: string;
   expectedGeneration?: number;
   payload: TPayload;
@@ -105,6 +106,7 @@ export interface BridgeSuccess<TData = unknown> {
   warnings: BridgeWarning[];
   metrics: BridgeMetrics;
   generation?: number;
+  target?: RevitTarget;
 }
 
 export interface BridgeFailure {
@@ -113,6 +115,7 @@ export interface BridgeFailure {
   error: BridgeError;
   warnings: BridgeWarning[];
   metrics?: BridgeMetrics;
+  target?: RevitTarget;
 }
 
 export type BridgeResponse<TData = unknown> = BridgeSuccess<TData> | BridgeFailure;
@@ -140,6 +143,41 @@ export interface RevitDocumentSummary {
   isModified?: boolean;
   activeView?: RevitViewSummary;
   generation: number;
+}
+
+export interface RevitTarget {
+  instanceId: string;
+  processId?: number;
+  revitVersion?: string;
+  documentFingerprint: string;
+  documentTitle: string;
+  documentPath?: string;
+  generation: number;
+  isUiActive?: boolean;
+  selectionMode?: "explicit" | "implicit-single-document";
+}
+
+export interface RevitInstanceSummary {
+  instanceId: string;
+  processId?: number;
+  revitVersion?: string;
+  revitBuild?: string;
+  addinVersion?: string;
+  startedAtUtc?: string;
+  lastSeenAtUtc?: string;
+  connected: boolean;
+  documents: Array<RevitDocumentSummary & {
+    instanceId: string;
+    processId?: number;
+    revitVersion?: string;
+  }>;
+  error?: BridgeError;
+}
+
+export interface RevitSessionTargetResult {
+  selected: boolean;
+  sessionId: string;
+  target?: RevitTarget;
 }
 
 export interface BridgeQueueDiagnostics {
@@ -209,6 +247,7 @@ export interface BridgeHealthResult {
 
 export interface RevitStatus {
   connected: boolean;
+  instanceId?: string;
   brokerVersion: string;
   addinVersion?: string;
   addinAssembly?: {

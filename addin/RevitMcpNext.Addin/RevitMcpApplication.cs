@@ -16,6 +16,8 @@ namespace RevitMcpNext.Addin
         private RevitExternalEventHandler _handler;
         private ExternalEvent _externalEvent;
         private DocumentGenerationTracker _generationTracker;
+        private RuntimeInstanceRegistration _instanceRegistration;
+        private string _runtimeInstanceId;
 
         public Result OnStartup(UIControlledApplication application)
         {
@@ -25,27 +27,44 @@ namespace RevitMcpNext.Addin
                 _generationTracker = new DocumentGenerationTracker();
                 application.ControlledApplication.DocumentChanged += OnDocumentChanged;
 
-                _handler = new RevitExternalEventHandler(_queue, new TransactionService(), _generationTracker);
+                _runtimeInstanceId = PipeNameProvider.CreateRuntimeInstanceId(application.ControlledApplication.VersionNumber);
+
+                _handler = new RevitExternalEventHandler(
+                    _queue,
+                    new TransactionService(),
+                    _generationTracker,
+                    runtimeInstanceId: _runtimeInstanceId);
                 _externalEvent = ExternalEvent.Create(_handler);
                 RevitMcpInProcessBridge.Configure(_handler);
 
                 _queue.AttachExternalEvent(_externalEvent);
 
-                string pipeName = PipeNameProvider.GetDefaultPipeName();
+                string pipeName = PipeNameProvider.GetRuntimePipeName(_runtimeInstanceId);
                 PipeAuthOptions authOptions = PipeAuthOptions.FromEnvironment();
                 _pipeHost = new NamedPipeHost(
                     pipeName: pipeName,
                     requestQueue: _queue,
                     authOptions: authOptions);
                 _pipeHost.Start();
+                _instanceRegistration = RuntimeInstanceRegistration.Start(
+                    _runtimeInstanceId,
+                    pipeName,
+                    application.ControlledApplication.VersionNumber,
+                    application.ControlledApplication.VersionBuild,
+                    typeof(RevitMcpApplication).Assembly.GetName().Version?.ToString() ?? string.Empty);
                 DiagnosticsLogger.Info(
-                    "Revit MCP Next add-in started on pipe " + pipeName + ". Pipe ACL is restricted to the current Windows user. Auth token required=" + authOptions.IsRequired + ".");
+                    "Revit MCP Next add-in instance " + _runtimeInstanceId + " started on pipe " + pipeName + ". Pipe ACL is restricted to the current Windows user. Auth token required=" + authOptions.IsRequired + ".");
 
                 return Result.Succeeded;
             }
             catch (Exception ex)
             {
                 application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+                _instanceRegistration?.Dispose();
+                RevitMcpInProcessBridge.Clear(_handler);
+                _pipeHost?.Dispose();
+                _queue?.CancelAll("ADDIN_STARTUP_FAILED", "Revit MCP Next add-in startup failed.");
+                _externalEvent?.Dispose();
                 DiagnosticsLogger.Error("Revit MCP Next add-in startup failed.", ex);
                 return Result.Failed;
             }
@@ -56,6 +75,7 @@ namespace RevitMcpNext.Addin
             try
             {
                 application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+                _instanceRegistration?.Dispose();
                 RevitMcpInProcessBridge.Clear(_handler);
                 _pipeHost?.Dispose();
                 _queue?.CancelAll("ADDIN_SHUTDOWN", "Revit is shutting down.");

@@ -61,7 +61,7 @@ import type {
 
 export interface RevitBridgeClient {
   bridgeHealth(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<BridgeHealthResult>>;
   getRequestResult<TData = unknown>(
@@ -69,11 +69,11 @@ export interface RevitBridgeClient {
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RequestResultResult<TData>>>;
   status(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitStatus>>;
   listDocuments(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitDocumentSummary[]>>;
   createProjectFromTemplate(

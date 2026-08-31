@@ -4,8 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BridgeRequest, BridgeResponse, OperationKind } from "@revit-mcp-next/contracts";
+import { FileSystemRevitInstanceDirectory } from "../instances/FileSystemRevitInstanceDirectory.js";
 import { makeRequest } from "../ipc/RequestFactory.js";
 import { NamedPipeBridgeClient } from "../ipc/NamedPipeBridgeClient.js";
+import type { RevitBridgeClient } from "../ipc/RevitBridgeClient.js";
+import { SessionTargetingBridgeRouter } from "../targeting/SessionTargetingBridgeRouter.js";
+import { SessionTargetStore } from "../targeting/SessionTargetStore.js";
 
 const DEFAULT_PIPE_NAME = "revit-mcp-next";
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -180,20 +184,35 @@ export async function runRevitCtl(options: RevitCtlOptions): Promise<{ exitCode:
     defaultTimeoutMs: runtime.timeoutMs,
     authToken: runtime.authToken,
   });
+  const useInstanceDiscovery = options.pipeName === undefined;
+  const instanceDirectory = useInstanceDiscovery
+    ? new FileSystemRevitInstanceDirectory({
+        sessionId,
+        defaultTimeoutMs: runtime.timeoutMs,
+        fallbackBridge: bridge,
+        fallbackPipeName: runtime.pipeName,
+        registryRoot: process.env.REVIT_MCP_NEXT_INSTANCE_REGISTRY,
+        authToken: runtime.authToken,
+      })
+    : undefined;
+  const routedBridge = instanceDirectory
+    ? new SessionTargetingBridgeRouter(instanceDirectory, new SessionTargetStore(sessionId), sessionId).bridge
+    : bridge;
 
   try {
     if (options.command === "doctor") {
-      return await runDoctor(bridge, sessionId, runtime.timeoutMs, runtime.discovery);
+      return await runDoctor(routedBridge, sessionId, runtime.timeoutMs, runtime.discovery);
     }
     if (options.command === "read-bundle" || options.command === "bundle") {
-      return await runReadBundle(bridge, sessionId, runtime.timeoutMs, payloadObject(options.payload));
+      return await runReadBundle(routedBridge, sessionId, runtime.timeoutMs, payloadObject(options.payload));
     }
 
     const { operation, operationKind, payload } = resolveCommandOperation(options);
     const request = makeRequest(sessionId, operation, operationKind, payload, runtime.timeoutMs);
-    const response = await callBridge(bridge, request);
+    const response = await callBridge(routedBridge, request);
     return { exitCode: response.ok ? 0 : 2, body: response };
   } finally {
+    instanceDirectory?.dispose();
     bridge.dispose();
   }
 }
@@ -333,7 +352,7 @@ function resolveCommandOperation(options: RevitCtlOptions): {
 }
 
 async function runDoctor(
-  bridge: NamedPipeBridgeClient,
+  bridge: RevitBridgeClient,
   sessionId: string,
   timeoutMs: number,
   discovery?: ClientDiscovery
@@ -359,7 +378,7 @@ async function runDoctor(
 }
 
 async function runReadBundle(
-  bridge: NamedPipeBridgeClient,
+  bridge: RevitBridgeClient,
   sessionId: string,
   timeoutMs: number,
   args: Record<string, unknown>
@@ -595,58 +614,60 @@ async function runReadBundle(
 }
 
 async function callBridge(
-  bridge: NamedPipeBridgeClient,
+  bridge: RevitBridgeClient,
   request: BridgeRequest<Record<string, unknown>>
 ): Promise<BridgeResponse<unknown>> {
   switch (request.operation) {
     case "status":
-      return bridge.status(request as Parameters<NamedPipeBridgeClient["status"]>[0]);
+      return bridge.status(request as Parameters<RevitBridgeClient["status"]>[0]);
     case "list_documents":
-      return bridge.listDocuments(request as Parameters<NamedPipeBridgeClient["listDocuments"]>[0]);
+      return bridge.listDocuments(request as Parameters<RevitBridgeClient["listDocuments"]>[0]);
     case "create_project_from_template":
-      return bridge.createProjectFromTemplate(request as unknown as Parameters<NamedPipeBridgeClient["createProjectFromTemplate"]>[0]);
+      return bridge.createProjectFromTemplate(request as unknown as Parameters<RevitBridgeClient["createProjectFromTemplate"]>[0]);
     case "get_levels":
-      return bridge.getLevels(request as Parameters<NamedPipeBridgeClient["getLevels"]>[0]);
+      return bridge.getLevels(request as Parameters<RevitBridgeClient["getLevels"]>[0]);
     case "get_views":
-      return bridge.getViews(request as unknown as Parameters<NamedPipeBridgeClient["getViews"]>[0]);
+      return bridge.getViews(request as unknown as Parameters<RevitBridgeClient["getViews"]>[0]);
     case "get_sheets":
-      return bridge.getSheets(request as unknown as Parameters<NamedPipeBridgeClient["getSheets"]>[0]);
+      return bridge.getSheets(request as unknown as Parameters<RevitBridgeClient["getSheets"]>[0]);
     case "get_schedules":
-      return bridge.getSchedules(request as unknown as Parameters<NamedPipeBridgeClient["getSchedules"]>[0]);
+      return bridge.getSchedules(request as unknown as Parameters<RevitBridgeClient["getSchedules"]>[0]);
     case "get_schedule_fields":
-      return bridge.getScheduleFields(request as unknown as Parameters<NamedPipeBridgeClient["getScheduleFields"]>[0]);
+      return bridge.getScheduleFields(request as unknown as Parameters<RevitBridgeClient["getScheduleFields"]>[0]);
     case "get_current_view":
-      return bridge.getCurrentView(request as Parameters<NamedPipeBridgeClient["getCurrentView"]>[0]);
+      return bridge.getCurrentView(request as Parameters<RevitBridgeClient["getCurrentView"]>[0]);
     case "get_current_view_elements":
-      return bridge.getCurrentViewElements(request as Parameters<NamedPipeBridgeClient["getCurrentViewElements"]>[0]);
+      return bridge.getCurrentViewElements(request as Parameters<RevitBridgeClient["getCurrentViewElements"]>[0]);
     case "get_selection":
-      return bridge.getSelection(request as Parameters<NamedPipeBridgeClient["getSelection"]>[0]);
+      return bridge.getSelection(request as Parameters<RevitBridgeClient["getSelection"]>[0]);
     case "analyze_model":
-      return bridge.analyzeModel(request as Parameters<NamedPipeBridgeClient["analyzeModel"]>[0]);
+      return bridge.analyzeModel(request as Parameters<RevitBridgeClient["analyzeModel"]>[0]);
     case "get_model_readiness":
-      return bridge.getModelReadiness(request as Parameters<NamedPipeBridgeClient["getModelReadiness"]>[0]);
+      return bridge.getModelReadiness(request as Parameters<RevitBridgeClient["getModelReadiness"]>[0]);
     case "get_model_context":
-      return bridge.getModelContext(request as Parameters<NamedPipeBridgeClient["getModelContext"]>[0]);
+      return bridge.getModelContext(request as Parameters<RevitBridgeClient["getModelContext"]>[0]);
     case "get_material_quantities":
-      return bridge.getMaterialQuantities(request as Parameters<NamedPipeBridgeClient["getMaterialQuantities"]>[0]);
+      return bridge.getMaterialQuantities(request as Parameters<RevitBridgeClient["getMaterialQuantities"]>[0]);
     case "get_warnings":
-      return bridge.getWarnings(request as Parameters<NamedPipeBridgeClient["getWarnings"]>[0]);
+      return bridge.getWarnings(request as Parameters<RevitBridgeClient["getWarnings"]>[0]);
     case "get_rooms":
-      return bridge.getRooms(request as Parameters<NamedPipeBridgeClient["getRooms"]>[0]);
+      return bridge.getRooms(request as Parameters<RevitBridgeClient["getRooms"]>[0]);
     case "query":
-      return bridge.query(request as unknown as Parameters<NamedPipeBridgeClient["query"]>[0]);
+      return bridge.query(request as unknown as Parameters<RevitBridgeClient["query"]>[0]);
     case "describe_parameters":
-      return bridge.describeParameters(request as unknown as Parameters<NamedPipeBridgeClient["describeParameters"]>[0]);
+      return bridge.describeParameters(request as unknown as Parameters<RevitBridgeClient["describeParameters"]>[0]);
     case "catalog":
-      return bridge.catalog(request as unknown as Parameters<NamedPipeBridgeClient["catalog"]>[0]);
+      return bridge.catalog(request as unknown as Parameters<RevitBridgeClient["catalog"]>[0]);
     case "preview_change_set":
-      return bridge.previewChange(request as unknown as Parameters<NamedPipeBridgeClient["previewChange"]>[0]);
+      return bridge.previewChange(request as unknown as Parameters<RevitBridgeClient["previewChange"]>[0]);
     case "apply_change_set":
-      return bridge.applyChange(request as unknown as Parameters<NamedPipeBridgeClient["applyChange"]>[0]);
+      return bridge.applyChange(request as unknown as Parameters<RevitBridgeClient["applyChange"]>[0]);
     case "cancel_request":
-      return bridge.cancel(request as Parameters<NamedPipeBridgeClient["cancel"]>[0]);
+      return bridge.cancel(request as Parameters<RevitBridgeClient["cancel"]>[0]);
     default:
-      return bridge.raw(request);
+      return (bridge as unknown as {
+        raw: (input: BridgeRequest<Record<string, unknown>>) => Promise<BridgeResponse<unknown>>;
+      }).raw(request);
   }
 }
 

@@ -229,6 +229,7 @@ namespace RevitMcpNext.Addin
                 Operation = operation,
                 OperationKind = GetString(root, "operationKind") ?? "read",
                 TimeoutMs = GetInt(root, "timeoutMs") ?? 30000,
+                InstanceId = GetString(root, "instanceId"),
                 DocumentFingerprint = GetString(root, "documentFingerprint"),
                 ExpectedGeneration = GetLong(root, "expectedGeneration"),
                 Payload = GetDictionary(root, "payload") ?? new Dictionary<string, object>()

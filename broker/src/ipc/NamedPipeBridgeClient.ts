@@ -106,7 +106,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
   }
 
   bridgeHealth(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<BridgeHealthResult>> {
     return this.send(request, options);
@@ -132,14 +132,14 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
   }
 
   status(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitStatus>> {
     return this.send(request, options);
   }
 
   listDocuments(
-    request: BridgeRequest<Record<string, never>>,
+    request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<RevitDocumentSummary[]>> {
     return this.send(request, options);

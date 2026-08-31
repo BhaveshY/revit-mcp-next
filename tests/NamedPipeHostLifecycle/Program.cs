@@ -486,12 +486,23 @@ namespace RevitMcpNext.NamedPipeHostLifecycle
             Assert(timedResponse.Metrics.ElapsedMs == 1, "Queued phase timing overwrote the existing elapsed metric.");
 
             var previews = new PreviewTokenStore(TimeSpan.FromMinutes(1));
-            previews.Issue("preview-1", "session-a", "doc", 7, "tx", "ops", "changes", "hash", true, 1);
-            previews.Issue("preview-1", "session-b", "doc", 7, "tx", "ops", "changes", "hash", true, 1);
-            Assert(previews.ValidateMetadata("preview-1", "session-a", "doc", 7, "hash").Ok,
+            previews.Issue("preview-1", "session-a", "instance-a", "doc", 7, "tx", "ops", "changes", "hash", true, 1);
+            previews.Issue("preview-1", "session-b", "instance-a", "doc", 7, "tx", "ops", "changes", "hash", true, 1);
+            Assert(previews.ValidateMetadata("preview-1", "session-a", "instance-a", "doc", 7, "hash").Ok,
                 "Issuing the same preview ID in another session invalidated the first session.");
-            Assert(!previews.ValidateMetadata("preview-1", "session-c", "doc", 7, "hash").Ok,
+            Assert(!previews.ValidateMetadata("preview-1", "session-c", "instance-a", "doc", 7, "hash").Ok,
                 "Preview metadata was accepted across sessions.");
+            Assert(!previews.ValidateMetadata("preview-1", "session-a", "instance-b", "doc", 7, "hash").Ok,
+                "Preview metadata was accepted across Revit instances.");
+
+            string instanceA = PipeNameProvider.CreateRuntimeInstanceId("2024");
+            string instanceB = PipeNameProvider.CreateRuntimeInstanceId("2024");
+            Assert(!string.Equals(instanceA, instanceB, StringComparison.Ordinal),
+                "Two add-in runtimes were assigned the same instance ID.");
+            Assert(!string.Equals(PipeNameProvider.GetRuntimePipeName(instanceA), PipeNameProvider.GetRuntimePipeName(instanceB), StringComparison.Ordinal),
+                "Two add-in runtimes were assigned the same named pipe.");
+            Assert(PipeNameProvider.GetRuntimePipeName(instanceA).Contains(instanceA),
+                "The runtime pipe does not identify its Revit instance.");
 
             var ledger = new RequestOutcomeLedger(1, TimeSpan.FromMinutes(1));
             BridgeRequestEnvelope ledgerRequest = Request("ledger-1", "write", "write");

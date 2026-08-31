@@ -2,6 +2,7 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createBrokerServer } from "./server.js";
 import { NamedPipeBridgeClient } from "./ipc/NamedPipeBridgeClient.js";
+import { FileSystemRevitInstanceDirectory } from "./instances/FileSystemRevitInstanceDirectory.js";
 
 const brokerVersion = process.env.REVIT_MCP_NEXT_VERSION ?? "0.2.0";
 const pipeName = process.env.REVIT_MCP_NEXT_PIPE ?? "revit-mcp-next";
@@ -12,9 +13,16 @@ const bridge = new NamedPipeBridgeClient({
   sessionId,
   defaultTimeoutMs: Number(process.env.REVIT_MCP_NEXT_TIMEOUT_MS ?? 30000),
 });
+const instanceDirectory = new FileSystemRevitInstanceDirectory({
+  sessionId,
+  defaultTimeoutMs: Number(process.env.REVIT_MCP_NEXT_TIMEOUT_MS ?? 30000),
+  fallbackBridge: bridge,
+  fallbackPipeName: pipeName,
+  registryRoot: process.env.REVIT_MCP_NEXT_INSTANCE_REGISTRY,
+});
 
 const stdio = serveStdio(
-  () => createBrokerServer({ bridge, brokerVersion, sessionId }),
+  () => createBrokerServer({ bridge, brokerVersion, sessionId, instanceDirectory }),
   { legacy: "serve" }
 );
 let shuttingDown = false;
@@ -22,6 +30,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  instanceDirectory.dispose();
   bridge.dispose();
   try {
     await stdio.close();

@@ -598,6 +598,7 @@ namespace RevitMcpNext.Addin.Ipc
             {
                 ["operation"] = request.Operation,
                 ["operationKind"] = request.OperationKind,
+                ["instanceId"] = request.InstanceId,
                 ["documentFingerprint"] = request.DocumentFingerprint,
                 ["expectedGeneration"] = request.ExpectedGeneration,
                 ["payload"] = request.Payload ?? new Dictionary<string, object>()
@@ -891,6 +892,7 @@ namespace RevitMcpNext.Addin.Ipc
                     Operation = operation,
                     OperationKind = GetString(root, "operationKind") ?? "read",
                     TimeoutMs = GetInt(root, "timeoutMs") ?? 30000,
+                    InstanceId = GetString(root, "instanceId"),
                     DocumentFingerprint = GetString(root, "documentFingerprint"),
                     ExpectedGeneration = GetLong(root, "expectedGeneration"),
                     Payload = GetDictionary(root, "payload") ?? new Dictionary<string, object>()

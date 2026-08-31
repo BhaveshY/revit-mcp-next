@@ -25,6 +25,7 @@ namespace RevitMcpNext.Contracts
         public string Operation { get; set; } = string.Empty;
         public string OperationKind { get; set; } = "read";
         public int TimeoutMs { get; set; } = 30000;
+        public string? InstanceId { get; set; }
         public string? DocumentFingerprint { get; set; }
         public long? ExpectedGeneration { get; set; }
         public Dictionary<string, object> Payload { get; set; } = new Dictionary<string, object>();

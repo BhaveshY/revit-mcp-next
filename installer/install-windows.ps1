@@ -603,6 +603,26 @@ if (-not [string]::IsNullOrWhiteSpace($packagedNodeModules)) {
     }
 }
 
+# npm represents file: workspace dependencies as links on Windows. Those links can
+# be left unusable after an in-place reinstall or when a staged install directory
+# is moved. Keep the installed broker self-contained by replacing the contracts
+# workspace link with a physical copy of the already-installed runtime package.
+$installedContractsModule = Join-Path $installedBroker "node_modules\@revit-mcp-next\contracts"
+Assert-InstallChild $installedContractsModule
+if ($DryRun) {
+    Write-Step "Would replace the broker contracts workspace dependency with a physical runtime copy."
+} else {
+    if (Test-Path -LiteralPath $installedContractsModule) {
+        $contractsModuleItem = Get-Item -LiteralPath $installedContractsModule -Force
+        if (($contractsModuleItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Remove-Item -LiteralPath $installedContractsModule -Force
+        } else {
+            Remove-Item -LiteralPath $installedContractsModule -Recurse -Force
+        }
+    }
+    Sync-Directory $installedContracts $installedContractsModule
+}
+
 $launcher = Join-Path $InstallRoot "launch-revit-mcp-next.cmd"
 $revitCtlLauncher = Join-Path $InstallRoot "revitctl.cmd"
 $authConfig = Join-Path $InstallRoot "config\auth.env"
@@ -681,6 +701,10 @@ $clientDiscoveryContent = [ordered] @{
     pythonInProcessHelperPath = (Get-FullPath (Join-Path $installedIntegrations "python\revit_mcp_next_inprocess.py"))
     contractSchemasPath = (Get-FullPath (Join-Path $installedContracts "schemas"))
     tools = @(
+        "revit.list_instances",
+        "revit.set_target",
+        "revit.get_target",
+        "revit.clear_target",
         "revit.bridge_health",
         "revit.get_request_result",
         "revit.status",

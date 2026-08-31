@@ -21,6 +21,7 @@
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\BridgeProtocolGuard.cs" Link="Production\BridgeProtocolGuard.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\JsonWireCodec.cs" Link="Production\JsonWireCodec.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\NamedPipeHost.cs" Link="Production\NamedPipeHost.cs" />
+    <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\PipeNameProvider.cs" Link="Production\PipeNameProvider.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\PipeSecurityFactory.cs" Link="Production\PipeSecurityFactory.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Ipc\RequestOutcomeLedger.cs" Link="Production\RequestOutcomeLedger.cs" />
     <Compile Include="..\..\addin\RevitMcpNext.Addin\Revit\CanonicalJson.cs" Link="Production\CanonicalJson.cs" />

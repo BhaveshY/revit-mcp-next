@@ -26,6 +26,7 @@ namespace RevitMcpNext.Addin.Revit
         public PreviewToken Issue(
             string previewId,
             string sessionId,
+            string instanceId,
             string documentFingerprint,
             long generation,
             string transactionName,
@@ -39,6 +40,7 @@ namespace RevitMcpNext.Addin.Revit
             var token = new PreviewToken(
                 previewId,
                 sessionId,
+                instanceId,
                 documentFingerprint,
                 generation,
                 transactionName,
@@ -53,7 +55,7 @@ namespace RevitMcpNext.Addin.Revit
             lock (_gate)
             {
                 RemoveExpiredUnsafe(issuedAtUtc);
-                _tokens[Key(sessionId, previewId)] = token;
+                _tokens[Key(sessionId, instanceId, previewId)] = token;
                 TrimUnsafe();
             }
 
@@ -63,6 +65,7 @@ namespace RevitMcpNext.Addin.Revit
         public PreviewTokenValidation Validate(
             string previewId,
             string sessionId,
+            string instanceId,
             string documentFingerprint,
             long generation,
             string transactionName,
@@ -85,7 +88,7 @@ namespace RevitMcpNext.Addin.Revit
                 DateTimeOffset now = DateTimeOffset.UtcNow;
                 RemoveExpiredUnsafe(now);
 
-                string tokenKey = Key(sessionId, previewId);
+                string tokenKey = Key(sessionId, instanceId, previewId);
                 if (!_tokens.TryGetValue(tokenKey, out PreviewToken token))
                 {
                     return PreviewTokenValidation.Failure("PREVIEW_NOT_FOUND", "The supplied previewId was not issued by this add-in session or has already been consumed.");
@@ -94,6 +97,11 @@ namespace RevitMcpNext.Addin.Revit
                 if (!string.Equals(token.SessionId, sessionId ?? string.Empty, StringComparison.Ordinal))
                 {
                     return PreviewTokenValidation.Failure("PREVIEW_SESSION_MISMATCH", "The preview was issued to a different MCP session.");
+                }
+
+                if (!string.Equals(token.InstanceId, instanceId ?? string.Empty, StringComparison.Ordinal))
+                {
+                    return PreviewTokenValidation.Failure("PREVIEW_INSTANCE_MISMATCH", "The preview was issued by a different Revit instance.");
                 }
 
                 if (token.ExpiresAtUtc <= now)
@@ -140,6 +148,7 @@ namespace RevitMcpNext.Addin.Revit
         public PreviewTokenValidation ValidateMetadata(
             string previewId,
             string sessionId,
+            string instanceId,
             string documentFingerprint,
             long generation,
             string changeSetHash)
@@ -159,7 +168,7 @@ namespace RevitMcpNext.Addin.Revit
                 DateTimeOffset now = DateTimeOffset.UtcNow;
                 RemoveExpiredUnsafe(now);
 
-                string tokenKey = Key(sessionId, previewId);
+                string tokenKey = Key(sessionId, instanceId, previewId);
                 if (!_tokens.TryGetValue(tokenKey, out PreviewToken token))
                 {
                     return PreviewTokenValidation.Failure("PREVIEW_NOT_FOUND", "The supplied previewId was not issued by this add-in session or has already been consumed.");
@@ -168,6 +177,11 @@ namespace RevitMcpNext.Addin.Revit
                 if (!string.Equals(token.SessionId, sessionId ?? string.Empty, StringComparison.Ordinal))
                 {
                     return PreviewTokenValidation.Failure("PREVIEW_SESSION_MISMATCH", "The preview was issued to a different MCP session.");
+                }
+
+                if (!string.Equals(token.InstanceId, instanceId ?? string.Empty, StringComparison.Ordinal))
+                {
+                    return PreviewTokenValidation.Failure("PREVIEW_INSTANCE_MISMATCH", "The preview was issued by a different Revit instance.");
                 }
 
                 if (token.ExpiresAtUtc <= now)
@@ -200,13 +214,13 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        public void Consume(string sessionId, string previewId)
+        public void Consume(string sessionId, string instanceId, string previewId)
         {
             if (string.IsNullOrWhiteSpace(previewId)) return;
 
             lock (_gate)
             {
-                _tokens.Remove(Key(sessionId, previewId));
+                _tokens.Remove(Key(sessionId, instanceId, previewId));
             }
         }
 
@@ -266,9 +280,9 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string Key(string sessionId, string previewId)
+        private static string Key(string sessionId, string instanceId, string previewId)
         {
-            return (sessionId ?? string.Empty) + "\0" + (previewId ?? string.Empty);
+            return (sessionId ?? string.Empty) + "\0" + (instanceId ?? string.Empty) + "\0" + (previewId ?? string.Empty);
         }
     }
 
@@ -277,6 +291,7 @@ namespace RevitMcpNext.Addin.Revit
         public PreviewToken(
             string previewId,
             string sessionId,
+            string instanceId,
             string documentFingerprint,
             long generation,
             string transactionName,
@@ -290,6 +305,7 @@ namespace RevitMcpNext.Addin.Revit
         {
             PreviewId = previewId;
             SessionId = sessionId ?? string.Empty;
+            InstanceId = instanceId ?? string.Empty;
             DocumentFingerprint = documentFingerprint;
             Generation = generation;
             TransactionName = transactionName;
@@ -304,6 +320,7 @@ namespace RevitMcpNext.Addin.Revit
 
         public string PreviewId { get; }
         public string SessionId { get; }
+        public string InstanceId { get; }
         public string DocumentFingerprint { get; }
         public long Generation { get; }
         public string TransactionName { get; }

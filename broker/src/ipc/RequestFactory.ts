@@ -8,7 +8,7 @@ export function makeRequest<TPayload>(
   payload: TPayload,
   timeoutMs: number
 ): BridgeRequest<TPayload> {
-  return {
+  const request: BridgeRequest<TPayload> = {
     protocolVersion: BRIDGE_PROTOCOL_VERSION,
     requestId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     sessionId,
@@ -17,4 +17,11 @@ export function makeRequest<TPayload>(
     timeoutMs,
     payload,
   };
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    const record = payload as Record<string, unknown>;
+    if (typeof record.instanceId === "string") request.instanceId = record.instanceId;
+    if (typeof record.documentFingerprint === "string") request.documentFingerprint = record.documentFingerprint;
+    if (typeof record.expectedGeneration === "number") request.expectedGeneration = record.expectedGeneration;
+  }
+  return request;
 }

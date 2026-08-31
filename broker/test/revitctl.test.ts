@@ -8,6 +8,7 @@ import { parseArgs, parseAuthTokenConfig, runRevitCtl } from "../src/cli/revitct
 
 interface CapturedRequest {
   authToken?: string;
+  instanceId?: string;
   operation: string;
   operationKind: string;
   payload: Record<string, unknown>;
@@ -94,13 +95,59 @@ test("revitctl calls the named pipe bridge with auth from config", async () => {
           `\ufeff${JSON.stringify({ authConfigPath: authConfig, pipeName })}`,
           "utf8"
         );
-        const result = await runRevitCtl(parseArgs(["status", "--discovery", discoveryConfig]));
+        const result = await runRevitCtl(parseArgs(["status", "--discovery", discoveryConfig, "--pipe", pipeName]));
         assert.equal(result.exitCode, 0);
         assert.equal((result.body as { ok?: boolean }).ok, true);
       }
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("revitctl discovers the unique runtime pipe when no explicit pipe is supplied", async () => {
+  const registryRoot = mkdtempSync(path.join(os.tmpdir(), "revitctl-instance-registry-"));
+  const previousRegistry = process.env.REVIT_MCP_NEXT_INSTANCE_REGISTRY;
+  process.env.REVIT_MCP_NEXT_INSTANCE_REGISTRY = registryRoot;
+  try {
+    await withPipeServer(
+      (request) => {
+        assert.equal(request.instanceId, "revitctl-live-instance");
+        assert.equal(request.operation, "list_documents");
+        return {
+          data: [{
+            documentId: "C:\\tmp\\fixture.rvt",
+            title: "fixture",
+            fingerprint: "fixture-fingerprint",
+            isActive: true,
+            isWorkshared: false,
+            isModified: false,
+            generation: 3,
+            path: "C:\\tmp\\fixture.rvt",
+          }],
+        };
+      },
+      async (pipeName) => {
+        writeFileSync(path.join(registryRoot, "revitctl-live-instance.json"), JSON.stringify({
+          schemaVersion: 1,
+          instanceId: "revitctl-live-instance",
+          pipeName,
+          controlPipeName: `${pipeName}-control`,
+          processId: process.pid,
+          revitVersion: "2024",
+          lastSeenAtUtc: new Date().toISOString(),
+        }), "utf8");
+        const result = await runRevitCtl(parseArgs(["list-documents", "--timeout-ms", "1000"]));
+        assert.equal(result.exitCode, 0);
+        const body = result.body as { data?: Array<{ instanceId?: string; fingerprint?: string }> };
+        assert.equal(body.data?.[0]?.instanceId, "revitctl-live-instance");
+        assert.equal(body.data?.[0]?.fingerprint, "fixture-fingerprint");
+      }
+    );
+  } finally {
+    if (previousRegistry === undefined) delete process.env.REVIT_MCP_NEXT_INSTANCE_REGISTRY;
+    else process.env.REVIT_MCP_NEXT_INSTANCE_REGISTRY = previousRegistry;
+    rmSync(registryRoot, { recursive: true, force: true });
   }
 });
 

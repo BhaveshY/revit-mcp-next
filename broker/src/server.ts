@@ -4,12 +4,18 @@ import type { RevitBridgeClient } from "./ipc/RevitBridgeClient.js";
 import { registerCoreTools } from "./tools/coreTools.js";
 import { registerDiscovery } from "./tools/discovery.js";
 import { ModelDeliveryRecipeStore } from "./recipes/ModelDeliveryRecipeStore.js";
+import type { RevitInstanceDirectory } from "./instances/RevitInstanceDirectory.js";
+import { SingleRevitInstanceDirectory } from "./instances/RevitInstanceDirectory.js";
+import { SessionTargetStore } from "./targeting/SessionTargetStore.js";
+import { SessionTargetingBridgeRouter } from "./targeting/SessionTargetingBridgeRouter.js";
 
 export interface BrokerServerOptions {
   bridge: RevitBridgeClient;
   brokerVersion: string;
   sessionId: string;
   recipeStore?: ModelDeliveryRecipeStore;
+  instanceDirectory?: RevitInstanceDirectory;
+  targetStore?: SessionTargetStore;
 }
 
 export const BROKER_MCP_PROTOCOL_VERSIONS = [
@@ -20,6 +26,9 @@ export const BROKER_MCP_PROTOCOL_VERSIONS = [
 export const BROKER_DISCOVERY_CACHE_TTL_MS = 300_000;
 
 export function createBrokerServer(options: BrokerServerOptions): McpServer {
+  const instanceDirectory = options.instanceDirectory ?? new SingleRevitInstanceDirectory(options.bridge);
+  const targetStore = options.targetStore ?? new SessionTargetStore(options.sessionId);
+  const targeting = new SessionTargetingBridgeRouter(instanceDirectory, targetStore, options.sessionId);
   const server = new McpServer(
     {
       name: "revit-mcp-next",
@@ -36,12 +45,14 @@ export function createBrokerServer(options: BrokerServerOptions): McpServer {
         "resources/read": { ttlMs: BROKER_DISCOVERY_CACHE_TTL_MS, cacheScope: "private" },
       },
       instructions:
-        "Use this server for safe Autodesk Revit inspection and automation. Start with revit.status. Query tools return bounded structuredContent; never infer totals from returned array length. Use preview/apply for mutations.",
+        "Use this server for safe Autodesk Revit inspection and automation. When more than one project or Revit process may be open, start with revit.list_instances and revit.set_target. Document-scoped calls inherit this session-only target. Query tools return bounded structuredContent; never infer totals from returned array length. Use preview/apply for mutations.",
     }
   );
 
   registerCoreTools(server, {
     ...options,
+    bridge: targeting.bridge,
+    targeting,
     bridgeProtocolVersion: BRIDGE_PROTOCOL_VERSION,
     recipeStore: options.recipeStore ?? new ModelDeliveryRecipeStore(),
   });
