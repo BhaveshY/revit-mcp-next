@@ -19,7 +19,7 @@ param(
     [string] $ElementTagFamilySha256 = "",
     [string] $ElementTagTypeId = "",
     [string] $ElementTagTypeNameContains = "",
-    [ValidateSet(2024, 2027)]
+    [ValidateSet(2021, 2024, 2027)]
     [int] $RevitYear = 2024,
     [string] $RevitApiPath = "",
     [string] $RevitExePath = "",

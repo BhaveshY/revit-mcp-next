@@ -1,6 +1,6 @@
 param(
     [string] $Configuration = "Release",
-    [ValidateSet(2024, 2027)]
+    [ValidateSet(2021, 2024, 2027)]
     [int] $RevitYear = 2024,
     [string] $RevitApiPath = "",
     [string] $DotnetPath = "",
@@ -56,6 +56,7 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 }
 
 $targetFramework = switch ($RevitYear) {
+    2021 { "net48" }
     2024 { "net48" }
     2027 { "net10.0-windows" }
 }

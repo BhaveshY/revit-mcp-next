@@ -385,8 +385,8 @@ function Assert-SupportedRevitYears {
     }
 
     foreach ($year in ($normalizedYears | Sort-Object -Unique)) {
-        if ($year -notin @(2024, 2027)) {
-            throw "Revit $year install is not supported yet. Supported Revit years: 2024, 2027."
+        if ($year -notin @(2021, 2024, 2027)) {
+            throw "Revit $year install is not supported yet. Supported Revit years: 2021, 2024, 2027."
         }
     }
 

@@ -17,19 +17,24 @@ namespace RevitMcpNext.RevitParameterContract
                 AssertForgeTypeId(UnitTypeId.Feet, ParameterWriteContract.ResolveUnitTypeId("ft"), "feet unit mapping");
                 AssertForgeTypeId(UnitTypeId.Inches, ParameterWriteContract.ResolveUnitTypeId("inches"), "inches unit mapping");
 
-                Assert(UnitUtils.IsValidUnit(SpecTypeId.Length, UnitTypeId.Millimeters), "Revit 2024 rejected millimeters for Length.");
-                Assert(!UnitUtils.IsValidUnit(SpecTypeId.Area, UnitTypeId.Millimeters), "Revit 2024 accepted a length unit for Area.");
+                Assert(UnitUtils.IsValidUnit(SpecTypeId.Length, UnitTypeId.Millimeters), "Revit rejected millimeters for Length.");
+                Assert(!UnitUtils.IsValidUnit(SpecTypeId.Area, UnitTypeId.Millimeters), "Revit accepted a length unit for Area.");
                 double internalWidth = UnitUtils.ConvertToInternalUnits(2510.0, UnitTypeId.Millimeters);
                 Assert(Math.Abs(internalWidth - 8.2349081365) < 0.0000001, "2510 mm conversion did not match Revit internal feet.");
 
+#if REVIT2021
+                Assert(Enum.GetNames(typeof(ParameterType)).Contains("YesNo"), "Revit 2021 Yes/No parameter metadata is unavailable.");
+                RequireMethod(typeof(Definition), "GetSpecTypeId", Type.EmptyTypes);
+#else
                 Assert(ParameterWriteContract.IsYesNoDataType(SpecTypeId.Boolean.YesNo), "Yes/No spec detection failed.");
                 Assert(!ParameterWriteContract.IsYesNoDataType(SpecTypeId.Length), "Length was incorrectly classified as Yes/No.");
+                RequireMethod(typeof(Definition), "GetDataType", Type.EmptyTypes);
+                RequireMethod(typeof(UnitUtils), "IsMeasurableSpec", new[] { typeof(ForgeTypeId) });
+#endif
                 Assert(ParameterWriteContract.IsInternalUnitToken("revit-internal"), "Revit internal unit token was not recognized.");
 
                 Type parameterType = typeof(Parameter);
-                RequireMethod(typeof(Definition), "GetDataType", Type.EmptyTypes);
                 RequireMethod(parameterType, "GetUnitTypeId", Type.EmptyTypes);
-                RequireMethod(typeof(UnitUtils), "IsMeasurableSpec", new[] { typeof(ForgeTypeId) });
                 RequireMethod(typeof(UnitUtils), "IsValidUnit", new[] { typeof(ForgeTypeId), typeof(ForgeTypeId) });
                 RequireMethod(typeof(WorksharingUtils), "GetCheckoutStatus", new[] { typeof(Document), typeof(ElementId), typeof(string).MakeByRefType() });
                 Assert(Enum.GetNames(typeof(CheckoutStatus)).Contains("OwnedByOtherUser"), "OwnedByOtherUser checkout status is unavailable.");
@@ -45,7 +50,11 @@ namespace RevitMcpNext.RevitParameterContract
                 }
                 Assert(unsupportedUnitBlocked, "Unsupported unit tokens were not blocked.");
 
+#if REVIT2021
+                Console.WriteLine("Revit 2021 parameter contract checks passed.");
+#else
                 Console.WriteLine("Revit 2024 parameter contract checks passed.");
+#endif
                 return 0;
             }
             catch (Exception ex)
@@ -58,7 +67,7 @@ namespace RevitMcpNext.RevitParameterContract
         private static MethodInfo RequireMethod(Type type, string name, Type[] arguments)
         {
             MethodInfo method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, arguments, null);
-            if (method == null) throw new InvalidOperationException("Required Revit 2024 API method was not found: " + type.FullName + "." + name);
+            if (method == null) throw new InvalidOperationException("Required Revit API method was not found: " + type.FullName + "." + name);
             return method;
         }
 

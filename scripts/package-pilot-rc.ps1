@@ -25,7 +25,7 @@ $packageScript = Join-Path $repoRoot "scripts\package-release.ps1"
 $arguments = @(
     "-Version", $Version,
     "-OutputRoot", $outputRootFull,
-    "-RevitYears", "2024,2027"
+    "-RevitYears", "2021,2024,2027"
 )
 if ($NoZip) { $arguments += "-NoZip" }
 if (-not [string]::IsNullOrWhiteSpace($AddinOutputRoot)) { $arguments += @("-AddinOutputRoot", $AddinOutputRoot) }
@@ -53,7 +53,7 @@ $result = [ordered] @{
     version = $Version
     packageRoot = $packageRoot
     packageChecksums = (Join-Path $packageRoot "CHECKSUMS.sha256")
-    revitYears = @(2024, 2027)
+    revitYears = @(2021, 2024, 2027)
     signed = $false
     publicTrust = $false
 }

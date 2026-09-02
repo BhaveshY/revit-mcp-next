@@ -11,8 +11,8 @@ const workflowSource = readFileSync(
   "utf8"
 );
 
-test("element-type live acceptance allows the workflow's Revit 2024 and 2027 targets", () => {
-  assert.match(workflowSource, /REVIT_YEAR -notin @\("2024", "2027"\)/);
+test("element-type live acceptance allows the workflow's Revit 2021, 2024, and 2027 targets", () => {
+  assert.match(workflowSource, /REVIT_YEAR -notin @\("2021", "2024", "2027"\)/);
   assert.match(smokeSource, /assertExpectedRevitYear\(status, options\.expectedRevitYear\);/);
   assert.doesNotMatch(smokeSource, /assertExpectedRevitYear\(status, "2024"\)/);
   assert.doesNotMatch(smokeSource, /Revit 2024/);

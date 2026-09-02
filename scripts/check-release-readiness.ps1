@@ -654,7 +654,7 @@ try {
     }
 
     $years = @($manifest.package.revitYears | ForEach-Object { [int] $_ })
-    $unsupportedYears = @($years | Where-Object { $_ -notin @(2024, 2027) })
+    $unsupportedYears = @($years | Where-Object { $_ -notin @(2021, 2024, 2027) })
     if ($years.Count -gt 0 -and $unsupportedYears.Count -eq 0) {
         Pass "package.revitYears" "Evidence advertises only supported Revit years: $($years -join ', ')."
     } else {

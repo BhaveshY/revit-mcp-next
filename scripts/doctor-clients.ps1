@@ -533,7 +533,7 @@ if (Test-RequiredFile $discoveryPath "client discovery config") {
     if ($discovery.PSObject.Properties["supportedRevitYears"] -and $null -ne $discovery.supportedRevitYears) {
         $supportedYears = @($discovery.supportedRevitYears | ForEach-Object { [int] $_ })
     }
-    $unsupportedYears = @($supportedYears | Where-Object { $_ -notin @(2024, 2027) })
+    $unsupportedYears = @($supportedYears | Where-Object { $_ -notin @(2021, 2024, 2027) })
     if ($supportedYears.Count -gt 0 -and $unsupportedYears.Count -eq 0) {
         Write-Check "ok" "client discovery advertises only supported Revit years: $($supportedYears -join ', ')"
         foreach ($year in $supportedYears) {

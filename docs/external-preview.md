@@ -1,6 +1,6 @@
 # External Preview Sharing
 
-This repo can be shared as an unsigned Revit 2024 or Revit 2027 external preview when the package is clearly labeled and shipped with evidence. Do not describe a build as a signed production release unless Authenticode verification evidence exists for that exact package.
+This repo can be shared as an unsigned Revit 2021, Revit 2024, or Revit 2027 external preview when the package is clearly labeled and shipped with evidence. Do not describe a build as a signed production release unless Authenticode verification evidence exists for that exact package.
 
 ## What To Share
 
@@ -14,12 +14,12 @@ For each preview build, attach:
 - live Revit smoke output when available
 - hosted pyRevit/Dynamo evidence when available, or the explicit skip reason from the evidence bundle
 
-The source, package, and installer support Revit 2024 and Revit 2027 with separate year-specific add-in artifacts. Each advertised year still needs live smoke evidence before its package is promoted beyond preview status.
+The source, package, and installer support Revit 2021, Revit 2024, and Revit 2027 with separate year-specific add-in artifacts. Each advertised year still needs live smoke evidence before its package is promoted beyond preview status.
 The package `release-manifest.json` also records `sharing.shareProfile`, `sharing.signingMode`, `sharing.publicTrust`, and `sharing.allowedClaim`; these fields are the source of truth for whether a package is unsigned, local-dev-signed, or production-signed.
 
 ## Recipient Prerequisites
 
-- Windows with Revit 2024 or Revit 2027 installed, matching the package year.
+- Windows with Revit 2021, Revit 2024, or Revit 2027 installed, matching the package year.
 - Node.js 24.x available on `PATH`; the installed launchers and doctor scripts intentionally reject other major versions.
 - PowerShell available for the installer and diagnostics commands.
 - A disposable or test Revit project for first use.

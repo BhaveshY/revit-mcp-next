@@ -1,6 +1,6 @@
 # Production Readiness Audit
 
-This project is shareable as an unsigned Revit 2024 or Revit 2027 external preview when labeled clearly. It is not a signed enterprise production release. The current repository state supports local development, staged Windows packaging, install diagnostics, `revitctl` bridge debugging, redacted support bundle collection, and release evidence bundle generation.
+This project is shareable as an unsigned Revit 2021, Revit 2024, or Revit 2027 external preview when labeled clearly. It is not a signed enterprise production release. The current repository state supports local development, staged Windows packaging, install diagnostics, `revitctl` bridge debugging, redacted support bundle collection, and release evidence bundle generation.
 
 Use this audit to separate evidence that already exists from blockers that still need release work.
 
@@ -12,7 +12,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - The broker uses the stable TypeScript SDK v2 package split. Boundary tests cover MCP `2026-07-28` over the production stdio entry point, legacy `2025-11-25`, deterministic discovery order, private discovery cache hints, cancellation propagation without replay, and a split 2 MiB stdio frame.
 - CI runs `node scripts/validate-repo.mjs`.
 - CI builds the .NET bridge contracts.
-- CI attempts each Revit 2024 and Revit 2027 add-in build only when that year's API DLLs are present on the runner.
+- CI attempts each Revit 2021, Revit 2024, and Revit 2027 add-in build only when that year's API DLLs are present on the runner.
 - `npm run package:windows:dry-run` validates package inputs after the broker/contracts/add-in build outputs exist.
 - `npm run package:windows` stages a Windows package with `release-manifest.json` and `CHECKSUMS.sha256`; `-Sign` can request Authenticode signing before manifest, checksum, and zip capture when a certificate is supplied.
 - `npm run test:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates unsigned package creation, zip creation, package install into temp profile paths, doctor output, support bundle redaction, and checksum-tamper rejection without requiring Revit API DLLs on the runner.
@@ -26,7 +26,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - `npm run test:evidence:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates release evidence generation, explicit missing-evidence gates, failed live-smoke and hosted-integration summary rejection, package hash capture, copied package metadata, support/live-smoke/hosted evidence capture, validation log capture, token redaction, and readiness rejection of contract-fixture evidence for release-candidate or production profiles.
 - `npm run test:integrations:python` syntax-checks pyRevit/Dynamo status, preview/apply examples, and host-smoke examples, and validates the shared stdlib Python MCP client against a fake stdio MCP server.
 - `npm run doctor:windows` validates the installed MCP launcher, installed `revitctl` launcher, staged broker files, add-in DLLs, Revit manifest assembly path and stable add-in identity, packaged production dependencies, local pipe auth token shape, staged pyRevit/Dynamo examples, and add-in DLL signature status.
-- `npm run doctor:clients` validates generated Claude/Codex client config snippets, existing user config entries when present, stale install roots, launcher quoting, raw token leakage risk, supported Revit 2024/2027 client discovery including per-year add-in paths and `revitctlPath`, and legacy MCP `2025-11-25` startup plus `tools/list` without requiring a Revit connection. The broker boundary suite validates modern MCP separately.
+- `npm run doctor:clients` validates generated Claude/Codex client config snippets, existing user config entries when present, stale install roots, launcher quoting, raw token leakage risk, supported Revit 2021/2024/2027 client discovery including per-year add-in paths and `revitctlPath`, and legacy MCP `2025-11-25` startup plus `tools/list` without requiring a Revit connection. The broker boundary suite validates modern MCP separately.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, staged integration example hashes, and redacted auth configuration.
 - Query-style read endpoints expose compact pagination contracts and opaque signed continuation cursors bound to the same tool arguments, broker process session ID, and document state. The broker rejects raw, malformed, tampered, wrong-tool, and mismatched-argument cursors before the add-in can replay page 1, keeps long cursor tokens out of short text hints, and rejects unknown query filter keys before they can broaden a model query. Some add-in handlers still materialize broader Revit result sets before paging; true lazy/native-filter large-model scans remain a blocker below.
 - Core read tools now advertise typed MCP output schemas for status, broker-composed read bundles, documents, levels, current view, paged views/sheets/elements, model statistics/readiness/context, model warnings, material quantities, rooms, catalogs, generic queries, and parameter discovery. The schemas expose page fields such as `returnedCount`, `truncated`, `cursor`, `items`, `fields`, and `units` while remaining passthrough-safe for live Revit metadata. `revit.status` exposes queue diagnostics, ExternalEvent raise state, preview-token counts, and recovery hints for stalled workflows.
@@ -50,7 +50,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - `npm run sign:windows` provides optional Authenticode signing and verification for `.dll` and `.ps1` package targets. No release certificate is assumed by this repository.
 - `npm run dev-cert:windows -- -StatusOnly` audits the CurrentUser local dev signing certificate state, and `npm run dev-cert:windows -- -Remove` removes this repository's local dev certificate entries from CurrentUser `My`, `Root`, and `TrustedPublisher` after disposable-machine smoke testing. `npm run revit:trust -- -StatusOnly` audits Revit's per-user `Always Load` registry entry for the add-in `ClientId`.
 - `.github/workflows/live-revit-smoke.yml` defines a manual self-hosted Windows/Revit smoke workflow. It can package unsigned, local-dev-signed, or release-cert-signed candidates, installs from that package, can optionally launch Revit, exports the add-in auth config for launched Revit sessions, runs doctor and live smoke with expected-year and `smoke-summary.json` evidence, collects a support bundle, fails if release-evidence collection fails, and uploads smoke/package/evidence artifacts.
-- Packaging and installation support only the explicitly built `2024` and `2027` payloads. Revit 2025 and 2026 remain rejected so they cannot silently load an incompatible add-in target.
+- Packaging and installation support only the explicitly built `2021`, `2024`, and `2027` payloads. Revit 2025 and 2026 remain rejected so they cannot silently load an incompatible add-in target.
 
 ## Remaining Blockers
 
@@ -65,7 +65,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - Shared per-operation payload schemas across broker, CLI, named pipe, in-process bridge, and add-in. The broker is strict, but raw bridge ingress still relies on envelope validation plus C# ad hoc conversions.
 - More request lifecycle evidence in live smoke: status now exposes queue depth/request timing/last ExternalEvent raise result and preview-token counts, and `cancel_request` can cancel queued work, but release-candidate evidence should still prove these diagnostics from the exact package and add a queued-cancel fixture when practical.
 - High-value production workflow tools are still missing, especially dimensions, view creation/duplication/template control, navigation/review helpers such as select/open/zoom/isolate, richer family placement, deeper schedule formatting/export controls, and broader MEP/structural/domain element creation. Track these through [tooling-roadmap.md](tooling-roadmap.md); do not imply roadmap items are complete until their contract and smoke requirements are satisfied.
-- Multi-version Revit compatibility implementation and validation beyond the current Revit 2024 target. Revit 2025/2026 are blocked intentionally until year-specific .NET 8 add-in artifacts are built, packaged, installed, and smoked.
+- Live-host validation remains required for each exact Revit 2021, 2024, and 2027 release package. Revit 2025/2026 are blocked intentionally until year-specific .NET 8 add-in artifacts are built, packaged, installed, and smoked.
 - Archived release evidence bundle for each release candidate, generated from that exact package, signing state, validation logs, support bundle, live-smoke output, and hosted integration output.
 
 ## Release Evidence Gate
@@ -118,7 +118,7 @@ npm run smoke:revit -- -ExpectedRevitYear 2024 -RequireTypeChange -SummaryPath a
 Curated tag-family evidence form, for disposable models that contain a usable room tag type, a wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall:
 
 ```powershell
-$revitYear = 2024 # or 2027
+$revitYear = 2024 # or 2021/2027
 npm run smoke:revit -- -ExpectedRevitYear $revitYear -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
@@ -126,11 +126,11 @@ Use `-RoomTagTypeId` / `-ElementTagTypeId` or `-RoomTagTypeNameContains` / `-Ele
 
 Current coverage:
 
-- Stability coverage includes reserved-control `revit.bridge_health`, queued cancellation, retained `revit.get_request_result` lookup, request-outcome recovery, stable parameter references, and typed millimetre values in the shared Revit 2024 and Revit 2027 element-type path.
+- Stability coverage includes reserved-control `revit.bridge_health`, queued cancellation, retained `revit.get_request_result` lookup, request-outcome recovery, stable parameter references, and typed millimetre values in the shared Revit 2021, Revit 2024, and Revit 2027 element-type path.
 - Exact command: `npm run smoke:revit`.
 - Required state: Windows, Node 24, installed Revit MCP Next launcher, Revit running with the add-in loaded, and an active disposable project document.
 - Smoke scope: installed launcher, broker/add-in pipe auth via the launcher, `revit.status` with diagnostics, `revit.read_bundle`, `revit.cancel_request` recovery/no-op behavior, `revit.get_views`, `revit.get_sheets`, `revit.get_schedules`, `revit.get_schedule_fields`, `revit.get_current_view`, `revit.get_current_view_elements`, `revit.get_selection`, `revit.analyze_model`, `revit.get_model_readiness`, `revit.get_model_context`, `revit.get_warnings`, `revit.get_material_quantities`, `revit.get_rooms`, `revit.get_levels`, `revit.catalog`, `revit.query`, `revit.describe_parameters`, blocked mismatched `expectedUniqueId` preview, guarded `expectedUniqueId`/`expectedHostUniqueId` write flows, `create_level`, `create_grid`, `create_floor`, `create_wall`, optional `place_family_instance`, optional `load_family`, `create_room`, `create_sheet`, optional `place_view_on_sheet`, optional `create_text_note`, optional or required guarded `tag_room`, optional or required guarded `tag_element`, `set_parameter`, optional or required `change_element_type`, `move_element`, `rotate_element`, `copy_element`, `set_element_pinned`, and `delete_element`.
-- Revit 2024 and Revit 2027 element-type acceptance: `-RequireElementTypeEdit -AcknowledgeDisposableModel` adds guarded `duplicate_element_type`, Width/Height updates, catalog readback, duplicate-name blocking, and placement of the returned `FamilySymbol`. It commits several transactions and intentionally leaves the evidence in the disposable project. The CI workflow requires `revit_model_path` and refuses an already-running Revit process for this coverage.
+- Revit 2021, Revit 2024, and Revit 2027 element-type acceptance: `-RequireElementTypeEdit -AcknowledgeDisposableModel` adds guarded `duplicate_element_type`, Width/Height updates, catalog readback, duplicate-name blocking, and placement of the returned `FamilySymbol`. It commits several transactions and intentionally leaves the evidence in the disposable project. The CI workflow requires `revit_model_path` and refuses an already-running Revit process for this coverage.
 - Pass/fail artifacts: console output plus add-in logs under `%LOCALAPPDATA%\RevitMcpNext\logs`; pass/fail JSON when `-SummaryPath` is supplied; `npm run smoke:release-local` also writes `bridge-readiness.log` before the destructive smoke starts. Use `npm run support:bundle` after a failure.
 
 Current non-coverage:

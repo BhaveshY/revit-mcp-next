@@ -1,9 +1,9 @@
 # Agent Instructions
 
 This repo contains Revit MCP Next, a Windows/Revit MCP bridge for Claude Code,
-Claude Desktop, Codex, and other MCP clients. Revit 2024 is the established
-host target; Revit 2027 has a separate .NET 10 build/package/install path whose
-full live-host evidence is still pending.
+Claude Desktop, Codex, and other MCP clients. Revit 2021 and 2024 use separate
+.NET Framework 4.8 artifacts; Revit 2027 has a separate .NET 10 artifact. Each
+year needs exact-package live-host evidence.
 
 ## Install Or Configure The MCP
 
@@ -20,12 +20,18 @@ npm run mcp:config
 npm run doctor:clients
 ```
 
-For a Revit 2027 development install, build and select the 2027 artifact
+For a Revit 2021 or 2027 development install, build and select the matching artifact
 explicitly:
 
 ```powershell
 npm install
 npm run build
+
+# Revit 2021
+npm run build:addin -- -RevitYear 2021 -RevitApiPath "C:\Program Files\Autodesk\Revit 2021"
+npm run install:windows -- -RevitYears 2021 -TrustRevitAlwaysLoad
+
+# Or Revit 2027
 npm run build:addin -- -RevitYear 2027 -RevitApiPath "C:\Program Files\Autodesk\Revit 2027"
 npm run install:windows -- -RevitYears 2027 -TrustRevitAlwaysLoad
 npm run mcp:config
@@ -66,10 +72,10 @@ Live Revit smoke mutates the active model. Use only disposable/test `.rvt` files
 
 ## Revit Safety
 
-- Revit 2024 and 2027 builds are separate; never point one year's manifest at
+- Revit 2021, 2024, and 2027 builds are separate; never point one year's manifest at
   the other year's DLL.
 - Revit 2025 and 2026 are not supported.
-- Treat Revit 2027 as build/package support until live Revit, pyRevit, and
+- Treat Revit 2021 and 2027 as build/package support until live Revit, pyRevit, and
   Dynamo evidence from the exact package has passed.
 - MCP is the primary agent interface.
 - `revitctl.cmd` is for diagnostics/support and scripted smoke.

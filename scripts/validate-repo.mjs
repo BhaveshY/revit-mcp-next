@@ -121,10 +121,14 @@ function validateRevitVersionConfiguration() {
   const localReleaseSmokePath = join(root, "scripts", "local-release-smoke.ps1");
   const pyRevitSmokePath = join(root, "scripts", "run-pyrevit-host-smoke.ps1");
   const pyRevitHostsPath = join(root, "scripts", "ensure-pyrevit-hosts-cache.ps1");
+  const handlerPath = join(root, "addin", "RevitMcpNext.Addin", "Revit", "RevitExternalEventHandler.cs");
+  const deliveryWorkflowPath = join(root, "addin", "RevitMcpNext.Addin", "Revit", "ModelDeliveryWorkflow.cs");
+  const parameterContractPath = join(root, "addin", "RevitMcpNext.Addin", "Revit", "ParameterWriteContract.cs");
 
   const project = readFileSync(projectPath, "utf8");
   requireText(projectPath, project, [
     "<RevitYear Condition=",
+    "'$(RevitYear)' == '2021' and '$(TargetFramework)' != 'net48'",
     "'$(RevitYear)' == '2027'",
     "net10.0-windows",
     "'$(RevitYear)' == '2024' and '$(TargetFramework)' != 'net48'",
@@ -133,7 +137,7 @@ function validateRevitVersionConfiguration() {
 
   const build = readFileSync(buildPath, "utf8");
   requireText(buildPath, build, [
-    "[ValidateSet(2024, 2027)]",
+    "[ValidateSet(2021, 2024, 2027)]",
     "-p:RevitYear=$RevitYear",
     '"net10.0-windows"',
     '"artifacts\\addin"',
@@ -141,7 +145,7 @@ function validateRevitVersionConfiguration() {
 
   const packageScript = readFileSync(packagePath, "utf8");
   requireText(packagePath, packageScript, [
-    "$year -notin @(2024, 2027)",
+    "$year -notin @(2021, 2024, 2027)",
     'Join-Path $payloadRoot "addin\\$year"',
     "addinArtifacts",
     'path = "payload/addin/$_/RevitMcpNext.Addin.dll"',
@@ -149,7 +153,7 @@ function validateRevitVersionConfiguration() {
 
   const installer = readFileSync(installerPath, "utf8");
   requireText(installerPath, installer, [
-    "$year -notin @(2024, 2027)",
+    "$year -notin @(2021, 2024, 2027)",
     'Join-Path $installedAddin "$year"',
     "addinAssemblyPaths",
     'Join-Path $installedAddin "$year\\RevitMcpNext.Addin.dll"',
@@ -162,13 +166,13 @@ function validateRevitVersionConfiguration() {
   requireText(matrixPath, matrix, [
     "| 2027 | .NET 10 / `net10.0-windows` |",
     "First-class staged-package target",
-    "Both supported years use the same private Revit bridge protocol",
+    "All supported years use the same private Revit bridge protocol",
     "Revit 2025 and 2026 remain excluded",
   ]);
 
   const liveWorkflow = readFileSync(liveWorkflowPath, "utf8");
   requireText(liveWorkflowPath, liveWorkflow, [
-    "revit_year must be 2024 or 2027",
+    "revit_year must be 2021, 2024, or 2027",
     "-RevitYear $env:REVIT_YEAR",
     "expectedApiMajor",
     "revitApiAssemblyVersion",
@@ -190,7 +194,7 @@ function validateRevitVersionConfiguration() {
 
   const localReleaseSmoke = readFileSync(localReleaseSmokePath, "utf8");
   requireText(localReleaseSmokePath, localReleaseSmoke, [
-    "[ValidateSet(2024, 2027)]",
+    "[ValidateSet(2021, 2024, 2027)]",
     '"build:addin", "--", "-RevitYear", "$RevitYear"',
     "[switch] $RequireElementTypeEdit",
     "[switch] $AcknowledgeDisposableModel",
@@ -206,11 +210,36 @@ function validateRevitVersionConfiguration() {
 
   const pyRevitHosts = readFileSync(pyRevitHostsPath, "utf8");
   requireText(pyRevitHostsPath, pyRevitHosts, [
-    "[ValidateSet(2024, 2027)]",
-    'if ($RevitYear -eq 2024) { "24.0.0.0" } else { "27.0.0.0" }',
-    "Revit 2027 host cache seeding requires explicit -Builds values",
+    "[ValidateSet(2021, 2024, 2027)]",
+    '2021 { "21.0.0.0" }',
+    '2024 { "24.0.0.0" }',
+    '2027 { "27.0.0.0" }',
+    "Revit $RevitYear host cache seeding requires explicit -Builds values",
     "revitYear = $RevitYear",
     "version = $resolvedVersion",
+  ]);
+
+  const handler = readFileSync(handlerPath, "utf8");
+  requireText(handlerPath, handler, [
+    "#if REVIT2021",
+    "document.Create.NewFloor",
+    "Definition?.GetSpecTypeId()",
+    "ParameterType.YesNo",
+    "GetTaggedLocalElement()",
+    "AnyModelDirection element tags require Revit 2022 or newer",
+  ]);
+
+  const deliveryWorkflow = readFileSync(deliveryWorkflowPath, "utf8");
+  requireText(deliveryWorkflowPath, deliveryWorkflow, [
+    "#if REVIT2021",
+    "PerformanceAdviser.GetPerformanceAdviser().ExecuteRules",
+    "e8c63650-70b7-435a-9010-ec97660c1bda",
+  ]);
+
+  const parameterContract = readFileSync(parameterContractPath, "utf8");
+  requireText(parameterContractPath, parameterContract, [
+    "#if REVIT2021",
+    "Revit 2021 does not expose SpecTypeId.Boolean.YesNo",
   ]);
 }
 

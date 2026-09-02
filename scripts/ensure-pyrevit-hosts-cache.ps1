@@ -1,7 +1,7 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [string[]] $Builds = @(),
-    [ValidateSet(2024, 2027)]
+    [ValidateSet(2021, 2024, 2027)]
     [int] $RevitYear = 2024,
     [string] $Product = "Autodesk Revit",
     [string] $Version = "",
@@ -84,7 +84,11 @@ function New-HostEntry($Build) {
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $resolvedVersion = if ($RevitYear -eq 2024) { "24.0.0.0" } else { "27.0.0.0" }
+    $resolvedVersion = switch ($RevitYear) {
+        2021 { "21.0.0.0" }
+        2024 { "24.0.0.0" }
+        2027 { "27.0.0.0" }
+    }
 } else {
     $resolvedVersion = $Version.Trim()
 }
@@ -93,7 +97,7 @@ if (-not $Builds -or $Builds.Count -eq 0) {
     if ($RevitYear -eq 2024) {
         $Builds = @("20230106_1515", "20241105_1515")
     } else {
-        throw "Revit 2027 host cache seeding requires explicit -Builds values from an installed Revit 2027 build. No 2027 build ids are hard-coded."
+        throw "Revit $RevitYear host cache seeding requires explicit -Builds values from an installed Revit $RevitYear build. No $RevitYear build ids are hard-coded."
     }
 }
 

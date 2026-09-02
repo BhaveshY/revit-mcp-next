@@ -2514,9 +2514,16 @@ namespace RevitMcpNext.Addin.Revit
             Level level = ResolveElement(document, GetString(operation, "levelId")) as Level;
             FloorType floorType = ResolveFloorType(document, GetString(operation, "floorTypeId"));
             List<XYZ> points = NormalizeClosedLoop(ToInternalPointList(GetPointList(operation, "outline"), "outline"));
-            CurveLoop loop = BuildCurveLoop(points);
             bool structural = GetBool(operation, "structural", false);
+#if REVIT2021
+            CurveArray profile = BuildCurveArray(points);
+#pragma warning disable CS0618
+            Floor floor = document.Create.NewFloor(profile, floorType, level, structural);
+#pragma warning restore CS0618
+#else
+            CurveLoop loop = BuildCurveLoop(points);
             Floor floor = Floor.Create(document, new List<CurveLoop> { loop }, floorType.Id, level.Id, structural, null, 0.0);
+#endif
 
             return Change(operation, index, "applied",
                 target: ElementTarget(floor, null),
@@ -5210,7 +5217,7 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     throw new InvalidOperationException("UnitValue is only valid for Double parameters.");
                 }
-                if (dataType == null || dataType.Empty() || !UnitUtils.IsMeasurableSpec(dataType))
+                if (!IsMeasurableParameter(parameter, dataType))
                 {
                     throw new InvalidOperationException("The Double parameter does not expose a measurable Revit spec.");
                 }
@@ -5267,7 +5274,7 @@ namespace RevitMcpNext.Addin.Revit
                     prepared.StorageValue = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
                     break;
                 case StorageType.Integer:
-                    if (IsYesNoDataType(dataType))
+                    if (IsYesNoParameter(parameter, dataType))
                     {
                         prepared.StorageValue = NormalizeYesNoValue(value, stableReference);
                     }
@@ -5402,7 +5409,13 @@ namespace RevitMcpNext.Addin.Revit
         {
             try
             {
+#if REVIT2021
+#pragma warning disable CS0618
+                return parameter?.Definition?.GetSpecTypeId();
+#pragma warning restore CS0618
+#else
                 return parameter?.Definition?.GetDataType();
+#endif
             }
             catch
             {
@@ -5422,9 +5435,28 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static bool IsYesNoDataType(ForgeTypeId dataType)
+        private static bool IsMeasurableParameter(Parameter parameter, ForgeTypeId dataType)
         {
+#if REVIT2021
+#pragma warning disable CS0618
+            return parameter?.StorageType == StorageType.Double &&
+                   parameter.Definition != null &&
+                   parameter.Definition.UnitType != UnitType.UT_Undefined;
+#pragma warning restore CS0618
+#else
+            return dataType != null && !dataType.Empty() && UnitUtils.IsMeasurableSpec(dataType);
+#endif
+        }
+
+        private static bool IsYesNoParameter(Parameter parameter, ForgeTypeId dataType)
+        {
+#if REVIT2021
+#pragma warning disable CS0618
+            return parameter?.Definition?.ParameterType == ParameterType.YesNo;
+#pragma warning restore CS0618
+#else
             return ParameterWriteContract.IsYesNoDataType(dataType);
+#endif
         }
 
         private static string GetForgeTypeIdString(ForgeTypeId typeId)
@@ -5751,7 +5783,14 @@ namespace RevitMcpNext.Addin.Revit
             if (string.IsNullOrWhiteSpace(orientation)) return TagOrientation.Horizontal;
             if (string.Equals(orientation, "Horizontal", StringComparison.OrdinalIgnoreCase)) return TagOrientation.Horizontal;
             if (string.Equals(orientation, "Vertical", StringComparison.OrdinalIgnoreCase)) return TagOrientation.Vertical;
-            if (string.Equals(orientation, "AnyModelDirection", StringComparison.OrdinalIgnoreCase)) return TagOrientation.AnyModelDirection;
+            if (string.Equals(orientation, "AnyModelDirection", StringComparison.OrdinalIgnoreCase))
+            {
+#if REVIT2021
+                throw new ArgumentException("AnyModelDirection element tags require Revit 2022 or newer.");
+#else
+                return TagOrientation.AnyModelDirection;
+#endif
+            }
             throw new ArgumentException("Unsupported element tag orientation: " + orientation + ".");
         }
 
@@ -5942,7 +5981,7 @@ namespace RevitMcpNext.Addin.Revit
                     {
                         try
                         {
-                            return tag.GetTaggedLocalElementIds().Any(id => id == element.Id);
+                            return GetTaggedLocalElementIds(tag).Any(id => id == element.Id);
                         }
                         catch
                         {
@@ -6210,6 +6249,19 @@ namespace RevitMcpNext.Addin.Revit
 
             return loop;
         }
+
+#if REVIT2021
+        private static CurveArray BuildCurveArray(IReadOnlyList<XYZ> points)
+        {
+            var profile = new CurveArray();
+            for (int index = 0; index < points.Count; index++)
+            {
+                profile.Append(Line.CreateBound(points[index], points[(index + 1) % points.Count]));
+            }
+
+            return profile;
+        }
+#endif
 
         private static double PolygonAreaInternal(IReadOnlyList<XYZ> points)
         {
@@ -6691,7 +6743,7 @@ namespace RevitMcpNext.Addin.Revit
 
             try
             {
-                string[] localIds = tag.GetTaggedLocalElementIds()
+                string[] localIds = GetTaggedLocalElementIds(tag)
                     .Where(IsValidElementId)
                     .Select(ToElementIdString)
                     .ToArray();
@@ -6750,6 +6802,18 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return snapshot;
+        }
+
+        private static IEnumerable<ElementId> GetTaggedLocalElementIds(IndependentTag tag)
+        {
+#if REVIT2021
+#pragma warning disable CS0618
+            Element taggedElement = tag?.GetTaggedLocalElement();
+#pragma warning restore CS0618
+            return taggedElement == null ? Enumerable.Empty<ElementId>() : new[] { taggedElement.Id };
+#else
+            return tag?.GetTaggedLocalElementIds() ?? Enumerable.Empty<ElementId>();
+#endif
         }
 
         private static Dictionary<string, object> TypeSnapshot(Document document, Element element)
@@ -9288,7 +9352,7 @@ namespace RevitMcpNext.Addin.Revit
             if (!string.IsNullOrWhiteSpace(specTypeId))
             {
                 summary["specTypeId"] = specTypeId;
-                summary["isYesNo"] = IsYesNoDataType(dataType);
+                summary["isYesNo"] = IsYesNoParameter(parameter, dataType);
             }
 
             string unitTypeId = GetForgeTypeIdString(GetParameterUnitTypeId(parameter));

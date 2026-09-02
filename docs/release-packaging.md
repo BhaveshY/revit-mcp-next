@@ -42,7 +42,7 @@ npm run test:release:windows
 
 That contract packages the built broker/contracts with synthetic add-in DLL placeholders, installs the package into temporary profile paths, runs doctor and support bundle collection, verifies support redaction for the generated auth token and host identity, verifies shareable metadata files are present, and confirms a tampered package fails checksum verification. It proves package mechanics on `windows-latest`; it does not prove Revit can load the synthetic DLLs or replace the manual/live Revit smoke gate.
 
-The contract also verifies that unsupported Revit years fail instead of writing misleading manifests. Release packaging and install support `-RevitYears 2024`, `-RevitYears 2027`, or both years when their matching add-in artifacts are present.
+The contract also verifies that unsupported Revit years fail instead of writing misleading manifests. Release packaging and install support any requested combination of `-RevitYears 2021,2024,2027` when the matching add-in artifacts are present.
 
 `npm test` also runs `npm run test:integrations:python`, which syntax-checks the pyRevit/Dynamo Python examples and exercises the shared Python MCP client against a fake stdio MCP server.
 
@@ -137,7 +137,7 @@ Useful installer switches:
 
 - `-DryRun`: validate sources and print actions without writing install files.
 - `-InstallRoot <path>`: override `%LOCALAPPDATA%\RevitMcpNext`.
-- `-RevitYears 2024`, `-RevitYears 2027`, or both: install each requested `.addin` manifest when the package contains its matching year-specific artifact. Revit 2025 and 2026 are rejected.
+- `-RevitYears 2021`, `-RevitYears 2024`, `-RevitYears 2027`, or any combination: install each requested `.addin` manifest when the package contains its matching year-specific artifact. Revit 2025 and 2026 are rejected.
 - `-SkipDependencyInstall`: do not run npm if packaged dependencies are absent.
 - `-SkipChecksumVerification`: bypass package checksum verification only for local debugging.
 
@@ -205,23 +205,23 @@ npm run evidence:release:windows -- `
 For release-candidate live smoke, use a curated disposable model and require ElementType, type-change, and tag coverage. Run the same command against each supported year:
 
 ```powershell
-$revitYear = 2024 # or 2027
+$revitYear = 2024 # or 2021/2027
 npm run smoke:revit -- -ExpectedRevitYear $revitYear -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
 For deterministic curated runners, select the intended loaded tag symbols by id or stable name/family substring:
 
 ```powershell
-$revitYear = 2024 # or 2027
+$revitYear = 2024 # or 2021/2027
 npm run smoke:revit -- -ExpectedRevitYear $revitYear -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags -RoomTagTypeNameContains "Room Tag" -ElementTagTypeNameContains "Wall Tag" -SummaryPath artifacts\live-revit-smoke\smoke-summary.json
 ```
 
 The curated model should contain a duplicable wall-hosted door type with writable Width and Height parameters, at least two compatible wall types, a loaded room tag type, a wall or multi-category tag type, a printable plan/section view, a placed room, and a visible wall. Pass a real disposable `.rvt` project file to `-ModelPath`; templates (`.rte`) must be opened from Revit and saved as `.rvt` first because the local release smoke runner copies the source model before launch. `smoke-summary.json.requiredCoverage` records the requirements. `result.elementTypeEdit` records the duplicated type, dimensions, duplicate-name guard, and placed instance. `tagSelectors` records requested tag type selectors, and `result.tagCoverage` records the room/wall target, view, tag type, and created tag IDs.
 
-On a disposable Revit 2024 or Revit 2027 test machine, start with a copied sample for that year before building a fixture from templates:
+On a disposable Revit 2021, Revit 2024, or Revit 2027 test machine, start with a copied sample for that year before building a fixture from templates:
 
 ```powershell
-$revitYear = 2024 # or 2027
+$revitYear = 2024 # or 2021/2027
 Copy-Item -LiteralPath "C:\Program Files\Autodesk\Revit $revitYear\Samples\Snowdon Towers Sample Architectural.rvt" -Destination C:\tmp\revit-mcp-next-tag-fixture.rvt -Force
 npm run smoke:release-local -- -RevitYear $revitYear -ModelPath C:\tmp\revit-mcp-next-tag-fixture.rvt -RequireElementTypeEdit -AcknowledgeDisposableModel -RequireTypeChange -RequireTags
 ```

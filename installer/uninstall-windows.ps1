@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "High")]
 param(
-    [string[]] $RevitYears = @("2024", "2027"),
+    [string[]] $RevitYears = @("2021", "2024", "2027"),
     [string] $InstallRoot = "$env:LOCALAPPDATA\RevitMcpNext",
     [switch] $RemoveTrust,
     [switch] $KeepConfig,

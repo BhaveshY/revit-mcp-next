@@ -1,7 +1,7 @@
 param(
     [string] $PackageRoot = "",
     [string] $PackageZipPath = "",
-    [ValidateSet(0, 2024, 2027)]
+    [ValidateSet(0, 2021, 2024, 2027)]
     [int] $RevitYear = 0,
     [string] $OutputRoot = "",
     [string] $SigningSkipReason = "",

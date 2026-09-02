@@ -6,7 +6,7 @@ Use this when an AI coding agent needs to install Revit MCP Next for Claude Code
 
 Prerequisites:
 
-- Windows with Autodesk Revit 2024 installed.
+- Windows with Autodesk Revit 2021, 2024, or 2027 installed.
 - Node.js 24.x on `PATH`.
 - PowerShell.
 - The target MCP client installed when configuring that client: Claude Code with the `claude` CLI, Claude Desktop, Codex, or another MCP-compatible client.
@@ -38,7 +38,7 @@ The installer writes the Revit add-in, MCP launcher, `revitctl.cmd`, integration
 %LOCALAPPDATA%\RevitMcpNext
 ```
 
-The Revit `.addin` manifest is written separately under `%APPDATA%\Autodesk\Revit\Addins\2024` and points at the installed add-in DLL.
+The Revit `.addin` manifest is written separately under `%APPDATA%\Autodesk\Revit\Addins\<year>` and points at the matching year-specific installed add-in DLL. Pass `-RevitYears 2021` or `-RevitYears 2027` instead of the default 2024 examples when targeting those hosts.
 
 ## MCP Client Setup
 
@@ -88,7 +88,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\print-mcp-config.p
 
 ## First Connection Check
 
-1. Open Revit 2024 with a disposable `.rvt` project.
+1. Open the matching supported Revit release with a disposable `.rvt` project.
 2. If Revit shows an unsigned or unknown-publisher add-in prompt, only choose the trust/load option when the user confirms the package source and checksum.
 3. In the MCP client, call `revit.status`.
 4. Then call `revit.read_bundle` for compact model context.

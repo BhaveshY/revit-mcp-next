@@ -37,4 +37,4 @@ npm run doctor:clients -- -Client claude-code
 npm run doctor:clients -- -Client claude-desktop
 ```
 
-After updating Claude config, restart the client when needed, open a supported Revit release (2024 or 2027) with a disposable project, and call `revit.status` from the MCP client.
+After updating Claude config, restart the client when needed, open a supported Revit release (2021, 2024, or 2027) with a disposable project, and call `revit.status` from the MCP client.

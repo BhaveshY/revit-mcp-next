@@ -107,7 +107,7 @@ function Assert-DirectoryExists($Path, $Label) {
 }
 
 function New-SyntheticAddinOutput($Root) {
-    foreach ($year in @(2024, 2027)) {
+    foreach ($year in @(2021, 2024, 2027)) {
         $yearRoot = Join-Path $Root "$year"
         New-Item -ItemType Directory -Force -Path $yearRoot | Out-Null
         Set-Content -LiteralPath (Join-Path $yearRoot "RevitMcpNext.Addin.dll") -Value "synthetic Revit $year add-in placeholder for package contract" -Encoding ASCII
@@ -1087,6 +1087,7 @@ try {
     $syntheticAddinRoot = Join-Path $runRoot "syn"
     $packageOutputRoot = Join-Path $runRoot "pkg"
     $installRoot = Join-Path $runRoot "inst"
+    $install2021Root = Join-Path $runRoot "inst-2021"
     $install2027Root = Join-Path $runRoot "inst-2027"
     $supportRoot = Join-Path $runRoot "sup"
     $env:APPDATA = Join-Path $runRoot "ad"
@@ -1115,7 +1116,7 @@ try {
         "-OutputRoot", $packageOutputRoot,
         "-AddinOutputRoot", $syntheticAddinRoot,
         "-Version", $contractVersion,
-        "-RevitYears", "2024,2027"
+        "-RevitYears", "2021,2024,2027"
     )
 
     $packageRoot = Join-Path $packageOutputRoot "revit-mcp-next-$contractVersion-windows"
@@ -1130,6 +1131,7 @@ try {
     Assert-FileExists (Join-Path $packageRoot "installer\uninstall-windows.ps1") "packaged uninstaller"
     Assert-FileExists (Join-Path $packageRoot "scripts\package-pilot-rc.ps1") "packaged pilot RC packager"
     Assert-FileExists (Join-Path $packageRoot "docs\controlled-pilot-runbook.md") "packaged architect pilot runbook"
+    Assert-FileExists (Join-Path $packageRoot "payload\addin\2021\RevitMcpNext.Addin.dll") "packaged Revit 2021 add-in"
     Assert-FileExists (Join-Path $packageRoot "payload\addin\2024\RevitMcpNext.Addin.dll") "packaged Revit 2024 add-in"
     Assert-FileExists (Join-Path $packageRoot "payload\addin\2027\RevitMcpNext.Addin.dll") "packaged Revit 2027 add-in"
     $packagedRevitCtl = Join-Path $packageRoot "payload\broker\dist\src\cli\revitctl.js"
@@ -1146,9 +1148,16 @@ try {
     if ($manifest.package.integrationsIncluded -ne $true) {
         throw "Release contract expected packaged pyRevit/Dynamo integrations."
     }
-    if (@($manifest.package.addinArtifacts).Count -ne 2 -or
-        @($manifest.package.addinArtifacts | ForEach-Object { [int] $_.revitYear }) -notcontains 2027) {
-        throw "Release contract expected distinct Revit 2024 and 2027 add-in artifacts."
+    $artifactYears = @($manifest.package.addinArtifacts | ForEach-Object { [int] $_.revitYear })
+    if (@($manifest.package.addinArtifacts).Count -ne 3 -or
+        $artifactYears -notcontains 2021 -or
+        $artifactYears -notcontains 2024 -or
+        $artifactYears -notcontains 2027) {
+        throw "Release contract expected distinct Revit 2021, 2024, and 2027 add-in artifacts."
+    }
+    $artifact2021 = @($manifest.package.addinArtifacts | Where-Object { [int] $_.revitYear -eq 2021 })[0]
+    if ([string] $artifact2021.targetFramework -ne "net48") {
+        throw "Release contract expected the Revit 2021 add-in to target net48."
     }
     if ([string]::IsNullOrWhiteSpace([string] $manifest.sharing.shareProfile) -or [string]::IsNullOrWhiteSpace([string] $manifest.sharing.signingMode)) {
         throw "Release contract expected package sharing metadata."
@@ -1172,7 +1181,7 @@ try {
     Invoke-RepoScript (Join-Path $packageRoot "installer\pilot-install.ps1") @(
         "-Action", "ValidatePackage",
         "-PackageRoot", $packageRoot,
-        "-RevitYears", "2024,2027"
+        "-RevitYears", "2021,2024,2027"
     )
     Assert-ScriptFailsLike $installerScript @(
         "-PackageRoot", $packageRoot,
@@ -1188,6 +1197,11 @@ try {
 
     Invoke-RepoScript $installerScript @(
         "-PackageRoot", $packageRoot,
+        "-InstallRoot", $install2021Root,
+        "-RevitYears", "2021"
+    )
+    Invoke-RepoScript $installerScript @(
+        "-PackageRoot", $packageRoot,
         "-InstallRoot", $installRoot,
         "-RevitYears", "2024"
     )
@@ -1196,8 +1210,10 @@ try {
         "-InstallRoot", $install2027Root,
         "-RevitYears", "2027"
     )
+    Assert-FileExists (Join-Path $install2021Root "addin\2021\RevitMcpNext.Addin.dll") "installed Revit 2021 add-in"
     Assert-FileExists (Join-Path $installRoot "addin\2024\RevitMcpNext.Addin.dll") "installed Revit 2024 add-in"
     Assert-FileExists (Join-Path $install2027Root "addin\2027\RevitMcpNext.Addin.dll") "installed Revit 2027 add-in"
+    $clientDiscovery2021 = Read-JsonFile (Join-Path $install2021Root "config\client-discovery.json")
     $clientDiscovery2027 = Read-JsonFile (Join-Path $install2027Root "config\client-discovery.json")
     $installReceipt = Read-JsonFile (Join-Path $installRoot "install-receipt.json")
     if ([string] $installReceipt.product -ne "revit-mcp-next" -or $installReceipt.checksumVerification -ne $true -or [string] $installReceipt.signatureVerification -ne "not-requested") {
@@ -1208,6 +1224,10 @@ try {
     }
     if (-not ([string] $clientDiscovery2027.addinAssemblyPaths."2027").Contains("\addin\2027\")) {
         throw "Client discovery reused a non-2027 add-in assembly for Revit 2027."
+    }
+    if (-not $clientDiscovery2021.addinAssemblyPaths.PSObject.Properties["2021"] -or
+        -not ([string] $clientDiscovery2021.addinAssemblyPaths."2021").Contains("\addin\2021\")) {
+        throw "Client discovery did not record the isolated Revit 2021 add-in assembly path."
     }
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_client.py") "installed Python integration client"
     Assert-FileExists (Join-Path $installRoot "integrations\python\revit_mcp_next_inprocess.py") "installed Python in-process integration helper"

@@ -31,14 +31,14 @@ Autodesk Revit API
 
 ## Current Status
 
-Revit 2024 and Revit 2027 are first-class staged-package targets with separate
+Revit 2021, Revit 2024, and Revit 2027 are staged-package targets with separate
 framework-specific add-in artifacts. Each published package still needs live
 Revit, pyRevit, and Dynamo evidence from its matching host. This is not yet a
 signed production release:
 
 - `contracts/`: shared Revit bridge envelope and tool-result TypeScript types plus JSON schema.
 - `broker/`: MCP stdio server on the stable SDK v2 package split. It serves MCP `2026-07-28` and supported legacy clients, caches static discovery privately for five minutes, and exposes bounded read/write tools, structured errors, pipe auth token forwarding, `revitctl`, and bridge tests.
-- `addin/`: year-specific Revit 2024 (`net48`) and Revit 2027 (`net10.0-windows`) add-ins with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers including rooms, and preview/apply write handlers including room placement.
+- `addin/`: year-specific Revit 2021/2024 (`net48`) and Revit 2027 (`net10.0-windows`) add-ins with named-pipe IPC, pipe auth token enforcement when configured, cancellation-aware `ExternalEvent` queue, read handlers including rooms, and preview/apply write handlers including room placement.
 - `installer/`: Windows installer that stages broker/contracts and year-specific add-in artifacts under `%LOCALAPPDATA%\RevitMcpNext`, writes each requested Revit `.addin` manifest, provisions a per-install pipe auth token under `config\auth.env`, and creates the Claude/Codex MCP launcher plus `revitctl.cmd` for debugging.
 - `scripts/package-release.ps1`: staged Windows release package with per-year add-in payloads, checksums, and optional bundled production dependencies.
 - `scripts/ensure-dev-signing-certificate.ps1`: CurrentUser local dev code-signing certificate bootstrapper for disposable Revit smoke machines.
@@ -75,15 +75,16 @@ npm run test:evidence:release:windows
 ```
 
 `npm run build:addin` defaults to Revit 2024. Select the matching year and API
-directory explicitly for Revit 2027:
+directory explicitly for Revit 2021 or 2027:
 
 ```powershell
+npm run build:addin -- -RevitYear 2021 -RevitApiPath "C:\Program Files\Autodesk\Revit 2021"
 npm run build:addin -- -RevitYear 2024 -RevitApiPath "C:\Program Files\Autodesk\Revit 2024"
 npm run build:addin -- -RevitYear 2027 -RevitApiPath "C:\Program Files\Autodesk\Revit 2027"
 ```
 
-The outputs are isolated under `artifacts\addin\2024` and
-`artifacts\addin\2027`. Package and install only years whose matching artifact
+The outputs are isolated under `artifacts\addin\2021`, `artifacts\addin\2024`,
+and `artifacts\addin\2027`. Package and install only years whose matching artifact
 was built:
 
 ```powershell
@@ -91,11 +92,11 @@ npm run package:windows -- -RevitYears 2027
 npm run install:windows -- -RevitYears 2027
 ```
 
-To stage both year payloads in one package from PowerShell, call the script with
+To stage all supported year payloads in one package from PowerShell, call the script with
 an actual integer array:
 
 ```powershell
-& .\scripts\package-release.ps1 -RevitYears @(2024, 2027)
+& .\scripts\package-release.ps1 -RevitYears @(2021, 2024, 2027)
 ```
 
 Revit 2025 and 2026 are not supported. See
@@ -365,7 +366,7 @@ See [agent-workflows.md](docs/agent-workflows.md) for practical agent sequences 
 ## Production Readiness And Remaining Blockers
 
 This repository is ready for local development and staged Windows packaging for
-Revit 2024 and Revit 2027 as first-class supported targets. Treat each exact
+Revit 2021, Revit 2024, and Revit 2027 as supported targets. Treat each exact
 year-specific package as a candidate until its live Revit, pyRevit, and Dynamo
 evidence has passed and been archived. Production release hardening is still in
 progress.

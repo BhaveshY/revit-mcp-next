@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $builtYears = @()
-          foreach ($year in @(2024, 2027)) {
+          foreach ($year in @(2021, 2024, 2027)) {
             $revitApiPath = "C:\Program Files\Autodesk\Revit $year"
             if (Test-Path "$revitApiPath\RevitAPI.dll") {
               .\scripts\build-addin.ps1 -RevitYear $year -RevitApiPath $revitApiPath

@@ -5,7 +5,9 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>false</ImplicitUsings>
-    <RevitApiPath Condition="'$(RevitApiPath)' == ''">$(ProgramFiles)\Autodesk\Revit 2024</RevitApiPath>
+    <RevitYear Condition="'$(RevitYear)' == ''">2024</RevitYear>
+    <RevitApiPath Condition="'$(RevitApiPath)' == ''">$(ProgramFiles)\Autodesk\Revit $(RevitYear)</RevitApiPath>
+    <DefineConstants>$(DefineConstants);REVIT$(RevitYear)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,4 +21,10 @@
       <Private>true</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="ValidateRevitConfiguration" BeforeTargets="PrepareForBuild">
+    <Error
+      Condition="'$(RevitYear)' != '2021' and '$(RevitYear)' != '2024'"
+      Text="The parameter contract supports RevitYear values 2021 and 2024." />
+  </Target>
 </Project>

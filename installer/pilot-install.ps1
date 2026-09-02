@@ -3,7 +3,7 @@ param(
     [ValidateSet("ValidatePackage", "Install", "Status", "Rollback", "Uninstall")]
     [string] $Action = "Status",
     [string] $PackageRoot = "",
-    [string[]] $RevitYears = @("2024", "2027"),
+    [string[]] $RevitYears = @("2021", "2024", "2027"),
     [string] $InstallRoot = "$env:LOCALAPPDATA\RevitMcpNext",
     [string] $BackupRoot = "$env:LOCALAPPDATA\RevitMcpNext-PilotBackups",
     [string] $BackupPath = "",

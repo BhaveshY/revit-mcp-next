@@ -4,7 +4,7 @@
 
 Provide a Codex-first, button-free workflow that packages an arbitrary project-specific set of Revit models for consultant delivery. The production source models must never be renamed, cleaned, overwritten, synchronized, or published by the workflow. Every delivered RVT must be a standalone, non-workshared file with no connection to its source central model.
 
-The same typed contract and C# implementation must build for Revit 2024 and Revit 2027. Codex owns the conversation, exception resolution, preview, and approval. The Revit add-in owns every Revit API call.
+The same typed contract and C# implementation must build for Revit 2021, Revit 2024, and Revit 2027. Codex owns the conversation, exception resolution, preview, and approval. The Revit add-in owns every Revit API call.
 
 ## User continuity
 
@@ -98,7 +98,7 @@ The implementation should add only tests that prove the delivery contract:
 1. Broker/schema contract: arbitrary model count, strict paths/names, preview/apply metadata, and no hidden defaults for destructive cleanup.
 2. Deterministic delivery simulator: project-specific names, central and standalone inputs, link remapping, duplicate/ambiguous links, stale preview, failed QA, retry after partial staging, and successful publish.
 3. Recipe-store contract: idempotent save, integrity check, latest-version lookup, inventory, automatic inspection load, and stale-write rejection.
-4. Add-in build for both 2024 and 2027.
+4. Add-in build for 2021, 2024, and 2027.
 5. Live disposable Revit scenario per available installed year: at least two differently named models, one link, standalone output assertion, reopen validation, and no source modification.
 
 ## Definition of done

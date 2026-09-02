@@ -42,7 +42,7 @@ def _candidate_install_roots():
 
     app_data = os.environ.get("APPDATA")
     if app_data:
-        for year in ("2027", "2024"):
+        for year in ("2027", "2024", "2021"):
             roots.append(os.path.join(app_data, "Autodesk", "Revit", "Addins", year, "RevitMcpNext"))
 
     unique = []
@@ -63,9 +63,9 @@ def _candidate_revit_years():
         import clr  # noqa: F401
         from System import Environment
 
-        return ("2027",) if Environment.Version.Major >= 10 else ("2024",)
+        return ("2027",) if Environment.Version.Major >= 10 else ("2024", "2021")
     except Exception:
-        return ("2027", "2024")
+        return ("2027", "2024", "2021")
 
 
 def _candidate_addin_paths():

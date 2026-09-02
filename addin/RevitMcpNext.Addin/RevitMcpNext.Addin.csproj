@@ -36,8 +36,11 @@
 
   <Target Name="ValidateRevitConfiguration" BeforeTargets="PrepareForBuild">
     <Error
-      Condition="'$(RevitYear)' != '2024' and '$(RevitYear)' != '2027'"
-      Text="Revit $(RevitYear) is not configured. Supported RevitYear values are 2024 and 2027." />
+      Condition="'$(RevitYear)' != '2021' and '$(RevitYear)' != '2024' and '$(RevitYear)' != '2027'"
+      Text="Revit $(RevitYear) is not configured. Supported RevitYear values are 2021, 2024, and 2027." />
+    <Error
+      Condition="'$(RevitYear)' == '2021' and '$(TargetFramework)' != 'net48'"
+      Text="Revit 2021 must target net48." />
     <Error
       Condition="'$(RevitYear)' == '2024' and '$(TargetFramework)' != 'net48'"
       Text="Revit 2024 must target net48." />

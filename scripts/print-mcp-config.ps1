@@ -108,9 +108,9 @@ function Assert-DiscoveryMatchesInstallRoot($Discovery, $Root) {
     if ($Discovery.PSObject.Properties["supportedRevitYears"] -and $null -ne $Discovery.supportedRevitYears) {
         $supportedYears = @($Discovery.supportedRevitYears | ForEach-Object { [int] $_ })
     }
-    $unsupportedYears = @($supportedYears | Where-Object { $_ -notin @(2024, 2027) })
+    $unsupportedYears = @($supportedYears | Where-Object { $_ -notin @(2021, 2024, 2027) })
     if ($supportedYears.Count -gt 0 -and $unsupportedYears.Count -gt 0) {
-        throw "Client discovery advertises unsupported Revit years: $($unsupportedYears -join ', '). Supported package years are 2024 and 2027."
+        throw "Client discovery advertises unsupported Revit years: $($unsupportedYears -join ', '). Supported package years are 2021, 2024, and 2027."
     }
 
     foreach ($year in $supportedYears) {

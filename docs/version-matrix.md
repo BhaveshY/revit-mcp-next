@@ -6,12 +6,13 @@ release is ready for production use in that Revit host.
 
 | Revit | Runtime / target | Build and package status | Host-validation status |
 | --- | --- | --- | --- |
+| 2021 | .NET Framework 4.8 / `net48` | First-class staged-package target | Compatibility build passed against 2021.1 reference assemblies; exact-package live-host evidence is still required |
 | 2024 | .NET Framework 4.8 / `net48` | First-class staged-package target | Live-smoke workflow; exact-package release evidence is required for each published package |
 | 2025 | .NET 8 / `net8.0-windows` | Not supported | Not validated |
 | 2026 | .NET 8 / `net8.0-windows` | Not supported | Not validated |
 | 2027 | .NET 10 / `net10.0-windows` | First-class staged-package target | Live-smoke workflow; exact-package release evidence is required for each published package |
 
-Both supported years use the same private Revit bridge protocol, tool surface, safety model,
+All supported years use the same private Revit bridge protocol, tool surface, safety model,
 live-smoke requirements, and release-readiness gates. Do not label a package
 production-ready until its year-specific DLL and hosted integrations have passed
 the self-hosted workflows and the evidence has been archived.
@@ -22,6 +23,10 @@ Use the API assemblies from the matching installed Revit release. Autodesk API
 DLLs are not vendored in this repository.
 
 ```powershell
+# Revit 2021
+npm run build:addin -- -RevitYear 2021 `
+  -RevitApiPath "C:\Program Files\Autodesk\Revit 2021"
+
 # Revit 2024
 npm run build:addin -- -RevitYear 2024 `
   -RevitApiPath "C:\Program Files\Autodesk\Revit 2024"
@@ -34,7 +39,7 @@ npm run build:addin -- -RevitYear 2027 `
 Year-specific outputs are written below `artifacts\addin\<year>\`. Release
 packages preserve that boundary below `payload\addin\<year>\`, and the installer
 selects the matching artifact for each requested `-RevitYears` value. Never
-copy the 2024 DLL into a 2027 manifest, or the 2027 DLL into a 2024 manifest.
+reuse a DLL from any other Revit year in a manifest.
 
 The 2027 development baseline used for this compatibility work was Autodesk
 Revit 2027.2:
@@ -55,7 +60,7 @@ The installer uses the supported per-user manifest location:
 %APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpNext.addin
 ```
 
-That location is valid for both 2024 and 2027. Revit 2027 no longer loads
+That location is valid for 2021, 2024, and 2027. Revit 2027 no longer loads
 third-party all-user manifests from `%ProgramData%`. If an all-user installation
 mode is added later, its 2027 manifest must be placed below
 `%ProgramFiles%\Autodesk\Revit\Addins\2027`.

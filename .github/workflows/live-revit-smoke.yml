@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       revit_year:
-        description: Revit year to build, package, install, and smoke (2024 or 2027).
+        description: Revit year to build, package, install, and smoke (2021, 2024, or 2027).
         required: true
         default: "2024"
       revit_api_path:
@@ -268,8 +268,8 @@ jobs:
       - name: Validate release profile inputs
         run: |
           $ErrorActionPreference = "Stop"
-          if ($env:REVIT_YEAR -notin @("2024", "2027")) {
-            throw "revit_year must be 2024 or 2027. Received: $env:REVIT_YEAR"
+          if ($env:REVIT_YEAR -notin @("2021", "2024", "2027")) {
+            throw "revit_year must be 2021, 2024, or 2027. Received: $env:REVIT_YEAR"
           }
 
           $profile = $env:READINESS_PROFILE.Trim().ToLowerInvariant()
@@ -304,7 +304,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $apiDll = Join-Path $env:REVIT_API_PATH "RevitAPI.dll"
           $apiUiDll = Join-Path $env:REVIT_API_PATH "RevitAPIUI.dll"
-          $expectedApiMajor = if ($env:REVIT_YEAR -eq "2024") { 24 } else { 27 }
+          $expectedApiMajor = switch ($env:REVIT_YEAR) {
+            "2021" { 21 }
+            "2024" { 24 }
+            "2027" { 27 }
+          }
           $apiAssemblyVersion = $null
           $apiUiAssemblyVersion = $null
           $revitFileVersion = $null
@@ -389,9 +393,9 @@ jobs:
             throw "In-process bridge contract failed with exit code $LASTEXITCODE."
           }
 
-          if ($env:REVIT_YEAR -eq "2024") {
+          if ($env:REVIT_YEAR -in @("2021", "2024")) {
             $parameterContractLog = Join-Path $env:EVIDENCE_DIR "revit-parameter-contract.log"
-            & npm.cmd run test:contract:revit-parameter -- -RevitApiPath $env:REVIT_API_PATH 2>&1 | Tee-Object -FilePath $parameterContractLog
+            & npm.cmd run test:contract:revit-parameter -- -RevitYear $env:REVIT_YEAR -RevitApiPath $env:REVIT_API_PATH 2>&1 | Tee-Object -FilePath $parameterContractLog
             if ($LASTEXITCODE -ne 0) {
               throw "Revit parameter contract failed with exit code $LASTEXITCODE."
             }

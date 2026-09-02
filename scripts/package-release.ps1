@@ -368,8 +368,8 @@ function Assert-SupportedRevitYears {
     }
 
     foreach ($year in ($normalizedYears | Sort-Object -Unique)) {
-        if ($year -notin @(2024, 2027)) {
-            throw "Revit $year packaging is not supported yet. Supported Revit years: 2024, 2027."
+        if ($year -notin @(2021, 2024, 2027)) {
+            throw "Revit $year packaging is not supported yet. Supported Revit years: 2021, 2024, 2027."
         }
     }
 
@@ -459,7 +459,7 @@ foreach ($year in $RevitYears) {
         directory = $addinOut
         addinDll = $addinDll
         contractsDll = $contractsDll
-        targetFramework = if ($year -eq 2024) { "net48" } else { "net10.0-windows" }
+        targetFramework = if ($year -in @(2021, 2024)) { "net48" } else { "net10.0-windows" }
     }
 }
 

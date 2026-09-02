@@ -1347,7 +1347,7 @@ namespace RevitMcpNext.Addin.Revit
             int deleted = 0;
             for (int pass = 0; pass < passes; pass++)
             {
-                ISet<ElementId> ids = document.GetUnusedElements(new HashSet<ElementId>());
+                ICollection<ElementId> ids = GetUnusedElements(document);
                 if (ids == null || ids.Count == 0) break;
                 int passDeleted = 0;
                 RunTransaction(document, "Purge unused delivery content " + (pass + 1).ToString(CultureInfo.InvariantCulture), () =>
@@ -1358,6 +1358,27 @@ namespace RevitMcpNext.Addin.Revit
                 if (passDeleted == 0) break;
             }
             return deleted;
+        }
+
+        private static ICollection<ElementId> GetUnusedElements(Document document)
+        {
+#if REVIT2021
+            // Document.GetUnusedElements was added after Revit 2021. The
+            // built-in Purge Unused performance-adviser rule exposes the same
+            // candidate set without depending on a localized rule name.
+            var ruleId = new PerformanceAdviserRuleId(new Guid("e8c63650-70b7-435a-9010-ec97660c1bda"));
+            IList<FailureMessage> messages = PerformanceAdviser.GetPerformanceAdviser().ExecuteRules(
+                document,
+                new List<PerformanceAdviserRuleId> { ruleId });
+            return (messages ?? new List<FailureMessage>())
+                .SelectMany(message => message.GetFailingElements() ?? new List<ElementId>())
+                .Where(id => id != null && id != ElementId.InvalidElementId)
+                .GroupBy(IdValue, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToList();
+#else
+            return document.GetUnusedElements(new HashSet<ElementId>());
+#endif
         }
 
         private static CleanupPlan BuildCleanupPlan(Document document, DeliveryCleanup cleanup, DeliverySource source)
