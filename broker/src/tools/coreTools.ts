@@ -2184,6 +2184,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const request = makeRequest(context.sessionId, "status", "read", { instanceId: args.instanceId }, 5000);
       request.instanceId = args.instanceId;
       const response = await context.bridge.status(request, { signal: ctx.mcpReq.signal });
+      if (response.ok) response.data.brokerVersion = context.brokerVersion;
       return asToolResult(response, (data) =>
         data.connected
           ? `Revit bridge connected. Active document: ${data.activeDocument?.title ?? "(none)"}.`
@@ -2325,6 +2326,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       const statusRequest = makeRequest(context.sessionId, "status", "read", { instanceId: effectiveTarget.instanceId }, 5000);
       statusRequest.instanceId = effectiveTarget.instanceId;
       const statusResponse = await context.bridge.status(statusRequest, { signal: ctx.mcpReq.signal });
+      if (statusResponse.ok) statusResponse.data.brokerVersion = context.brokerVersion;
       const statusFailure = record("status", statusResponse, { forceReturn: include.status });
       if (statusFailure) return asToolResult(statusFailure, () => "");
       if (!statusResponse.ok) return asToolResult(statusResponse, () => "");

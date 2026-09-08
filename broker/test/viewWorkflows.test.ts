@@ -11,6 +11,8 @@ test("documentation tools require exact document targeting and expose bounded ty
   await server.connect(st); await client.connect(ct);
   try {
     const {tools} = await client.listTools();
+    const status = await client.callTool({name:"revit.status", arguments:{}});
+    assert.equal((status.structuredContent as {data:{brokerVersion:string}}).data.brokerVersion, "test");
     for (const name of ["get_view_details", "get_dimensions", "activate_view"]) {
       const tool = tools.find(t => t.name === `revit.${name}`)!;
       assert.ok(tool);
