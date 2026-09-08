@@ -4,7 +4,7 @@ import { createBrokerServer } from "./server.js";
 import { NamedPipeBridgeClient } from "./ipc/NamedPipeBridgeClient.js";
 import { FileSystemRevitInstanceDirectory } from "./instances/FileSystemRevitInstanceDirectory.js";
 
-const brokerVersion = process.env.REVIT_MCP_NEXT_VERSION ?? "0.2.1";
+const brokerVersion = process.env.REVIT_MCP_NEXT_VERSION ?? "0.3.0";
 const pipeName = process.env.REVIT_MCP_NEXT_PIPE ?? "revit-mcp-next";
 const sessionId = process.env.REVIT_MCP_NEXT_SESSION ?? `broker-${process.pid}`;
 

@@ -1385,6 +1385,13 @@ export interface ModelReadinessResult {
 
 export type ChangeRiskLevel = "low" | "medium" | "high";
 export type ChangeOperationType =
+  | "create_plan_view"
+  | "duplicate_view"
+  | "duplicate_sheet"
+  | "copy_view_annotations"
+  | "create_dimension"
+  | "update_dimension"
+
   | "set_parameter"
   | "create_level"
   | "create_wall"
@@ -1652,7 +1659,41 @@ export interface DeleteElementOperation extends ChangeOperationBase {
   dependentDeleteLimit?: number;
 }
 
+
+export interface CreatePlanViewOperation extends ChangeOperationBase {
+  type: "create_plan_view"; levelId: ElementId; viewFamilyTypeId: ElementId; name: string; templateId?: ElementId;
+}
+export interface DuplicateViewOperation extends ChangeOperationBase {
+  type: "duplicate_view"; viewId: ElementId; name: string; expectedUniqueId?: UniqueId;
+  sheetId?: ElementId; center?: Point2;
+}
+export interface DuplicateSheetOperation extends ChangeOperationBase {
+  type: "duplicate_sheet"; sheetId: ElementId; sheetNumber: string; name?: string; viewNamePrefix: string; expectedUniqueId?: UniqueId;
+}
+export interface CopyViewAnnotationsOperation extends ChangeOperationBase {
+  type: "copy_view_annotations"; sourceViewId: ElementId; targetViewId: ElementId; elementIds: ElementId[];
+}
+export interface DimensionTextEdit {
+  segmentIndex?: number; valueOverride?: string; prefix?: string; suffix?: string; above?: string; below?: string; textPosition?: Point3;
+}
+export interface CreateDimensionOperation extends ChangeOperationBase {
+  type: "create_dimension"; viewId: ElementId; dimensionTypeId: ElementId; references: string[];
+  start: Point3; end: Point3; text?: DimensionTextEdit[];
+}
+export interface UpdateDimensionOperation extends ChangeOperationBase {
+  type: "update_dimension"; elementId: ElementId; expectedUniqueId?: UniqueId; dimensionTypeId?: ElementId;
+  translation?: Point3; text?: DimensionTextEdit[];
+  references?: string[]; start?: Point3; end?: Point3;
+}
+
 export type ChangeOperation =
+  | CreatePlanViewOperation
+  | DuplicateViewOperation
+  | DuplicateSheetOperation
+  | CopyViewAnnotationsOperation
+  | CreateDimensionOperation
+  | UpdateDimensionOperation
+
   | SetParameterChangeOperation
   | CreateLevelChangeOperation
   | CreateWallChangeOperation

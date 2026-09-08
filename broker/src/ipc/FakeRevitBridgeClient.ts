@@ -1235,6 +1235,11 @@ export class FakeRevitBridgeClient implements RevitBridgeClient {
     });
   }
 
+  viewWorkflow(request: BridgeRequest<Record<string, unknown>>, options?: BridgeCallOptions): Promise<BridgeResponse<Record<string, unknown>>> {
+    maybeAbort(options);
+    return Promise.resolve({ok:false, requestId:request.requestId, warnings:[], error:{code:"NATIVE_HOST_REQUIRED", message:"View and dimension workflows require a live Revit host.", recoverable:false}});
+  }
+
   async getCurrentView(
     request: BridgeRequest<CurrentViewRequest>,
     options?: BridgeCallOptions
@@ -2252,6 +2257,13 @@ function getOperationValidationFailure(
   currentCatalogItems: FakeCatalogItem[]
 ): string | undefined {
   switch (operation.type) {
+    case "create_plan_view":
+    case "duplicate_view":
+    case "duplicate_sheet":
+    case "copy_view_annotations":
+    case "create_dimension":
+    case "update_dimension":
+      return "Native Revit host required; fake mode cannot validate these operations.";
     case "rename_element_type":
       return getElementTypeEditFailure(
         operation.elementTypeId,
@@ -2781,6 +2793,13 @@ function getOperationTarget(
         elementId: operation.elementId,
         ...fakeUniqueIdField(operation.elementId, "uniqueId", currentCatalogItems),
       };
+    case "create_plan_view":
+    case "duplicate_view":
+    case "duplicate_sheet":
+    case "copy_view_annotations":
+    case "create_dimension":
+    case "update_dimension":
+      return {nativeHostRequired:true};
     default:
       return assertNever(operation);
   }
@@ -3003,6 +3022,13 @@ function getOperationAfter(
         dependentDeletedCount: Math.max(0, (operation.expectedDeletedCount ?? operation.expectedDeletedElementIds?.length ?? 1) - 1),
         dependentDeletedElementIds: operation.expectedDeletedElementIds?.filter((id) => id !== operation.elementId),
       };
+    case "create_plan_view":
+    case "duplicate_view":
+    case "duplicate_sheet":
+    case "copy_view_annotations":
+    case "create_dimension":
+    case "update_dimension":
+      return {nativeHostRequired:true};
     default:
       return assertNever(operation);
   }

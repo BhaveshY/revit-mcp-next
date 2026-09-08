@@ -114,6 +114,7 @@ namespace RevitMcpNext.Addin
         private static bool IsPreviewOnlyDocumentChange(DocumentChangedEventArgs args)
         {
             if (args == null) return false;
+            if (args.Operation != UndoOperation.TransactionRolledBack) return false;
 
             ICollection<string> transactionNames = args.GetTransactionNames();
             if (transactionNames == null || transactionNames.Count == 0) return false;

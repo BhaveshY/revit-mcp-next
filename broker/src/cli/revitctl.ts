@@ -14,6 +14,8 @@ import { SessionTargetStore } from "../targeting/SessionTargetStore.js";
 const DEFAULT_PIPE_NAME = "revit-mcp-next";
 const DEFAULT_TIMEOUT_MS = 30000;
 const READ_OPERATIONS = new Set([
+  "get_view_details",
+  "get_dimensions",
   "status",
   "list_documents",
   "get_levels",
@@ -636,6 +638,10 @@ async function callBridge(
       return bridge.getScheduleFields(request as unknown as Parameters<RevitBridgeClient["getScheduleFields"]>[0]);
     case "get_current_view":
       return bridge.getCurrentView(request as Parameters<RevitBridgeClient["getCurrentView"]>[0]);
+    case "get_view_details":
+    case "get_dimensions":
+    case "activate_view":
+      return bridge.viewWorkflow(request as Parameters<RevitBridgeClient["viewWorkflow"]>[0]);
     case "get_current_view_elements":
       return bridge.getCurrentViewElements(request as Parameters<RevitBridgeClient["getCurrentViewElements"]>[0]);
     case "get_selection":

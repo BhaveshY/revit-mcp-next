@@ -26,6 +26,9 @@ interface ToolDiscovery {
 }
 
 export const toolDiscoveryCatalog: ToolDiscovery[] = [
+{"name": "revit.get_view_details", "title": "Get View Details", "category": "read", "description": "Read exact view settings, crop, view range and sheet placements.", "readOnly": true, "destructive": false, "idempotent": true, "whenToUse": "Read exact view settings, crop, view range and sheet placements.", "compactUse": "Supply exact instanceId and documentFingerprint; use IDs from discovery.", "related": ["revit.get_views", "revit.preview_change_set"]},
+{"name": "revit.get_dimensions", "title": "Get Dimensions", "category": "read", "description": "Read explicit dimension references, type, curve, segments and text in mm.", "readOnly": true, "destructive": false, "idempotent": true, "whenToUse": "Read explicit dimension references, type, curve, segments and text in mm.", "compactUse": "Supply exact instanceId and documentFingerprint; use IDs from discovery.", "related": ["revit.get_views", "revit.preview_change_set"]},
+{"name": "revit.activate_view", "title": "Activate View", "category": "session", "description": "Activate a view by ID or unique exact name in the targeted active UI document.", "readOnly": false, "destructive": false, "idempotent": true, "whenToUse": "Activate a view by ID or unique exact name in the targeted active UI document.", "compactUse": "Supply exact instanceId and documentFingerprint; use IDs from discovery.", "related": ["revit.get_views", "revit.preview_change_set"]},
   {
     name: "revit.list_instances",
     title: "List Revit Instances",
@@ -498,6 +501,13 @@ const catalogKinds = [
 ];
 
 const writeOperations = [
+  "create_plan_view",
+  "duplicate_view",
+  "duplicate_sheet",
+  "copy_view_annotations",
+  "create_dimension",
+  "update_dimension",
+
   "set_parameter",
   "create_level",
   "create_wall",

@@ -986,7 +986,40 @@ const deleteElementOperationSchema = operationBaseSchema
       .describe("Maximum delete-set size the preview may approve without exact expectedDeletedElementIds. Defaults to a conservative add-in limit."),
   })
   .strict();
+
+const dimensionTextSchema = z.object({
+  segmentIndex: z.number().int().min(0).max(255).optional(),
+  valueOverride: z.string().max(2048).optional(), prefix: z.string().max(2048).optional(),
+  suffix: z.string().max(2048).optional(), above: z.string().max(2048).optional(), below: z.string().max(2048).optional(),
+  textPosition: changePoint3Schema.optional(),
+}).strict();
+const createPlanViewSchema = operationBaseSchema.extend({type: z.literal("create_plan_view"),
+  levelId: boundedId, viewFamilyTypeId: boundedId, name: boundedString, templateId: boundedId.optional(),
+}).strict();
+const duplicateViewSchema = operationBaseSchema.extend({type: z.literal("duplicate_view"),
+  viewId: boundedId, expectedUniqueId: boundedString.optional(), name: boundedString,
+  sheetId: boundedId.optional(), center: changePoint2Schema.optional(),
+}).strict();
+const duplicateSheetSchema = operationBaseSchema.extend({type: z.literal("duplicate_sheet"),
+  sheetId: boundedId, expectedUniqueId: boundedString.optional(), sheetNumber: z.string().min(1).max(64),
+  name: boundedString.optional(), viewNamePrefix: z.string().min(1).max(64),
+}).strict();
+const copyViewAnnotationsSchema = operationBaseSchema.extend({type: z.literal("copy_view_annotations"),
+  sourceViewId: boundedId, targetViewId: boundedId, elementIds: z.array(boundedId).min(1).max(500),
+}).strict();
+const createDimensionSchema = operationBaseSchema.extend({type: z.literal("create_dimension"),
+  viewId: boundedId, dimensionTypeId: boundedId, references: z.array(z.string().min(1).max(2048)).min(2).max(256),
+  start: changePoint3Schema, end: changePoint3Schema, text: z.array(dimensionTextSchema).max(256).optional(),
+}).strict();
+const updateDimensionSchema = operationBaseSchema.extend({type: z.literal("update_dimension"),
+  elementId: boundedId, expectedUniqueId: boundedString.optional(), dimensionTypeId: boundedId.optional(),
+  translation: changePoint3Schema.optional(), text: z.array(dimensionTextSchema).max(256).optional(),
+  references: z.array(z.string().min(1).max(2048)).min(2).max(256).optional().describe("Replace a linear dimension's witness references by atomic recreation. Returns a new element ID. Requires start and end; locked dimensions are rejected."),
+  start: changePoint3Schema.optional(), end: changePoint3Schema.optional(),
+}).strict();
+
 const changeOperationSchema = z.union([
+  createPlanViewSchema, duplicateViewSchema, duplicateSheetSchema, copyViewAnnotationsSchema, createDimensionSchema, updateDimensionSchema,
   setParameterOperationSchema,
   createLevelOperationSchema,
   createWallOperationSchema,
@@ -2947,6 +2980,27 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     }
   );
 
+  for (const operation of ["get_view_details", "get_dimensions", "activate_view"] as const) {
+    server.registerTool(`revit.${operation}`, {
+      title: operation.replaceAll("_", " "),
+      description: operation === "activate_view"
+        ? "Activate an exact Revit view by ID or unique exact name in the targeted active document. UI-only operation, no model transaction."
+        : operation === "get_dimensions"
+        ? "Read explicit dimension IDs: stable geometry references (witness lines), type, curve, segments, text overrides and placement. Lengths are mm."
+        : "Read view settings, crop and view range, plus exact sheet viewport/schedule placements. Supply viewId or an unambiguous exact viewName.",
+      inputSchema: z.object({
+        instanceId: boundedString, documentFingerprint: boundedString, expectedGeneration: generationSchema.optional(),
+        viewId: boundedId.optional(), viewName: boundedString.optional(),
+        elementIds: z.array(boundedId).min(1).max(100).optional(),
+      }).strict(),
+      outputSchema: outputSchemas.unknown,
+      annotations: {readOnlyHint: operation !== "activate_view", destructiveHint:false, idempotentHint:true, openWorldHint:false},
+    }, async (args, ctx) => {
+      const request = makeRequest(context.sessionId, operation, operation === "activate_view" ? "write" : "read", args, 30000);
+      return asToolResult(await context.bridge.viewWorkflow(request, {signal:ctx.mcpReq.signal}), () => `${operation} completed.`);
+    });
+  }
+
   server.registerTool(
     "revit.get_current_view",
     {
@@ -3393,7 +3447,7 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
     {
       title: "Preview Revit Change",
       description:
-        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_schedule, add_schedule_field, place_schedule_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, rename_element_type, duplicate_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
+        "Validate a bounded change set without mutating the model. Use this before revit.apply_change_set. Supported operations: create_plan_view, duplicate_view (with detailing, optional rename and sheet placement), duplicate_sheet (native complete duplication, Revit 2024/2027), copy_view_annotations (native paste aligned), create_dimension (stable geometry references), update_dimension (type, text, placement), set_parameter, create_level, create_wall, place_family_instance, create_sheet, place_view_on_sheet, create_schedule, add_schedule_field, place_schedule_on_sheet, create_text_note, load_family, tag_room, tag_element, move_element, rotate_element, copy_element, change_element_type, rename_element_type, duplicate_element_type, set_element_pinned, create_grid, create_floor, create_room, and delete_element.",
       inputSchema: changeSetSchema,
       outputSchema: outputSchemas.previewChange,
       annotations: {

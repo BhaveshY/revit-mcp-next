@@ -60,6 +60,7 @@ import type {
 } from "@revit-mcp-next/contracts";
 
 export interface RevitBridgeClient {
+  viewWorkflow(request: BridgeRequest<Record<string, unknown>>, options?: BridgeCallOptions): Promise<BridgeResponse<Record<string, unknown>>>;
   bridgeHealth(
     request: BridgeRequest<{ instanceId?: string }>,
     options?: BridgeCallOptions

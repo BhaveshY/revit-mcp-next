@@ -11,7 +11,7 @@ namespace RevitMcpNext.Addin.Revit
             return action();
         }
 
-        public T Write<T>(Document document, string name, Func<T> action)
+        public T Write<T>(Document document, string name, Func<T> action, bool failOnWarnings = false)
         {
             if (document == null) throw new ArgumentNullException(nameof(document));
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Transaction name is required.", nameof(name));
@@ -24,7 +24,7 @@ namespace RevitMcpNext.Addin.Revit
                     throw new InvalidOperationException("Revit transaction '" + name + "' could not start. Status: " + startStatus + ".");
                 }
 
-                var preprocessor = new RollbackOnFailurePreprocessor();
+                var preprocessor = new RollbackOnFailurePreprocessor(failOnWarnings);
                 FailureHandlingOptions options = transaction.GetFailureHandlingOptions();
                 options.SetClearAfterRollback(true);
                 options.SetFailuresPreprocessor(preprocessor);
@@ -66,6 +66,8 @@ namespace RevitMcpNext.Addin.Revit
 
         private sealed class RollbackOnFailurePreprocessor : IFailuresPreprocessor
         {
+            private readonly bool _failOnWarnings;
+            public RollbackOnFailurePreprocessor(bool failOnWarnings) { _failOnWarnings = failOnWarnings; }
             private readonly List<string> _failureMessages = new List<string>();
 
             public IReadOnlyCollection<string> FailureMessages => _failureMessages;
@@ -78,7 +80,7 @@ namespace RevitMcpNext.Addin.Revit
                 foreach (FailureMessageAccessor failure in failures)
                 {
                     FailureSeverity severity = failure.GetSeverity();
-                    if (severity == FailureSeverity.Warning)
+                    if (severity == FailureSeverity.Warning && !_failOnWarnings)
                     {
                         failuresAccessor.DeleteWarning(failure);
                         continue;

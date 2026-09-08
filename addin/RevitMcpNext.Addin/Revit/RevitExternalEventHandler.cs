@@ -16,9 +16,9 @@ using RevitMcpNext.Contracts;
 
 namespace RevitMcpNext.Addin.Revit
 {
-    internal sealed class RevitExternalEventHandler : IExternalEventHandler
+    internal sealed partial class RevitExternalEventHandler : IExternalEventHandler
     {
-        private const string AddinVersion = "0.2.1";
+        private const string AddinVersion = "0.3.0";
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxExternalEventElapsedMs = 100;
         private const int MaxQueryLimit = 500;
@@ -48,6 +48,9 @@ namespace RevitMcpNext.Addin.Revit
                 ["list_documents"] = "read",
                 ["create_project_from_template"] = "write",
                 ["create_model_delivery_fixture"] = "write",
+                ["get_view_details"] = "read",
+                ["get_dimensions"] = "read",
+                ["activate_view"] = "write",
                 ["get_levels"] = "read",
                 ["get_views"] = "read",
                 ["get_sheets"] = "read",
@@ -206,6 +209,10 @@ namespace RevitMcpNext.Addin.Revit
                             return HandleCreateModelDeliveryFixture(app, request, sw);
                         case "get_levels":
                             return HandleGetLevels(app, request, sw);
+                        case "get_view_details":
+                        case "get_dimensions":
+                        case "activate_view":
+                            return HandleViewWorkflow(app, request, sw);
                         case "get_views":
                             return HandleGetViews(app, request, sw);
                         case "get_sheets":
@@ -1507,7 +1514,7 @@ namespace RevitMcpNext.Addin.Revit
                 string status = GetString(change, "status");
                 if (string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase)) ready = false;
                 string operationType = GetString(operations[index], "type");
-                if (string.Equals(operationType, "create_level", StringComparison.OrdinalIgnoreCase) ||
+                if (IsViewWorkflowOperation(operationType) || string.Equals(operationType, "create_level", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_wall", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_grid", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(operationType, "create_floor", StringComparison.OrdinalIgnoreCase) ||
@@ -1858,7 +1865,7 @@ namespace RevitMcpNext.Addin.Revit
                     results.Add(ApplyOperation(document, operations[index], index));
                 }
                 return results;
-            });
+            }, failOnWarnings: operations.Any(op => IsViewWorkflowOperation(GetString(op, "type"))));
             long appliedGeneration = _generations.GetGeneration(document);
 
             var data = new Dictionary<string, object>
@@ -2005,6 +2012,13 @@ namespace RevitMcpNext.Addin.Revit
             string type = GetString(operation, "type");
             switch (type)
             {
+                case "create_plan_view":
+                case "duplicate_view":
+                case "duplicate_sheet":
+                case "copy_view_annotations":
+                case "create_dimension":
+                case "update_dimension":
+                return PreviewViewOperation(document, operation, index);
                 case "set_parameter":
                     return PreviewSetParameter(document, operation, index);
                 case "create_level":
@@ -2063,6 +2077,13 @@ namespace RevitMcpNext.Addin.Revit
             string type = GetString(operation, "type");
             switch (type)
             {
+                case "create_plan_view":
+                case "duplicate_view":
+                case "duplicate_sheet":
+                case "copy_view_annotations":
+                case "create_dimension":
+                case "update_dimension":
+                return ApplyViewOperation(document, operation, index);
                 case "set_parameter":
                     return ApplySetParameter(document, operation, index);
                 case "create_level":
@@ -7071,11 +7092,13 @@ namespace RevitMcpNext.Addin.Revit
             LocationPoint point = element.Location as LocationPoint;
             if (point != null)
             {
-                return new Dictionary<string, object>
+                var result = new Dictionary<string, object>
                 {
-                    ["point"] = PointValue(point.Point),
-                    ["rotation"] = Math.Round(point.Rotation, 6)
+                    ["point"] = PointValue(point.Point)
                 };
+                try { result["rotation"] = Math.Round(point.Rotation, 6); }
+                catch (Autodesk.Revit.Exceptions.InvalidOperationException ex) { result["rotationUnavailableReason"] = ex.Message; }
+                return result;
             }
 
             LocationCurve curve = element.Location as LocationCurve;
@@ -7905,6 +7928,9 @@ namespace RevitMcpNext.Addin.Revit
                     "revit.create_project_from_template",
                     "revit.create_model_delivery_fixture",
                     "revit.get_levels",
+                    "revit.get_view_details",
+                    "revit.get_dimensions",
+                    "revit.activate_view",
                     "revit.get_views",
                     "revit.get_sheets",
                     "revit.get_schedules",
@@ -8254,6 +8280,9 @@ namespace RevitMcpNext.Addin.Revit
                     case "placementType":
                         string placementType = GetPlacementType(element);
                         if (!string.IsNullOrWhiteSpace(placementType)) item["placementType"] = placementType;
+                        break;
+                    case "dimensionStyle":
+                        if (element is DimensionType dimensionType) item["dimensionStyle"] = dimensionType.StyleType.ToString();
                         break;
                     case "viewFamily":
                         string viewFamily = GetViewFamily(element);
@@ -9132,6 +9161,8 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     case "id":
                         break;
+                    case "ownerViewId": item["ownerViewId"] = ToElementIdString(element.OwnerViewId); break;
+                    case "viewSpecific": item["viewSpecific"] = element.ViewSpecific; break;
                     case "uniqueId":
                         item["uniqueId"] = element.UniqueId;
                         break;
@@ -9514,6 +9545,8 @@ namespace RevitMcpNext.Addin.Revit
             switch (field)
             {
                 case "id":
+                case "ownerViewId":
+                    case "viewSpecific":
                 case "uniqueId":
                 case "category":
                 case "class":
@@ -9877,6 +9910,7 @@ namespace RevitMcpNext.Addin.Revit
                 case "validForTarget":
                 case "isActive":
                 case "placementType":
+                case "dimensionStyle":
                 case "viewFamily":
                     return true;
                 default:

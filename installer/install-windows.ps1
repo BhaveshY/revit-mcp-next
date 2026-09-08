@@ -440,7 +440,7 @@ function Get-ReleaseVersion($SourceMode, $PackageRootPath, $RepoRootPath) {
         return [string] (Read-JsonFile $packageJsonPath).version
     }
 
-    return "0.2.1"
+    return "0.3.0"
 }
 
 Assert-SupportedRevitYears

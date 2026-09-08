@@ -17,6 +17,9 @@ import type {
 import { SessionTargetStore } from "./SessionTargetStore.js";
 
 const DOCUMENT_SCOPED_OPERATIONS = new Set([
+  "get_view_details",
+  "get_dimensions",
+  "activate_view",
   "get_levels",
   "get_views",
   "get_sheets",

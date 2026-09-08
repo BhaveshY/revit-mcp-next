@@ -2,6 +2,8 @@
 
 Clean-room Revit MCP bridge for Claude Code, Codex, and other MCP clients.
 
+Version 0.3.0 adds [native view, sheet, annotation and dimension workflows](docs/view-sheet-workflows.md): exact view activation, floor-plan creation, duplication with detailing, complete sheet duplication on Revit 2024/2027, aligned annotation copy, and guarded dimension editing.
+
 This repo intentionally does **not** fork the existing Revit MCP implementation. It keeps the useful architecture lesson, an external MCP broker plus an in-process Revit add-in, but rebuilds the contracts, transport, result shape, safety model, and installer from scratch.
 
 ## Goals

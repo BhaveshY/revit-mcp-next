@@ -229,6 +229,8 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     return this.send(request, options);
   }
 
+  viewWorkflow(request: BridgeRequest<Record<string, unknown>>, options?: BridgeCallOptions): Promise<BridgeResponse<Record<string, unknown>>> { return this.send(request, options); }
+
   getCurrentView(
     request: BridgeRequest<CurrentViewRequest>,
     options?: BridgeCallOptions
