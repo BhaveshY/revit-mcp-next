@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type {
+  ChangeApplyRequest,
+  ChangeApplyResult,
   BridgeRequest,
   BridgeResponse,
   BridgeSuccess,
@@ -61,6 +63,16 @@ class TargetTestBridge extends FakeRevitBridgeClient {
         source: "target-test",
       });
     return { ...response, generation: document.generation };
+  }
+
+  override async applyChange(request: BridgeRequest<ChangeApplyRequest>): Promise<BridgeResponse<ChangeApplyResult>> {
+    const response = await super.applyChange(request);
+    const document = this.documents.find((item) => item.fingerprint === request.documentFingerprint);
+    if (response.ok && response.data.applied && document) {
+      document.generation += 1;
+      return { ...response, generation: document.generation };
+    }
+    return response;
   }
 }
 
@@ -214,6 +226,27 @@ test("single open document is implicit, but closing a selected target fails expl
   assert.equal(statusAfterClose.target?.documentFingerprint, project1.fingerprint);
 });
 
+test("partial instance discovery cannot select an implicit target or return a complete document list", async () => {
+  const healthy = new TargetTestBridge([project1]);
+  const unavailable = new TargetTestBridge([project2]);
+  unavailable.listDocuments = async (request) => failure(request, "TIMEOUT", "Instance unavailable");
+  const router = routerFor("partial", [
+    connection("instance-2024", 2401, "2024", healthy),
+    connection("instance-2027", 2701, "2027", unavailable),
+  ]);
+  const implicit = await router.bridge.query(queryRequest("partial"));
+  assert.equal(implicit.ok, false);
+  if (!implicit.ok) assert.equal(implicit.error.code, "TARGET_DISCOVERY_INCOMPLETE");
+  assert.equal(healthy.requests.length, 0, "no document operation may be dispatched on incomplete discovery");
+  const listing = await router.bridge.listDocuments({ ...queryRequest("partial"), operation: "list_documents", payload: {} });
+  assert.equal(listing.ok, false);
+  if (!listing.ok) assert.equal(listing.error.code, "TARGET_DISCOVERY_INCOMPLETE");
+  const selected = await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint });
+  assert.equal(selected.ok, true, "explicit healthy target must remain usable");
+  assert.equal((await router.bridge.query(queryRequest("partial"))).ok, true);
+  assert.equal(healthy.requests.length, 1);
+});
+
 test("duplicate project titles remain distinguishable only by instance and fingerprint", async () => {
   const bridge = new TargetTestBridge([project1, project2]);
   const router = routerFor("session-a", [connection("instance-2024", 2401, "2024", bridge)]);
@@ -356,6 +389,32 @@ test("model delivery job status remains routed to its original target after the 
   assert.equal(firstStatus.target?.documentFingerprint, project1.fingerprint);
   assert.equal(repeatedStatus.target?.documentFingerprint, project1.fingerprint);
   assert.equal((await router.getTarget()).target?.documentFingerprint, project2.fingerprint);
+});
+
+test("explicit apply guards advance only the matching selected target", async () => {
+  const bridge = new TargetTestBridge([{ ...project1 }, { ...project2 }]);
+  const router = routerFor("apply-session", [connection("instance-2024", 2401, "2024", bridge)]);
+  await router.setTarget({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint });
+  const apply = (fingerprint: string): BridgeRequest<ChangeApplyRequest> => ({
+    ...queryRequest("apply-session"), operation: "apply_change_set", operationKind: "write",
+    payload: { documentFingerprint: fingerprint, transactionName: "Test", operations: [], previewId: "preview", confirm: true },
+  });
+  const applied = await router.bridge.applyChange(apply(project1.fingerprint));
+  assert.equal(applied.ok, true);
+  assert.equal((await router.getTarget()).target?.generation, project1.generation + 1);
+  assert.equal((await router.bridge.query(queryRequest("apply-session"))).ok, true);
+  assert.equal((await router.bridge.applyChange(apply(project2.fingerprint))).ok, true);
+  assert.equal((await router.getTarget()).target?.documentFingerprint, project1.fingerprint);
+  assert.equal((await router.getTarget()).target?.generation, project1.generation + 1);
+});
+
+test("out-of-order mutation responses cannot regress selected generation", () => {
+  const store = new SessionTargetStore("ordered");
+  store.set({ instanceId: "instance-2024", documentFingerprint: project1.fingerprint, documentTitle: project1.title, generation: 4, selectionMode: "explicit" });
+  store.updateGeneration("instance-2024", project1.fingerprint, 6);
+  store.updateGeneration("instance-2024", project1.fingerprint, 5);
+  store.updateGeneration("different-instance", project1.fingerprint, 99);
+  assert.equal(store.get()?.generation, 6);
 });
 
 function routerFor(sessionId: string, connections: RevitInstanceConnection[]): SessionTargetingBridgeRouter {

@@ -17,7 +17,7 @@ export class SessionTargetStore {
   updateGeneration(instanceId: string, documentFingerprint: string, generation: number): void {
     if (!this.target || !Number.isInteger(generation) || generation < 0) return;
     if (this.target.instanceId !== instanceId || this.target.documentFingerprint !== documentFingerprint) return;
-    this.target = { ...this.target, generation };
+    this.target = { ...this.target, generation: Math.max(this.target.generation, generation) };
   }
 
   clear(): RevitTarget | undefined {

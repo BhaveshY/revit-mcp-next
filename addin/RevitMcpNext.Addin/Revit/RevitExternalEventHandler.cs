@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed class RevitExternalEventHandler : IExternalEventHandler
     {
-        private const string AddinVersion = "0.2.0";
+        private const string AddinVersion = "0.2.1";
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxExternalEventElapsedMs = 100;
         private const int MaxQueryLimit = 500;
@@ -8299,7 +8299,7 @@ namespace RevitMcpNext.Addin.Revit
             if (selectionOnly)
             {
                 UIDocument uidocument = app.ActiveUIDocument;
-                if (uidocument == null || !ReferenceEquals(uidocument.Document, document))
+                if (uidocument == null || !IsExactDocumentIdentity(document, uidocument.Document))
                 {
                     throw new TargetResolutionException(
                         "TARGET_DOCUMENT_NOT_ACTIVE",
@@ -8509,13 +8509,9 @@ namespace RevitMcpNext.Addin.Revit
 
         private static int CountCollectorElements(FilteredElementCollector collector)
         {
-            try
+            using (collector)
             {
-                return collector.ToElementIds().Count;
-            }
-            catch
-            {
-                return collector.ToElements().Count;
+                return collector.GetElementCount();
             }
         }
 

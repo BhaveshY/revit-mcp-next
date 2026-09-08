@@ -62,21 +62,8 @@ $targetFramework = switch ($RevitYear) {
 }
 $yearOutput = Join-Path ([System.IO.Path]::GetFullPath($OutputRoot)) "$RevitYear"
 
-if ([string]::IsNullOrWhiteSpace($DotnetPath)) {
-    $dotnet = Get-Command dotnet.exe -ErrorAction SilentlyContinue
-    if ($dotnet) {
-        $DotnetPath = $dotnet.Source
-    } else {
-        $localDotnet = Join-Path $env:USERPROFILE ".dotnet\dotnet.exe"
-        if (Test-Path -LiteralPath $localDotnet -PathType Leaf) {
-            $DotnetPath = $localDotnet
-        }
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($DotnetPath) -or -not (Test-Path -LiteralPath $DotnetPath -PathType Leaf)) {
-    throw "dotnet.exe not found. Install the .NET SDK or pass -DotnetPath."
-}
+. (Join-Path $PSScriptRoot "resolve-dotnet-sdk.ps1")
+$DotnetPath = Resolve-DotnetSdk -DotnetPath $DotnetPath
 
 foreach ($apiAssembly in @("RevitAPI.dll", "RevitAPIUI.dll")) {
     if (-not (Test-Path -LiteralPath (Join-Path $RevitApiPath $apiAssembly) -PathType Leaf)) {

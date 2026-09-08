@@ -252,6 +252,10 @@ function Copy-FileWithinRoot($Source, $Destination, $AllowedRoot, [switch] $Opti
     }
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+    if ((Test-Path -LiteralPath $Destination -PathType Leaf) -and
+        (Get-Sha256Hash $Source) -eq (Get-Sha256Hash $Destination)) {
+        return
+    }
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
@@ -321,11 +325,17 @@ function Set-PrivatePathAcl($Path, [switch] $Container) {
             $acl.AddAccessRule($rule) | Out-Null
         }
 
-        Set-Acl -LiteralPath $Path -AclObject $acl
+        if ($PSVersionTable.PSEdition -eq "Core") {
+            $item = if ($Container) { [System.IO.DirectoryInfo]::new($Path) } else { [System.IO.FileInfo]::new($Path) }
+            [System.IO.FileSystemAclExtensions]::SetAccessControl($item, $acl)
+        } elseif ($Container) {
+            [System.IO.Directory]::SetAccessControl($Path, $acl)
+        } else {
+            [System.IO.File]::SetAccessControl($Path, $acl)
+        }
         return $true
     } catch {
-        Write-Step "Warning: unable to restrict ACL for $Path. $($_.Exception.Message)"
-        return $false
+        throw "Unable to restrict ACL for $Path. $($_.Exception.Message)"
     }
 }
 
@@ -430,7 +440,7 @@ function Get-ReleaseVersion($SourceMode, $PackageRootPath, $RepoRootPath) {
         return [string] (Read-JsonFile $packageJsonPath).version
     }
 
-    return "0.2.0"
+    return "0.2.1"
 }
 
 Assert-SupportedRevitYears
@@ -700,7 +710,9 @@ $addinAssemblyPaths = [ordered] @{}
 $manifestAssemblyPaths = [ordered] @{}
 foreach ($year in $RevitYears) {
     $addinAssemblyPaths["$year"] = (Get-FullPath (Join-Path $installedAddin "$year\RevitMcpNext.Addin.dll"))
-    $manifestAssemblyPaths["$year"] = (Get-FullPath (Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year\RevitMcpNext\RevitMcpNext.Addin.dll"))
+    $payloadId = (Get-Sha256Hash $addinSources["$year"].addinDll).Substring(0, 12) + "-" +
+        (Get-Sha256Hash $addinSources["$year"].contractsDll).Substring(0, 12)
+    $manifestAssemblyPaths["$year"] = (Get-FullPath (Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year\RevitMcpNext\$payloadId\RevitMcpNext.Addin.dll"))
 }
 $primaryAddinAssemblyPath = $addinAssemblyPaths["$($RevitYears[0])"]
 
@@ -804,8 +816,8 @@ if ($DryRun) {
 foreach ($year in $RevitYears) {
     $addinDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year"
     $addinPath = Join-Path $addinDir "RevitMcpNext.addin"
-    $runtimeDir = Join-Path $addinDir "RevitMcpNext"
     $assemblyPath = $manifestAssemblyPaths["$year"]
+    $runtimeDir = Split-Path -Parent $assemblyPath
     $manifestAssemblyPath = Get-ManifestAssemblyPath $addinDir $assemblyPath
     $manifest = (Get-Content -LiteralPath $addinTemplate -Raw).Replace("{{ASSEMBLY_PATH}}", $manifestAssemblyPath)
 

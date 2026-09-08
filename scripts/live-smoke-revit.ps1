@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Help,
+    [string]$InstanceId,
     [string]$DocumentFingerprint,
     [double]$WallLengthMm = 4000,
     [double]$MoveYMm = 250,
@@ -118,6 +119,8 @@ if ($RequireElementTypeEdit) {
         Fail-Friendly "-RequireElementTypeEdit requires -AcknowledgeDisposableModel because it commits multiple model-changing transactions."
     }
     $nodeArgs += @("--require-element-type-edit")
+}
+if ($AcknowledgeDisposableModel) {
     $nodeArgs += @("--acknowledge-disposable-model")
 }
 
@@ -179,6 +182,9 @@ if (-not [string]::IsNullOrWhiteSpace($SummaryPath)) {
 
 if (-not [string]::IsNullOrWhiteSpace($DocumentFingerprint)) {
     $nodeArgs += @("--document-fingerprint", $DocumentFingerprint)
+}
+if (-not [string]::IsNullOrWhiteSpace($InstanceId)) {
+    $nodeArgs += @("--instance-id", $InstanceId)
 }
 
 Write-Host "Running live Revit smoke through node..."

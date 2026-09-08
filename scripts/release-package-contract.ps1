@@ -1067,7 +1067,7 @@ function Assert-TamperedPackageFails($PackageRoot, $RunRoot, $InstallerScript) {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
-    $OutputRoot = Join-Path $repoRoot "artifacts\release-contract"
+    $OutputRoot = Join-Path ([System.IO.Path]::GetTempPath()) "rmn-release-contract"
 }
 
 $outputRootFull = Get-FullPath $OutputRoot
@@ -1261,13 +1261,14 @@ try {
 
     $addinManifestPath = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext.addin"
     Assert-FileExists $addinManifestPath "installed Revit add-in manifest"
-    $manifestRuntimeAddin = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext\RevitMcpNext.Addin.dll"
-    $manifestRuntimeContracts = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RevitMcpNext\RevitMcpNext.Contracts.dll"
+    $clientDiscovery = Read-JsonFile (Join-Path $installRoot "config\client-discovery.json")
+    $manifestRuntimeAddin = [string] $clientDiscovery.manifestAssemblyPaths."2024"
+    $manifestRuntimeContracts = Join-Path (Split-Path -Parent $manifestRuntimeAddin) "RevitMcpNext.Contracts.dll"
     Assert-FileExists $manifestRuntimeAddin "Revit-visible add-in payload"
     Assert-FileExists $manifestRuntimeContracts "Revit-visible contracts payload"
     $addinManifestText = Get-Content -LiteralPath $addinManifestPath -Raw
-    if (-not $addinManifestText.Contains("RevitMcpNext/RevitMcpNext.Addin.dll")) {
-        throw "Installed Revit add-in manifest does not use the Revit-visible adjacent payload."
+    if ($addinManifestText -notmatch 'RevitMcpNext/[a-f0-9]{12}-[a-f0-9]{12}/RevitMcpNext.Addin.dll') {
+        throw "Installed Revit add-in manifest does not use the content-addressed adjacent payload."
     }
     if (-not $addinManifestText.Contains("<ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>")) {
         throw "Installed Revit add-in manifest does not use ClientId."

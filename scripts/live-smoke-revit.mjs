@@ -185,6 +185,13 @@ async function main() {
     await client.connect(transport);
 
     await verifyRequiredTools(client);
+    if (options.instanceId) {
+      await callRequiredTool(client, "revit.set_target", {
+        instanceId: options.instanceId,
+        documentFingerprint: options.documentFingerprint,
+      });
+      summary.instanceId = options.instanceId;
+    }
 
     const bridgeHealth = await callRequiredTool(client, "revit.bridge_health", {});
     summary.coveredTools.push("revit.bridge_health");
@@ -307,7 +314,7 @@ async function main() {
     assert(typeof cancelProbe.message === "string" && cancelProbe.message.length > 0, "revit.cancel_request did not return a message.");
     console.log(`Cancel no-op OK: ${cancelProbe.message}`);
 
-    const operationKindProbe = await probeOperationKindMismatch(launcherPath);
+    const operationKindProbe = await probeOperationKindMismatch(launcherPath, bridgeHealth.pipeName);
     summary.coveredTools.push("revitctl.operation_kind_mismatch");
     summary.operationKindGuard = operationKindProbe;
     console.log(`Operation-kind guard OK: ${operationKindProbe.errorCode}`);
@@ -1266,6 +1273,7 @@ async function main() {
 
 function parseArgs(args) {
   const options = {
+    instanceId: undefined,
     documentFingerprint: undefined,
     wallLengthMm: DEFAULT_WALL_LENGTH_MM,
     moveYMm: DEFAULT_MOVE_Y_MM,
@@ -1300,6 +1308,10 @@ function parseArgs(args) {
 
     const [name, inlineValue] = splitOption(arg);
     switch (name) {
+      case "--instance-id":
+        options.instanceId = readValue(args, ++index, inlineValue, name);
+        if (inlineValue !== undefined) index--;
+        break;
       case "--document-fingerprint":
       case "--fingerprint":
         options.documentFingerprint = readValue(args, ++index, inlineValue, name);
@@ -1448,6 +1460,7 @@ function readExpectedRevitYear(args, index, inlineValue, name) {
 }
 
 function validateOptions(options) {
+  assert(!options.instanceId || options.documentFingerprint, "--instance-id requires --document-fingerprint to bind the disposable target.");
   assert(options.wallLengthMm > 0, "--wall-length-mm must be greater than zero.");
   assert(options.wallHeightMm > 0, "--wall-height-mm must be greater than zero.");
   assert(options.moveYMm !== 0, "--move-y-mm must be non-zero because Revit rejects zero-length moves.");
@@ -1546,7 +1559,8 @@ async function loadMcpSdk(launcherPath) {
   );
 }
 
-async function probeOperationKindMismatch(launcherPath) {
+async function probeOperationKindMismatch(launcherPath, pipeName) {
+  assert(typeof pipeName === "string" && pipeName.length > 0, "Operation-kind probe requires the verified target pipe.");
   const installRoot = path.dirname(launcherPath);
   const revitCtlPath = path.join(installRoot, process.platform === "win32" ? "revitctl.cmd" : "revitctl");
   if (!existsSync(revitCtlPath)) {
@@ -1561,6 +1575,8 @@ async function probeOperationKindMismatch(launcherPath) {
     "--confirm",
     "--payload",
     "{}",
+    "--pipe",
+    pipeName,
     "--install-root",
     installRoot,
     "--timeout-ms",
@@ -3483,6 +3499,7 @@ Runs a live Revit MCP smoke against the active Revit project:
   35. revitctl direct bridge probe proving apply_change_set cannot be mislabeled as operationKind=read
 
 Options:
+  --instance-id <value>           Select an exact instance; requires --document-fingerprint.
   --document-fingerprint <value>  Optional active document fingerprint to pin the run.
   --wall-length-mm <number>       Wall baseline length in millimeters. Default: ${DEFAULT_WALL_LENGTH_MM}
   --move-y-mm <number>            Y translation in millimeters. Default: ${DEFAULT_MOVE_Y_MM}

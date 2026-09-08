@@ -156,6 +156,12 @@ if ($DryRun) {
 $certificate = Resolve-Certificate
 Write-Step "Signing $($uniqueTargets.Count) Authenticode target(s)."
 foreach ($target in $uniqueTargets) {
+    $existing = Get-AuthenticodeSignature -LiteralPath $target
+    if ($NoTimestamp -and $existing.Status -eq "Valid" -and
+        $existing.SignerCertificate -and $existing.SignerCertificate.Thumbprint -eq $certificate.Thumbprint) {
+        Write-Step "Preserving valid signature from the selected certificate: $target"
+        continue
+    }
     $signArguments = @{
         LiteralPath = $target
         Certificate = $certificate

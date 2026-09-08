@@ -241,6 +241,12 @@ $installedAddinRoot = Join-Path $InstallRoot "addin\$RevitYear"
 $addinDll = Join-Path $installedAddinRoot "RevitMcpNext.Addin.dll"
 $contractsDll = Join-Path $installedAddinRoot "RevitMcpNext.Contracts.dll"
 $manifestRuntimeRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear\RevitMcpNext"
+if (Test-Path -LiteralPath $clientDiscovery -PathType Leaf) {
+    $discovery = Get-Content -LiteralPath $clientDiscovery -Raw | ConvertFrom-Json
+    if ($discovery.manifestAssemblyPaths -and $discovery.manifestAssemblyPaths.PSObject.Properties["$RevitYear"]) {
+        $manifestRuntimeRoot = Split-Path -Parent ([string] $discovery.manifestAssemblyPaths."$RevitYear")
+    }
+}
 $manifestAddinDll = Join-Path $manifestRuntimeRoot "RevitMcpNext.Addin.dll"
 $manifestContractsDll = Join-Path $manifestRuntimeRoot "RevitMcpNext.Contracts.dll"
 $addinPdb = Join-Path $installedAddinRoot "RevitMcpNext.Addin.pdb"

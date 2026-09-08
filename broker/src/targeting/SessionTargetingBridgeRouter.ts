@@ -179,7 +179,7 @@ export class SessionTargetingBridgeRouter {
         return this.attachTarget(
           response,
           resolved.target,
-          resolved.usesSessionTarget && mutationMayAdvanceGeneration,
+          mutationMayAdvanceGeneration,
           mutationMayAdvanceGeneration
         );
       }
@@ -376,6 +376,13 @@ export class SessionTargetingBridgeRouter {
     if (successful.length === 0 && results.length > 0) {
       const failure = results[0].response;
       if (!failure.ok) throw new RoutingError(failure.error.code, failure.error.message, failure.error.suggestedNextAction);
+    }
+    if (successful.length !== results.length) {
+      throw new RoutingError(
+        "TARGET_DISCOVERY_INCOMPLETE",
+        "Some registered Revit instances could not list their documents. An incomplete inventory cannot establish a unique target.",
+        "Call revit.list_instances and explicitly select a verified instance and document, or restore the unavailable instances."
+      );
     }
 
     return successful.flatMap(({ connection, response }) =>
