@@ -1664,7 +1664,7 @@ export interface CreatePlanViewOperation extends ChangeOperationBase {
   type: "create_plan_view"; levelId: ElementId; viewFamilyTypeId: ElementId; name: string; templateId?: ElementId;
 }
 export interface DuplicateViewOperation extends ChangeOperationBase {
-  type: "duplicate_view"; viewId: ElementId; name: string; expectedUniqueId?: UniqueId;
+  type: "duplicate_view"; viewId: ElementId; name?: string; expectedUniqueId?: UniqueId;
   sheetId?: ElementId; center?: Point2;
 }
 export interface DuplicateSheetOperation extends ChangeOperationBase {

@@ -6,7 +6,7 @@ open project was not modified or restarted.
 
 Validated Revit 2024 add-in SHA-256:
 `e77a4e564b34b5a8d241a14e5bb7dbb82ac19e80583673f70cc692b48a87ea66`.
-It uses an existing, locally trusted development signing certificate. This is not
+The final add-in hash is `096179a607c1c8c6988d486d658f4df6dbe5624d649d6def922fcaa02c9c5983`; its optional generated-name path, broker-version report and saved dimension/sheet readback also passed. The final native change only makes the duplicate view name optional. It uses an existing, locally trusted development signing certificate. This is not
 public-trust production signing.
 
 | Check | Result |

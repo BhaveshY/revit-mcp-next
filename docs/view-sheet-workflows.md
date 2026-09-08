@@ -12,7 +12,7 @@ these workflows, including warnings that would otherwise discard annotations.
 | --- | --- | --- |
 | Activate a view | `revit.activate_view` | Supply `viewId` or an exact, unambiguous `viewName`, plus `instanceId` and `documentFingerprint`. Changes UI context outside a model transaction. |
 | Create an OKF plan | `create_plan_view` | Explicit `levelId`, FloorPlan `viewFamilyTypeId`, and `name`; optional `templateId`. No elevation matching or first-type fallback. |
-| Duplicate with detailing | `duplicate_view` | Native `View.Duplicate(WithDetailing)`, required new `name`, optional `sheetId` and `center` together. |
+| Duplicate with detailing | `duplicate_view` | Native `View.Duplicate(WithDetailing)`, optional new `name`, optional `sheetId` and `center` together. Omit `name` to retain Revit's generated name. |
 | Duplicate a sheet | `duplicate_sheet` | Native `ViewSheet.Duplicate(DuplicateSheetWithViewsAndDetailing)`, explicit new `sheetNumber`, `viewNamePrefix`, optional sheet `name`. Preserves title blocks, sheet details and native view/schedule relationships. |
 | Paste aligned annotations | `copy_view_annotations` | Explicit `sourceViewId`, `targetViewId`, and 1–500 distinct `elementIds`. Native view-to-view copy with identity additional transform. |
 | Inspect settings and placements | `revit.get_view_details` | View template, scale, crop loops/box, annotation crop, scope box, phase/filter, discipline, view range; sheet viewports, schedules, parameters and bounded owned-element inventory. |

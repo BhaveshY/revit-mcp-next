@@ -25,6 +25,7 @@ test("documentation tools require exact document targeting and expose bounded ty
     const operations = [
       {type:"create_plan_view", levelId:"1", viewFamilyTypeId:"2", name:"OKF plan"},
       {type:"duplicate_view", viewId:"1024", name:"Detailing copy"},
+      {type:"duplicate_view", viewId:"1024"},
       {type:"duplicate_sheet", sheetId:"1", sheetNumber:"A-2", viewNamePrefix:"Copy "},
       {type:"copy_view_annotations", sourceViewId:"1", targetViewId:"2", elementIds:["3"]},
       {type:"create_dimension", viewId:"1", dimensionTypeId:"2", references:["a", "b"], start:point, end:{...point,x:{value:1000,unit:"mm"}}},

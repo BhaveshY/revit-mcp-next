@@ -997,7 +997,7 @@ const createPlanViewSchema = operationBaseSchema.extend({type: z.literal("create
   levelId: boundedId, viewFamilyTypeId: boundedId, name: boundedString, templateId: boundedId.optional(),
 }).strict();
 const duplicateViewSchema = operationBaseSchema.extend({type: z.literal("duplicate_view"),
-  viewId: boundedId, expectedUniqueId: boundedString.optional(), name: boundedString,
+  viewId: boundedId, expectedUniqueId: boundedString.optional(), name: boundedString.optional(),
   sheetId: boundedId.optional(), center: changePoint2Schema.optional(),
 }).strict();
 const duplicateSheetSchema = operationBaseSchema.extend({type: z.literal("duplicate_sheet"),

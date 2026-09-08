@@ -246,7 +246,7 @@ namespace RevitMcpNext.Addin.Revit
                 else
                 {
                     if (source is ViewSheet || source.IsTemplate || !source.CanViewBeDuplicated(ViewDuplicateOption.WithDetailing)) throw new InvalidOperationException("This view cannot be duplicated with detailing.");
-                    EnsureViewName(doc, GetString(op, "name"));
+                    if (GetString(op, "name") != null) EnsureViewName(doc, GetString(op, "name"));
                     bool hasSheet = GetString(op, "sheetId") != null, hasCenter = GetDictionary(op, "center") != null;
                     if (hasSheet != hasCenter) throw new InvalidOperationException("sheetId and center must be supplied together.");
                     if (hasSheet) { RequireElement<ViewSheet>(doc, GetString(op, "sheetId")); ToInternalSheetPoint(GetDictionary(op, "center"), "center"); }
@@ -326,7 +326,8 @@ namespace RevitMcpNext.Addin.Revit
             {
                 var source = RequireElement<View>(doc, GetString(op, "viewId"));
                 var view = (View)doc.GetElement(source.Duplicate(ViewDuplicateOption.WithDetailing));
-                view.Name = GetString(op, "name"); result = view;
+                if (GetString(op, "name") != null) view.Name = GetString(op, "name");
+                result = view;
                 doc.Regenerate(); VerifyViewSettings(source, view);
                 if (GetString(op, "sheetId") != null)
                 {
