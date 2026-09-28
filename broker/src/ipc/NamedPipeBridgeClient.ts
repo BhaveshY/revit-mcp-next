@@ -1,6 +1,7 @@
 import net from "node:net";
 import type {
   BridgeHealthResult,
+  BridgeQueueDiagnostics,
   BridgeRequest,
   BridgeResponse,
   CancelRequest,
@@ -72,6 +73,24 @@ const MAX_CONNECT_RETRY_DELAY_MS = 250;
 const CONNECT_RETRY_JITTER_RATIO = 0.2;
 const MAX_WRITE_RECOVERY_MS = 15_000;
 const WRITE_RECOVERY_POLL_MS = 100;
+// A missing pipe means Revit is not running or the add-in did not load. Retrying for the
+// full request timeout (up to 300 s) only made agents wait; allow a short grace for a
+// listener being recreated and then fail with an actionable error.
+const MISSING_PIPE_GRACE_MS = 1_500;
+// Every listener busy means earlier requests are still waiting on Revit. Report that
+// explicitly instead of surfacing a generic "could not connect" after the full timeout.
+const BUSY_PIPE_GRACE_MS = 8_000;
+const MISSING_PIPE_ERROR_CODES = new Set(["ENOENT"]);
+const BUSY_PIPE_ERROR_CODES = new Set(["EBUSY", "ERROR_PIPE_BUSY", "EAGAIN"]);
+// Stall detection: while a queued request waits for Revit, probe the control pipe. When
+// the add-in reports that nothing is executing but queued work has not been picked up for
+// stallDetectionMs, Revit is not servicing the ExternalEvent (modal dialog, edit mode, long
+// native command). The broker then cancels the still-queued request and fails fast.
+const DEFAULT_STALL_DETECTION_MS = 8_000;
+const STALL_PROBE_START_MS = 3_000;
+const STALL_PROBE_INTERVAL_MS = 2_000;
+const STALL_PROBE_TIMEOUT_MS = 1_500;
+const RECENT_DIALOG_WINDOW_MS = 10 * 60_000;
 const RETRYABLE_CONNECT_ERROR_CODES = new Set([
   "EAGAIN",
   "EBUSY",
@@ -88,6 +107,12 @@ export interface NamedPipeBridgeClientOptions {
   sessionId: string;
   defaultTimeoutMs: number;
   authToken?: string;
+  /**
+   * Fail a queued request after Revit has not serviced queued work for this many
+   * milliseconds while nothing is executing. 0 disables. Defaults to
+   * REVIT_MCP_NEXT_STALL_MS or 8000.
+   */
+  stallDetectionMs?: number;
 }
 
 export class NamedPipeBridgeClient implements RevitBridgeClient {
@@ -95,6 +120,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
   private readonly controlPipePath: string;
   private readonly authToken?: string;
   private readonly defaultTimeoutMs: number;
+  private readonly stallDetectionMs: number;
   private readonly pendingRequests = new Set<() => void>();
   private disposed = false;
 
@@ -103,6 +129,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
     this.controlPipePath = resolvePipePath(options.controlPipeName ?? `${options.pipeName}-control`);
     this.authToken = resolveAuthToken(options);
     this.defaultTimeoutMs = validateTimeoutMs(options.defaultTimeoutMs, "defaultTimeoutMs");
+    this.stallDetectionMs = resolveStallDetectionMs(options.stallDetectionMs);
   }
 
   bridgeHealth(
@@ -373,12 +400,19 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       let phase = "connecting to Revit add-in pipe";
       let requestBytesMayHaveBeenSent = false;
       let recoveryStarted = false;
+      let firstMissingPipeAt: number | undefined;
+      let firstBusyPipeAt: number | undefined;
+      let stallTimer: NodeJS.Timeout | undefined;
+      let requestSentAt: number | undefined;
+      let lastQueue: BridgeQueueDiagnostics | undefined;
+      let stallObservations = 0;
 
       const finish = (response: BridgeResponse<T>) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
         if (retryTimer) clearTimeout(retryTimer);
+        if (stallTimer) clearTimeout(stallTimer);
         options?.signal?.removeEventListener("abort", abortHandler);
         this.pendingRequests.delete(disposeHandler);
         currentSocket?.destroy();
@@ -452,8 +486,37 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
       const scheduleConnectRetry = (error?: NodeJS.ErrnoException) => {
         if (settled) return;
-        const remainingMs = deadline - Date.now();
+        const now = Date.now();
+        const remainingMs = deadline - now;
         const delayMs = connectRetryDelayMs(connectAttempt);
+        const code = error?.code;
+        if (code && MISSING_PIPE_ERROR_CODES.has(code)) {
+          firstMissingPipeAt ??= now;
+          if (now - firstMissingPipeAt >= MISSING_PIPE_GRACE_MS) {
+            finish(
+              errorResponse<T>(
+                request,
+                "BRIDGE_UNAVAILABLE",
+                `Revit MCP pipe ${pipePath} does not exist. Revit is not running, the Revit MCP Next add-in did not load, or Revit was restarted.`,
+                "Ask the user to start Revit, open the project, and confirm the add-in loaded without an error dialog, then call revit.list_instances. Do not keep retrying this call until Revit is running."
+              )
+            );
+            return;
+          }
+        } else if (code && BUSY_PIPE_ERROR_CODES.has(code)) {
+          firstBusyPipeAt ??= now;
+          if (now - firstBusyPipeAt >= BUSY_PIPE_GRACE_MS) {
+            finish(
+              errorResponse<T>(
+                request,
+                "BRIDGE_BUSY",
+                `Every Revit MCP pipe connection on ${pipePath} stayed busy for ${Math.round((now - firstBusyPipeAt) / 1000)}s. Earlier requests are still waiting for Revit, which usually means Revit is blocked by a modal dialog, an edit/sketch mode, or a long command.`,
+                "Call revit.bridge_health: check queue.executing, queue.pendingCount, and queue.lastDialogId. Ask the user to close the dialog or finish the command, then retry once."
+              )
+            );
+            return;
+          }
+        }
         if (
           this.disposed ||
           options?.signal?.aborted ||
@@ -473,6 +536,66 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
 
         phase = "retrying connection to Revit add-in pipe";
         retryTimer = setTimeout(connect, delayMs);
+      };
+
+      const scheduleStallProbe = (delayMs: number) => {
+        if (settled || recoveryStarted || this.stallDetectionMs <= 0 || isControlOperation(request.operation)) return;
+        if (deadline - Date.now() <= delayMs + STALL_PROBE_TIMEOUT_MS) return;
+        stallTimer = setTimeout(() => void probeForStall(), delayMs);
+      };
+
+      const probeForStall = async () => {
+        if (settled || recoveryStarted) return;
+        const health = await this.send<BridgeHealthResult>(
+          controlRequest(request, "bridge_health", {}, STALL_PROBE_TIMEOUT_MS)
+        );
+        if (settled || recoveryStarted) return;
+        if (!health.ok || !isRecord(health.data) || !isRecord(health.data.queue)) {
+          scheduleStallProbe(STALL_PROBE_INTERVAL_MS);
+          return;
+        }
+
+        const queue = health.data.queue as BridgeQueueDiagnostics;
+        lastQueue = queue;
+        // Older add-ins do not report execution state; never guess a stall for them.
+        if (typeof queue.executing !== "boolean") return;
+        // Our request is running inside Revit; it cannot be interrupted, so just wait.
+        if (queue.executing && queue.executingRequestId === request.requestId) return;
+
+        const now = Date.now();
+        const waitedMs = now - (requestSentAt ?? now);
+        const lastDequeuedAt = queue.lastDequeuedAtUtc ? Date.parse(queue.lastDequeuedAtUtc) : Number.NaN;
+        const sinceLastDequeueMs = Number.isFinite(lastDequeuedAt) ? now - lastDequeuedAt : Number.POSITIVE_INFINITY;
+        const stalled =
+          !queue.executing &&
+          queue.pendingCount > 0 &&
+          waitedMs >= this.stallDetectionMs &&
+          (queue.oldestPendingAgeMs ?? 0) >= this.stallDetectionMs &&
+          sinceLastDequeueMs >= this.stallDetectionMs;
+        // Require two consecutive stalled observations so the gap between two queued items
+        // (or two model-delivery steps) is never mistaken for a stall.
+        stallObservations = stalled ? stallObservations + 1 : 0;
+        if (stallObservations < 2) {
+          scheduleStallProbe(STALL_PROBE_INTERVAL_MS);
+          return;
+        }
+
+        const cancellation = await this.send<CancelResult>(
+          controlRequest(
+            request,
+            "cancel_request",
+            { requestId: request.requestId, reason: "Revit did not service the ExternalEvent (broker stall detection)." },
+            STALL_PROBE_TIMEOUT_MS
+          )
+        );
+        if (settled || recoveryStarted) return;
+        if (!cancellation.ok || cancellation.data.cancelled !== true) {
+          // It started (or finished) in the meantime; keep waiting for the real response.
+          scheduleStallProbe(STALL_PROBE_INTERVAL_MS);
+          return;
+        }
+
+        finish(revitBusyResponse<T>(request, queue, waitedMs));
       };
 
       const connect = () => {
@@ -527,7 +650,11 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
               disconnected(`The Revit add-in pipe closed while writing the request: ${error.message}`);
               return;
             }
-            if (!settled) phase = "waiting for Revit ExternalEvent response";
+            if (!settled) {
+              phase = "waiting for Revit ExternalEvent response";
+              requestSentAt = Date.now();
+              scheduleStallProbe(STALL_PROBE_START_MS);
+            }
           });
         });
 
@@ -631,7 +758,7 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
           errorResponse<T>(
             request,
             "BRIDGE_TIMEOUT",
-            `Timed out after ${timeoutMs}ms while ${phase}.`,
+            `Timed out after ${timeoutMs}ms while ${phase}.${describeQueueForTimeout(lastQueue, request.requestId)}`,
             phase.includes("response")
               ? "Bring Revit to the foreground and close any modal dialogs, then retry. If this happened during smoke, inspect the Revit journal for TaskDialog entries."
               : "Open Revit, load the add-in, and run revit.status again."
@@ -717,6 +844,88 @@ export class NamedPipeBridgeClient implements RevitBridgeClient {
       authToken: this.authToken,
     };
   }
+}
+
+function controlRequest<TPayload>(
+  original: BridgeRequest,
+  operation: "bridge_health" | "cancel_request",
+  payload: TPayload,
+  timeoutMs: number
+): BridgeRequest<TPayload> {
+  return {
+    protocolVersion: original.protocolVersion,
+    requestId: `${original.requestId}-${operation}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    sessionId: original.sessionId,
+    operation,
+    operationKind: "debug",
+    timeoutMs,
+    payload,
+  };
+}
+
+function resolveStallDetectionMs(explicit: number | undefined): number {
+  const raw = explicit ?? (process.env.REVIT_MCP_NEXT_STALL_MS ? Number(process.env.REVIT_MCP_NEXT_STALL_MS) : undefined);
+  if (raw === undefined) return DEFAULT_STALL_DETECTION_MS;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.max(STALL_PROBE_START_MS, Math.min(MAX_TIMER_MS, Math.round(raw)));
+}
+
+function describeRecentDialog(queue: BridgeQueueDiagnostics | undefined): string {
+  if (!queue?.lastDialogId || typeof queue.lastDialogAgeMs !== "number" || queue.lastDialogAgeMs > RECENT_DIALOG_WINDOW_MS) {
+    return "";
+  }
+  const message = queue.lastDialogMessage ? `: "${queue.lastDialogMessage}"` : "";
+  return ` Last Revit dialog seen ${Math.round(queue.lastDialogAgeMs / 1000)}s ago: ${queue.lastDialogId}${message}.`;
+}
+
+function describeQueueForTimeout(queue: BridgeQueueDiagnostics | undefined, requestId: string): string {
+  if (!queue || typeof queue.executing !== "boolean") return "";
+  if (queue.executing && queue.executingRequestId === requestId) {
+    return " Revit was still executing this request; in-flight Revit API work cannot be interrupted.";
+  }
+  if (queue.executing) {
+    const forSeconds = typeof queue.executingForMs === "number" ? ` for ${Math.round(queue.executingForMs / 1000)}s` : "";
+    return ` Revit was busy executing another request (${queue.executingOperation ?? "unknown operation"})${forSeconds}.`;
+  }
+  return describeRecentDialog(queue);
+}
+
+function revitBusyResponse<T>(request: BridgeRequest, queue: BridgeQueueDiagnostics, waitedMs: number): BridgeResponse<T> {
+  const seconds = Math.round(waitedMs / 1000);
+  return {
+    ok: false,
+    requestId: request.requestId,
+    error: {
+      code: "REVIT_BUSY",
+      message:
+        `Revit has not picked up queued API work for ${seconds}s and nothing is executing, so Revit is not idle ` +
+        `(a modal dialog is open, an edit/sketch mode or command is active, or Revit is busy with a native operation such as sync or load). ` +
+        `The request was cancelled before it ran; nothing was changed.${describeRecentDialog(queue)}`,
+      recoverable: true,
+      details: compactRecord({
+        operation: request.operation,
+        waitedMs,
+        pendingCount: queue.pendingCount,
+        oldestPendingAgeMs: queue.oldestPendingAgeMs,
+        lastRaiseResult: queue.lastRaiseResult,
+        lastDialogId: queue.lastDialogId,
+        lastDialogMessage: queue.lastDialogMessage,
+        lastDialogAgeMs: queue.lastDialogAgeMs,
+      }),
+      suggestedNextAction:
+        "Ask the user to close any open Revit dialog, press Esc to leave edit/sketch mode, or wait for the running command to finish; then retry this call once. Set REVIT_MCP_NEXT_STALL_MS=0 to disable this fail-fast check.",
+    },
+    warnings: [],
+    metrics: { elapsedMs: waitedMs },
+  };
+}
+
+function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, child]) => child !== undefined));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function validTimeoutMs(value: number): boolean {

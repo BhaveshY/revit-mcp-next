@@ -200,6 +200,15 @@ export interface BridgeQueueDiagnostics {
   oldestPendingRequestId?: string;
   oldestPendingOperation?: string;
   oldestPendingAgeMs?: number;
+  /** True while a queued request or model-delivery step is running inside Revit. Absent on older add-ins. */
+  executing?: boolean;
+  executingRequestId?: string;
+  executingOperation?: string;
+  executingForMs?: number;
+  /** Most recent Revit DialogBoxShowing event (diagnostics only; never overridden). */
+  lastDialogId?: string;
+  lastDialogMessage?: string;
+  lastDialogAgeMs?: number;
 }
 
 export interface RequestOutcomeDiagnostics {

@@ -92,12 +92,15 @@ Use this to separate MCP client configuration problems from Revit/add-in/named-p
 
 Common states:
 
-- `BRIDGE_UNAVAILABLE`: Revit is closed, the add-in did not load, or the named pipe is not listening.
+- `BRIDGE_UNAVAILABLE`: Revit is closed, the add-in did not load, or the named pipe is not listening. A missing pipe now fails within about 1.5 s instead of waiting for the full tool timeout; start Revit before retrying.
+- `BRIDGE_BUSY`: every pipe connection stayed occupied for about 8 s because earlier requests are still waiting for Revit. Check `revit.bridge_health` (`queue.executing`, `queue.pendingCount`, `queue.lastDialogId`).
+- `REVIT_BUSY`: the broker saw queued work that Revit had not picked up for about 8-11 s while nothing was executing, so Revit is not idle (modal dialog, edit/sketch mode, sync or another native command). The request was cancelled before it ran, so retrying after Revit is idle is safe. `details.lastDialogId`/`lastDialogMessage` name the most recent dialog. Tune with `REVIT_MCP_NEXT_STALL_MS` (milliseconds, default 8000; `0` disables).
+- `REVIT_EXTERNAL_EVENT_TIMEOUT`: the add-in gave up waiting for Revit to process the queued request before the tool timeout. Same remedy as `REVIT_BUSY`.
 - `PROTOCOL_VERSION_MISMATCH`: rebuild and reinstall so the private broker-to-add-in bridge contracts match.
 - `PREVIEW_METADATA_REQUIRED` or `CHANGE_SET_HASH_REQUIRED`: call `revit.preview_change_set` again and echo `previewId`, `baseGeneration`, `changeSetHash`, and `expiresAt` into `revit.apply_change_set`.
 - `PREVIEW_ID_MISMATCH`: rerun `revit.preview_change_set`; the change set or document fingerprint no longer matches.
 - `CHANGE_SET_HASH_MISMATCH`: the apply payload does not match the reviewed preview; rebuild it from the latest preview response.
 - `PREVIEW_EXPIRED`: rerun `revit.preview_change_set`; preview tokens are short-lived and single-use.
 - `REQUEST_CANCELLED`: the MCP client explicitly cancelled the request before Revit processed it.
-- `BRIDGE_TIMEOUT`: the bridge did not receive a complete response before its bounded timeout. For writes, the broker attempts outcome reconciliation first.
+- `BRIDGE_TIMEOUT`: the bridge did not receive a complete response before its bounded timeout. The message says whether Revit was still running this request or busy with another one. For writes, the broker attempts outcome reconciliation first.
 - `BRIDGE_WRITE_OUTCOME_UNKNOWN`: a sent mutation could not be reconciled within the bounded recovery window. Do not repeat it. Inspect Revit and query the original request ID with `revit.get_request_result`.

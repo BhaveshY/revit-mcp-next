@@ -1377,6 +1377,13 @@ const bridgeQueueDiagnosticsSchema = z
     oldestPendingRequestId: z.string().optional(),
     oldestPendingOperation: z.string().optional(),
     oldestPendingAgeMs: z.number().optional(),
+    executing: z.boolean().optional().describe("True while Revit is running a queued request or model-delivery step."),
+    executingRequestId: z.string().optional(),
+    executingOperation: z.string().optional(),
+    executingForMs: z.number().optional(),
+    lastDialogId: z.string().optional().describe("Most recent Revit dialog seen by the add-in; a likely blocker when queued work is not picked up."),
+    lastDialogMessage: z.string().optional(),
+    lastDialogAgeMs: z.number().optional(),
   })
   .passthrough();
 

@@ -152,7 +152,7 @@ npm run support:bundle
 Common fixes:
 
 - `PROTOCOL_VERSION_MISMATCH`: rebuild, repackage, and reinstall so the private broker-to-add-in bridge contracts match.
-- `REVIT_EXTERNAL_EVENT_TIMEOUT`: bring Revit forward, close ordinary Revit modals, wait for Revit to become idle, then retry. If still stuck, close Revit and reopen the disposable model.
+- `REVIT_BUSY` or `REVIT_EXTERNAL_EVENT_TIMEOUT`: Revit is not idle (dialog, edit mode, or long command). Bring Revit forward, close ordinary Revit modals, wait for Revit to become idle, then retry. If still stuck, close Revit and reopen the disposable model.
 - Repeated Revit add-in prompt: use a signed/trusted package for durable no-prompt behavior; `-TrustRevitAlwaysLoad` is supplemental and not a public signing substitute.
 - Wrong install root in client config: rerun `npm run mcp:config` or pass `-InstallRoot` to `scripts\print-mcp-config.ps1`.
 
