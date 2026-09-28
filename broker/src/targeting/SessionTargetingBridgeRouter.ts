@@ -350,7 +350,11 @@ export class SessionTargetingBridgeRouter {
 
     const openDocuments = await this.listDocumentTargets(options, undefined, allowCached);
     if (openDocuments.length === 0) {
-      throw new RoutingError("NO_OPEN_DOCUMENT", "No open Revit project document is available.");
+      throw new RoutingError(
+        "NO_OPEN_DOCUMENT",
+        "Revit is running but no project document is open.",
+        "Ask the user to open the Revit project (not a family), then retry."
+      );
     }
     if (openDocuments.length > 1) {
       throw new RoutingError(
@@ -466,7 +470,13 @@ export class SessionTargetingBridgeRouter {
 
     const connections = await this.directory.listConnections();
     if (connections.length === 1) return connections[0];
-    if (connections.length === 0) throw new RoutingError("NO_REVIT_INSTANCE", "No live Revit instance is registered.");
+    if (connections.length === 0) {
+      throw new RoutingError(
+        "NO_REVIT_INSTANCE",
+        "No live Revit instance is registered.",
+        "Ask the user to start Revit with the Revit MCP Next add-in loaded, then call revit.list_instances."
+      );
+    }
     throw new RoutingError(
       "INSTANCE_SELECTION_REQUIRED",
       "Multiple Revit instances are open. Call revit.list_instances and revit.set_target before continuing."
