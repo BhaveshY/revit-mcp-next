@@ -357,6 +357,18 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     related: ["revit.query", "revit.preview_change_set"],
   },
   {
+    name: "revit.create_model_delivery_fixture",
+    title: "Create Disposable Model Delivery Fixture",
+    category: "delivery",
+    description: "Create two disposable workshared central RVTs with a transformed link and cleanup artifacts for connector verification.",
+    readOnly: false,
+    destructive: true,
+    idempotent: false,
+    whenToUse: "Use only to set up a live model-delivery smoke fixture; never for real project work.",
+    compactUse: "Pass a local .rte templatePath, a new empty fixtureRoot, a fixtureId, and confirm=true.",
+    related: ["revit.inspect_model_delivery", "revit.preview_model_delivery"],
+  },
+  {
     name: "revit.inspect_model_delivery",
     title: "Inspect Revit Model Delivery",
     category: "delivery",
@@ -556,7 +568,8 @@ function discoveryDocument(context: DiscoveryContext): Record<string, unknown> {
       toolTemplate: "revit://tools/{name}",
     },
     workflow: [
-      "Start with revit.status and keep documentFingerprint/generation for guarded calls.",
+      "Start with revit.status (or revit.list_instances + revit.set_target when several projects are open). The session target supplies instanceId/documentFingerprint; do not pin reads with expectedGeneration.",
+      "If a call returns BRIDGE_UNAVAILABLE, REVIT_BUSY, BRIDGE_BUSY, or REVIT_EXTERNAL_EVENT_TIMEOUT, stop and ask the user to start Revit or clear the dialog/command; retry once afterwards instead of looping.",
       "Inspect revit.status diagnostics when a request stalls: queue depth, ExternalEvent raise state, preview-token counts, and recovery hints are compact.",
       "Use revit.read_bundle for compact workflow preflight when you need status, readiness, current context, small catalogs, and parameter metadata in one MCP call.",
       "Use revit.query, revit.catalog, and revit.describe_parameters with tight filters instead of broad dumps.",
