@@ -450,7 +450,7 @@ namespace RevitMcpNext.Addin.Ipc
                         "Restart the MCP client after rebuilding Revit MCP Next.");
                 }
 
-                string responseJson = SerializeResponse(response);
+                string responseJson = SerializeResponseWithinFrameLimit(response, requestId);
                 Task writeTask = FramedPipeTransport.WriteFrameAsync(stream, responseJson, cancellationToken);
                 using (var responseDeadlineCancellation =
                     CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
@@ -898,6 +898,37 @@ namespace RevitMcpNext.Addin.Ipc
                     Payload = GetDictionary(root, "payload") ?? new Dictionary<string, object>()
                 },
                 GetString(root, "authToken"));
+        }
+
+        // An oversized response used to throw while writing, so the client only saw the pipe
+        // close ("retry the request") and retried the same oversized read. Replace it with an
+        // explicit, actionable failure that always fits in one frame.
+        private static string SerializeResponseWithinFrameLimit(BridgeResponseEnvelope response, string requestId)
+        {
+            string failureReason;
+            try
+            {
+                string json = SerializeResponse(response);
+                int byteCount = System.Text.Encoding.UTF8.GetByteCount(json);
+                if (byteCount <= FramedPipeTransport.MaxFrameBytes)
+                {
+                    return json;
+                }
+
+                failureReason = "The Revit response is " + byteCount.ToString(CultureInfo.InvariantCulture) +
+                    " bytes, above the " + FramedPipeTransport.MaxFrameBytes.ToString(CultureInfo.InvariantCulture) + " byte bridge frame limit.";
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                failureReason = "The Revit response could not be serialized within the bridge limits: " + ex.Message;
+            }
+
+            DiagnosticsLogger.Error("Replacing oversized or unserializable bridge response. requestId=" + (response?.RequestId ?? requestId) + ". " + failureReason);
+            return SerializeResponse(Failure(
+                new BridgeRequestEnvelope { RequestId = response?.RequestId ?? requestId ?? Guid.NewGuid().ToString("N") },
+                "RESPONSE_TOO_LARGE",
+                failureReason,
+                "Do not retry unchanged. Lower limit, request fewer fields or a smaller preset (idOnly/summary), or narrow the filter, then page with the cursor."));
         }
 
         private static string SerializeResponse(BridgeResponseEnvelope response)
