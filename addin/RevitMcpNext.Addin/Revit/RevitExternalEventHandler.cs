@@ -8044,7 +8044,7 @@ namespace RevitMcpNext.Addin.Revit
                 collector.WhereElementIsElementType();
             }
 
-            IEnumerable<Element> elements = collector.ToElements();
+            IEnumerable<Element> elements = collector;
             if (targetElement != null)
             {
                 if (validTypeIds == null || validTypeIds.Count == 0)
@@ -8374,7 +8374,9 @@ namespace RevitMcpNext.Addin.Revit
             bool nativeCategoryFilter = TryApplyCategoryFilter(collector, GetStringList(filter, "categories"), warnings);
             bool nativeClassFilter = TryApplyClassFilter(collector, GetStringList(filter, "classes"), warnings);
 
-            IEnumerable<Element> elements = collector.ToElements();
+            // Enumerate the collector lazily so Skip/Take and scan limits stop early instead of
+            // materializing every element in the document before paging.
+            IEnumerable<Element> elements = collector;
             return (!nativeCategoryFilter || !nativeClassFilter)
                 ? elements.Where(element => MatchesPostFilters(element, filter))
                 : elements.Where(element => MatchesSecondaryPostFilters(element, filter));
@@ -11119,9 +11121,14 @@ namespace RevitMcpNext.Addin.Revit
 
             if (includeTotalCount)
             {
-                List<T> materialized = items.ToList();
-                int totalCount = materialized.Count;
-                List<T> page = materialized.Skip(offset).Take(limit).ToList();
+                // Single pass: count everything but only retain the requested page.
+                var page = new List<T>(Math.Min(Math.Max(0, limit), 512));
+                int totalCount = 0;
+                foreach (T item in items)
+                {
+                    if (totalCount >= offset && page.Count < limit) page.Add(item);
+                    totalCount++;
+                }
                 return new PageResult<T>(page, totalCount, offset + page.Count < totalCount);
             }
 
