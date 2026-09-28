@@ -14,7 +14,7 @@ const DEFAULT_TRANSACTION_PREFIX = "Revit MCP Next smoke";
 const ELEMENT_TYPE_ACCEPTANCE_NAME = "2510x2260";
 const ELEMENT_TYPE_ACCEPTANCE_WIDTH_MM = 2510;
 const ELEMENT_TYPE_ACCEPTANCE_HEIGHT_MM = 2260;
-const RETRYABLE_BUSY_ERROR_CODES = new Set(["REVIT_EXTERNAL_EVENT_TIMEOUT", "BRIDGE_TIMEOUT"]);
+const RETRYABLE_BUSY_ERROR_CODES = new Set(["REVIT_EXTERNAL_EVENT_TIMEOUT", "BRIDGE_TIMEOUT", "REVIT_BUSY"]);
 const RETRYABLE_TOOLS = new Set([
   "revit.status",
   "revit.read_bundle",
@@ -206,7 +206,11 @@ async function main() {
       bridgeHealth.requestOutcomes && typeof bridgeHealth.requestOutcomes === "object",
       "revit.bridge_health did not return request-outcome diagnostics."
     );
-    console.log(`Bridge health OK: ${bridgeHealth.controlPipeName}`);
+    assert(
+      typeof bridgeHealth.queue.executing === "boolean",
+      "revit.bridge_health queue diagnostics did not report executing; the installed add-in predates broker stall detection (REVIT_BUSY fail-fast is disabled)."
+    );
+    console.log(`Bridge health OK: ${bridgeHealth.controlPipeName} (executing=${bridgeHealth.queue.executing})`);
 
     const missingRequestResult = await callRequiredTool(client, "revit.get_request_result", {
       requestId: `live-smoke-missing-${Date.now()}`,
@@ -1157,6 +1161,18 @@ async function main() {
     await assertElementDeletedById(client, copiedWallId);
     console.log(`Delete copied wall OK: element ${copiedWallId} removed`);
 
+    summary.generationDrift = await verifyGenerationDriftTolerance({
+      Client,
+      StdioClientTransport,
+      launcherPath,
+      client,
+      documentFingerprint,
+      transactionPrefix: options.transactionPrefix,
+      runId,
+      elevationMm: smokeLevelElevationMm + 500,
+    });
+    console.log("Generation drift OK: a session-target read survived a model change made by another session.");
+
     summary.status = "passed";
     summary.coveredTools = [...REQUIRED_TOOLS, "revitctl.operation_kind_mismatch"];
     summary.coveredOperations = [
@@ -1680,6 +1696,60 @@ function makeTransport(launcherPath, StdioClientTransport) {
     args: [],
     stderr: "pipe",
   });
+}
+
+// Simulates the architect editing the model while an agent session holds a target: a second
+// MCP session (its own broker process and session store) commits a change, then the first
+// session's next read must succeed and report TARGET_GENERATION_ADVANCED instead of failing.
+async function verifyGenerationDriftTolerance({
+  Client,
+  StdioClientTransport,
+  launcherPath,
+  client,
+  documentFingerprint,
+  transactionPrefix,
+  runId,
+  elevationMm,
+}) {
+  const instances = await callRequiredTool(client, "revit.list_instances", {});
+  const instance = (Array.isArray(instances) ? instances : []).find((candidate) =>
+    (candidate.documents ?? []).some((document) => document.fingerprint === documentFingerprint)
+  );
+  assert(instance?.instanceId, "revit.list_instances did not return the smoke document's instance.");
+  await callRequiredTool(client, "revit.set_target", { instanceId: instance.instanceId, documentFingerprint });
+
+  const second = new Client({ name: "revit-mcp-next-live-smoke-drift", version: "0.1.0" });
+  await second.connect(makeTransport(launcherPath, StdioClientTransport));
+  let driftLevelId;
+  try {
+    await callRequiredTool(second, "revit.set_target", { instanceId: instance.instanceId, documentFingerprint });
+    const changeSet = {
+      transactionName: makeTransactionName(transactionPrefix, "drift level", runId),
+      operations: [
+        { id: "drift-level", type: "create_level", name: `MCP Drift ${runId}`, elevation: unitMm(elevationMm) },
+      ],
+    };
+    const preview = await previewChangeSet(second, changeSet, "create_level (second session)");
+    const apply = await applyChangeSet(second, changeSet, preview, "create_level (second session)");
+    driftLevelId = getCreatedElementId(findChange(apply, "create_level"));
+  } finally {
+    await closeQuietly(second);
+  }
+
+  // Let the broker's short read-inventory cache expire so the drift is observed.
+  await sleep(3500);
+  const result = await client.callTool({
+    name: "revit.query",
+    arguments: { filter: { classes: ["Level"] }, preset: "idOnly", limit: 1 },
+  });
+  assert(!result.isError, `A session-target read failed after another session changed the model:\n${formatToolFailure("revit.query", result)}`);
+  const warningCodes = (result.structuredContent?.warnings ?? []).map((warning) => warning.code);
+  assert(
+    warningCodes.includes("TARGET_GENERATION_ADVANCED"),
+    `The read after an external model change did not report TARGET_GENERATION_ADVANCED (warnings: ${warningCodes.join(", ") || "none"}).`
+  );
+  await callRequiredTool(client, "revit.clear_target", {});
+  return compactObject({ instanceId: instance.instanceId, driftLevelId, warningCodes });
 }
 
 async function verifyRequiredTools(client) {

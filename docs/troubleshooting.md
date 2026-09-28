@@ -102,5 +102,6 @@ Common states:
 - `CHANGE_SET_HASH_MISMATCH`: the apply payload does not match the reviewed preview; rebuild it from the latest preview response.
 - `PREVIEW_EXPIRED`: rerun `revit.preview_change_set`; preview tokens are short-lived and single-use.
 - `REQUEST_CANCELLED`: the MCP client explicitly cancelled the request before Revit processed it.
+- `RESPONSE_TOO_LARGE`: the Revit result exceeded the 4 MiB bridge frame. Do not retry unchanged; lower `limit`, request fewer `fields` or a smaller preset, or narrow the filter and page with the cursor.
 - `BRIDGE_TIMEOUT`: the bridge did not receive a complete response before its bounded timeout. The message says whether Revit was still running this request or busy with another one. For writes, the broker attempts outcome reconciliation first.
 - `BRIDGE_WRITE_OUTCOME_UNKNOWN`: a sent mutation could not be reconciled within the bounded recovery window. Do not repeat it. Inspect Revit and query the original request ID with `revit.get_request_result`.
