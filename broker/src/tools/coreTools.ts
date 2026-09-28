@@ -657,7 +657,7 @@ const readBundleSchema = {
     .optional(),
   catalogs: z.array(readBundleCatalogSchema).max(8).optional().describe("Small catalog reads to include for planning writes."),
   parameters: z.array(readBundleParameterSchema).max(4).optional().describe("Small parameter metadata reads to include."),
-  continueOnError: z.boolean().default(true).describe("Return successful sections plus failedSections instead of failing the whole bundle."),
+  continueOnError: z.boolean().default(true).describe("Return successful sections plus failedSections instead of failing the whole bundle. Revit-unavailable, busy, or timeout failures always stop the bundle early."),
   includeSectionMetrics: z.boolean().default(false).describe("Include per-section bridge metrics for diagnostics."),
 };
 
@@ -2084,21 +2084,42 @@ function compactObject<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, child]) => child !== undefined)) as T;
 }
 
+// Failures that mean Revit (or the pipe) cannot serve any further section right now. Each
+// remaining section would otherwise wait for its own timeout, turning one stall into minutes.
+const READ_BUNDLE_ABORT_CODES = new Set([
+  "BRIDGE_UNAVAILABLE",
+  "BRIDGE_BUSY",
+  "BRIDGE_TIMEOUT",
+  "BRIDGE_DISCONNECTED",
+  "BRIDGE_DISPOSED",
+  "REVIT_BUSY",
+  "REVIT_EXTERNAL_EVENT_TIMEOUT",
+  "REQUEST_CANCELLED",
+  "AUTHENTICATION_FAILED",
+  "PROTOCOL_VERSION_MISMATCH",
+  "PROTOCOL_VERSION_REQUIRED",
+]);
+
 function readBundleFailure(
   requestId: string,
   failed: Record<string, unknown>,
   warnings: Array<{ code: string; message: string }>,
   startedAt: number,
-  target: RevitTarget
+  target: RevitTarget,
+  returnedSections: string[] = []
 ): BridgeResponse<unknown> {
+  const failedCode = typeof failed.code === "string" ? failed.code : undefined;
+  const aborting = failedCode !== undefined && READ_BUNDLE_ABORT_CODES.has(failedCode);
   return {
     ok: false,
     requestId,
     error: {
-      code: "READ_BUNDLE_SECTION_FAILED",
-      message: `${String(failed.section)} failed: ${String(failed.message)}`,
+      // Surface transport/busy failures with their own code so agents apply the right fix.
+      code: aborting ? failedCode : "READ_BUNDLE_SECTION_FAILED",
+      message: `${String(failed.section)} failed: ${String(failed.message)}${aborting ? " Remaining read_bundle sections were skipped." : ""}`,
       recoverable: true,
-      details: { section: failed },
+      details: { section: failed, returnedSections },
+      ...(typeof failed.suggestedNextAction === "string" ? { suggestedNextAction: failed.suggestedNextAction } : {}),
     },
     warnings,
     metrics: { elapsedMs: Date.now() - startedAt },
@@ -2329,7 +2350,10 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
 
         const failed = sectionFailure(name, wrapped);
         failedSections.push(failed);
-        return continueOnError ? null : readBundleFailure(bundleRequest.requestId, failed, warnings, startedAt, effectiveTarget);
+        const abort = !wrapped.ok && READ_BUNDLE_ABORT_CODES.has(wrapped.error.code);
+        return continueOnError && !abort
+          ? null
+          : readBundleFailure(bundleRequest.requestId, failed, warnings, startedAt, effectiveTarget, [...returnedSections]);
       };
 
       const statusRequest = makeRequest(context.sessionId, "status", "read", { instanceId: effectiveTarget.instanceId }, 5000);
@@ -2813,7 +2837,8 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
       title: "Get Revit Levels",
       description: "Return exact Revit level IDs and elevations in normalized units.",
       inputSchema: z.object({
-        documentFingerprint: z.string().optional().describe("Optional document fingerprint from revit.status."),
+        instanceId: documentGuardSchema.instanceId,
+        documentFingerprint: documentGuardSchema.documentFingerprint,
       }),
       outputSchema: outputSchemas.levels,
       annotations: {
@@ -2993,16 +3018,19 @@ export function registerCoreTools(server: McpServer, context: CoreToolContext): 
 
   for (const operation of ["get_view_details", "get_dimensions", "activate_view"] as const) {
     server.registerTool(`revit.${operation}`, {
-      title: operation.replaceAll("_", " "),
+      title: operation === "activate_view" ? "Activate Revit View" : operation === "get_dimensions" ? "Get Revit Dimensions" : "Get Revit View Details",
       description: operation === "activate_view"
         ? "Activate an exact Revit view by ID or unique exact name in the targeted active document. UI-only operation, no model transaction."
         : operation === "get_dimensions"
         ? "Read explicit dimension IDs: stable geometry references (witness lines), type, curve, segments, text overrides and placement. Lengths are mm."
         : "Read view settings, crop and view range, plus exact sheet viewport/schedule placements. Supply viewId or an unambiguous exact viewName.",
       inputSchema: z.object({
-        instanceId: boundedString, documentFingerprint: boundedString, expectedGeneration: generationSchema.optional(),
-        viewId: boundedId.optional(), viewName: boundedString.optional(),
-        elementIds: z.array(boundedId).min(1).max(100).optional(),
+        // Optional like every other document-scoped tool: the session target (or the single
+        // open document) is used when omitted. Requiring them made agents fail these calls.
+        ...documentGuardSchema,
+        viewId: boundedId.optional().describe("Exact view ID from revit.get_views."),
+        viewName: boundedString.optional().describe("Exact, unambiguous view name; prefer viewId."),
+        elementIds: z.array(boundedId).min(1).max(100).optional().describe(operation === "get_dimensions" ? "Required: dimension element IDs from revit.query with categories [\"OST_Dimensions\"]." : "Not used by this tool."),
       }).strict(),
       outputSchema: outputSchemas.unknown,
       annotations: {readOnlyHint: operation !== "activate_view", destructiveHint:false, idempotentHint:true, openWorldHint:false},
