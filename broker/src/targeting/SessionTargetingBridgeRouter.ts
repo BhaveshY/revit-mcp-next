@@ -44,6 +44,14 @@ const DOCUMENT_SCOPED_OPERATIONS = new Set([
   "apply_change_set",
 ]);
 const DOCUMENT_GENERATION_ADVANCING_OPERATIONS = new Set(["apply_change_set"]);
+// Document inventories are fetched through the Revit ExternalEvent queue. Every
+// document-scoped call used to re-list documents first, doubling Revit round trips (and
+// read_bundle did it once per section). Reads may reuse a very recent inventory; writes
+// always re-list. Stale entries are harmless for reads because the add-in re-resolves the
+// document by fingerprint and reads no longer inject a generation guard.
+const DOCUMENT_INVENTORY_CACHE_MS = 3_000;
+
+type TargetWarning = { code: string; message: string };
 
 type DocumentTargetSummary = RevitDocumentSummary & {
   instanceId: string;
@@ -57,6 +65,7 @@ type BridgeMethod = Exclude<keyof RevitBridgeClient, "dispose">;
 export class SessionTargetingBridgeRouter {
   readonly bridge: RevitBridgeClient;
   private readonly deliveryJobTargets = new Map<string, RevitTarget>();
+  private readonly inventoryCache = new Map<string, { at: number; documents: DocumentTargetSummary[] }>();
 
   constructor(
     private readonly directory: RevitInstanceDirectory,
@@ -104,17 +113,19 @@ export class SessionTargetingBridgeRouter {
         { instanceId: selected.instanceId, documentFingerprint: selected.documentFingerprint },
         options
       );
+      let refreshed = selected;
+      const warnings: TargetWarning[] = [];
       if (current.generation !== selected.generation) {
-        throw new RoutingError(
-          "TARGET_GENERATION_CHANGED",
-          `The selected document generation changed from ${selected.generation} to ${current.generation}. Re-select the target before writing.`
-        );
+        this.targets.updateGeneration(current.instanceId, current.documentFingerprint, current.generation);
+        refreshed = this.targets.get() ?? { ...selected, generation: current.generation };
+        warnings.push(generationAdvancedWarning(selected.generation, current.generation));
       }
-      return targetedSuccess(
+      const response = targetedSuccess(
         targetRequestId("get-target"),
-        { selected: true, sessionId: this.sessionId, target: selected },
-        selected
+        { selected: true, sessionId: this.sessionId, target: refreshed },
+        refreshed
       );
+      return { ...response, warnings };
     } catch (error) {
       return routingFailure(targetRequestId("get-target"), error, selected);
     }
@@ -155,6 +166,20 @@ export class SessionTargetingBridgeRouter {
     request: BridgeRequest,
     options?: BridgeCallOptions
   ): Promise<BridgeResponse<T>> {
+    const mutating = !isReadOnlyKind(request.operationKind);
+    if (mutating) this.inventoryCache.clear();
+    try {
+      return await this.invokeRouted<T>(methodName, request, options);
+    } finally {
+      if (mutating) this.inventoryCache.clear();
+    }
+  }
+
+  private async invokeRouted<T>(
+    methodName: BridgeMethod,
+    request: BridgeRequest,
+    options?: BridgeCallOptions
+  ): Promise<BridgeResponse<T>> {
     try {
       if (methodName === "listDocuments") {
         return (await this.listDocuments(request, options)) as BridgeResponse<T>;
@@ -173,17 +198,25 @@ export class SessionTargetingBridgeRouter {
       if (DOCUMENT_SCOPED_OPERATIONS.has(request.operation)) {
         const resolved = await this.resolveOperationTarget(request, options);
         const prepared = prepareTargetedRequest(request, resolved.target);
-        const response = await invokeBridge<T>(resolved.connection, methodName, prepared, options);
+        const bridgeResponse = await invokeBridge<T>(resolved.connection, methodName, prepared, options);
+        const response = resolved.warnings.length
+          ? { ...bridgeResponse, warnings: [...resolved.warnings, ...(bridgeResponse.warnings ?? [])] }
+          : bridgeResponse;
         if (response.ok && request.operation === "execute_model_delivery" && isRecord(response.data)) {
           const jobId = recordString(response.data, "jobId");
           if (jobId) this.deliveryJobTargets.set(jobId, resolved.target);
         }
         const mutationMayAdvanceGeneration = DOCUMENT_GENERATION_ADVANCING_OPERATIONS.has(request.operation);
+        const readOnly = isReadOnlyKind(request.operationKind);
         return this.attachTarget(
           response,
           resolved.target,
-          mutationMayAdvanceGeneration,
-          mutationMayAdvanceGeneration
+          // The session target follows the generation Revit actually served, so a preview
+          // computed at generation N can be applied while the document is still at N.
+          mutationMayAdvanceGeneration || (readOnly && resolved.usesSessionTarget),
+          // Reads report the served generation (the target may come from a short-lived
+          // inventory cache).
+          mutationMayAdvanceGeneration || readOnly
         );
       }
 
@@ -265,7 +298,8 @@ export class SessionTargetingBridgeRouter {
   private async resolveOperationTarget(
     request: BridgeRequest,
     options?: BridgeCallOptions
-  ): Promise<{ connection: RevitInstanceConnection; target: RevitTarget; usesSessionTarget: boolean }> {
+  ): Promise<{ connection: RevitInstanceConnection; target: RevitTarget; usesSessionTarget: boolean; warnings: TargetWarning[] }> {
+    const allowCached = isReadOnlyKind(request.operationKind);
     const explicitInstanceId = request.instanceId ?? recordString(request.payload, "instanceId");
     const explicitFingerprint = request.documentFingerprint ?? recordString(request.payload, "documentFingerprint");
     const explicitGeneration =
@@ -274,31 +308,47 @@ export class SessionTargetingBridgeRouter {
     if (explicitInstanceId || explicitFingerprint) {
       const target = await this.resolveExplicitTarget(
         { instanceId: explicitInstanceId, documentFingerprint: explicitFingerprint, generation: explicitGeneration },
-        options
+        options,
+        allowCached && explicitGeneration === undefined
       );
-      return { connection: await this.connectionFor(target.instanceId), target, usesSessionTarget: false };
+      return { connection: await this.connectionFor(target.instanceId), target, usesSessionTarget: false, warnings: [] };
     }
 
     const selected = this.targets.get();
     if (selected) {
       const current = await this.resolveExplicitTarget(
         { instanceId: selected.instanceId, documentFingerprint: selected.documentFingerprint },
-        options
+        options,
+        allowCached
       );
-      if (current.generation !== selected.generation) {
-        throw new RoutingError(
-          "TARGET_GENERATION_CHANGED",
-          `The selected document generation changed from ${selected.generation} to ${current.generation}. Call revit.list_documents and revit.set_target before continuing.`
-        );
+      const warnings: TargetWarning[] = [];
+      // A cached inventory can lag behind a generation this session already observed.
+      const lagging = allowCached && current.generation < selected.generation;
+      if (current.generation !== selected.generation && !lagging) {
+        // The generation advances on every model change, including the user's own edits in
+        // Revit. Failing every later call until the agent re-ran set_target made normal
+        // co-working look broken. Reads/previews follow the document; writes still stop,
+        // because their preview was computed against the older state.
+        this.targets.updateGeneration(current.instanceId, current.documentFingerprint, current.generation);
+        if (!isReadOnlyKind(request.operationKind)) {
+          throw new RoutingError(
+            "TARGET_GENERATION_CHANGED",
+            `The target document changed since this session last read it (generation ${selected.generation} -> ${current.generation}), usually because the user edited the model in Revit.`,
+            "Re-run revit.preview_change_set against the current model and apply the new preview. The session target has already been refreshed; do not call revit.set_target again.",
+            current
+          );
+        }
+        warnings.push(generationAdvancedWarning(selected.generation, current.generation));
       }
       return {
         connection: await this.connectionFor(current.instanceId),
         target: { ...current, selectionMode: selected.selectionMode },
         usesSessionTarget: true,
+        warnings,
       };
     }
 
-    const openDocuments = await this.listDocumentTargets(options);
+    const openDocuments = await this.listDocumentTargets(options, undefined, allowCached);
     if (openDocuments.length === 0) {
       throw new RoutingError("NO_OPEN_DOCUMENT", "No open Revit project document is available.");
     }
@@ -310,14 +360,15 @@ export class SessionTargetingBridgeRouter {
     }
 
     const target = toTarget(openDocuments[0], "implicit-single-document");
-    return { connection: await this.connectionFor(target.instanceId), target, usesSessionTarget: false };
+    return { connection: await this.connectionFor(target.instanceId), target, usesSessionTarget: false, warnings: [] };
   }
 
   private async resolveExplicitTarget(
     input: { instanceId?: string; documentFingerprint?: string; generation?: number },
-    options?: BridgeCallOptions
+    options?: BridgeCallOptions,
+    allowCached = false
   ): Promise<RevitTarget> {
-    const documents = await this.listDocumentTargets(options, input.instanceId);
+    const documents = await this.listDocumentTargets(options, input.instanceId, allowCached);
     const matches = documents.filter((document) =>
       input.documentFingerprint ? document.fingerprint === input.documentFingerprint : true
     );
@@ -345,8 +396,8 @@ export class SessionTargetingBridgeRouter {
     if (input.generation !== undefined && input.generation !== target.generation) {
       throw new RoutingError(
         "GENERATION_MISMATCH",
-        `The target document generation is ${target.generation}, but ${input.generation} was requested.`,
-        undefined,
+        `The target document generation is ${target.generation}, but ${input.generation} was requested. The model changed (often a user edit in Revit).`,
+        "Drop expectedGeneration (or start paging again without cursor) to read the current model, then continue from the fresh result.",
         target
       );
     }
@@ -354,6 +405,19 @@ export class SessionTargetingBridgeRouter {
   }
 
   private async listDocumentTargets(
+    options?: BridgeCallOptions,
+    instanceId?: string,
+    allowCached = false
+  ): Promise<DocumentTargetSummary[]> {
+    const cacheKey = instanceId ?? "*";
+    const cached = allowCached ? this.inventoryCache.get(cacheKey) : undefined;
+    if (cached && Date.now() - cached.at <= DOCUMENT_INVENTORY_CACHE_MS) return cached.documents;
+    const documents = await this.fetchDocumentTargets(options, instanceId);
+    this.inventoryCache.set(cacheKey, { at: Date.now(), documents });
+    return documents;
+  }
+
+  private async fetchDocumentTargets(
     options?: BridgeCallOptions,
     instanceId?: string
   ): Promise<DocumentTargetSummary[]> {
@@ -464,22 +528,41 @@ async function invokeBridge<T>(
 }
 
 function prepareTargetedRequest<TPayload>(request: BridgeRequest<TPayload>, target: RevitTarget): BridgeRequest<TPayload> {
+  // Reads and previews only pin the document. Injecting the resolved generation made a read
+  // fail with GENERATION_MISMATCH whenever the user touched the model between target
+  // resolution and execution. Explicit caller guards and cursor-carried generations are
+  // still forwarded unchanged; writes keep the generation pin.
+  const pinGeneration = !isReadOnlyKind(request.operationKind);
   const payload = isRecord(request.payload) ? { ...request.payload } : request.payload;
   if (isRecord(payload)) {
     const targetedPayload = payload as Record<string, unknown>;
     targetedPayload.instanceId = target.instanceId;
     targetedPayload.documentFingerprint = target.documentFingerprint;
-    if (targetedPayload.expectedGeneration === undefined && targetedPayload.baseGeneration === undefined) {
+    if (pinGeneration && targetedPayload.expectedGeneration === undefined && targetedPayload.baseGeneration === undefined) {
       targetedPayload.expectedGeneration = target.generation;
     }
   }
 
-  return {
+  const expectedGeneration = request.expectedGeneration ?? (pinGeneration ? target.generation : undefined);
+  const prepared: BridgeRequest<TPayload> = {
     ...request,
     instanceId: target.instanceId,
     documentFingerprint: target.documentFingerprint,
-    expectedGeneration: request.expectedGeneration ?? target.generation,
     payload,
+  };
+  if (expectedGeneration === undefined) delete prepared.expectedGeneration;
+  else prepared.expectedGeneration = expectedGeneration;
+  return prepared;
+}
+
+function isReadOnlyKind(kind: BridgeRequest["operationKind"] | undefined): boolean {
+  return kind === "read" || kind === "preview";
+}
+
+function generationAdvancedWarning(from: number, to: number): TargetWarning {
+  return {
+    code: "TARGET_GENERATION_ADVANCED",
+    message: `The target document changed in Revit since this session last read it (generation ${from} -> ${to}). Results reflect the current model; the session target was refreshed.`,
   };
 }
 

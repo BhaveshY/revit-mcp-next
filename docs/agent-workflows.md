@@ -1,6 +1,6 @@
 # Agent Workflows
 
-These workflows assume Revit MCP Next is installed for Revit 2021, Revit 2024, or Revit 2027 and the MCP client was configured with `npm run mcp:config`. Start most workflows with `revit.read_bundle` when the agent needs a compact preflight packet, or `revit.status` when it only needs connection and document guards. Carry the returned `activeDocument.fingerprint`/`documentFingerprint` and generation into reads and change sets so stale model state is caught early. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
+These workflows assume Revit MCP Next is installed for Revit 2021, Revit 2024, or Revit 2027 and the MCP client was configured with `npm run mcp:config`. Start most workflows with `revit.read_bundle` when the agent needs a compact preflight packet, or `revit.status` when it only needs connection and document guards. With a session target (`revit.set_target`) you do not need to repeat `instanceId`/`documentFingerprint`. Do not pass `expectedGeneration` to ordinary reads: the generation advances on every model change, including the user's own edits, and a pinned read then fails with `GENERATION_MISMATCH`. Reads and previews follow the current model and refresh the session target (warning `TARGET_GENERATION_ADVANCED`); writes are guarded by the preview metadata you echo into `revit.apply_change_set`. If a workflow stalls, inspect `structuredContent.data.diagnostics.queue`, `diagnostics.previewTokens`, and `diagnostics.recovery` before retrying or cancelling queued work.
 
 ## Model Audit
 
@@ -135,7 +135,7 @@ Use `expectedUniqueId` on every existing-element write when a prior read returne
 Never apply a blocked preview. Recovery loop:
 
 1. Read every `changes[].message` and `warnings[]`.
-2. If the generation changed, rerun `revit.status` and refresh scoped reads.
+2. If the generation changed (`TARGET_GENERATION_CHANGED` or `GENERATION_MISMATCH` on apply), refresh the scoped reads you depend on and preview again. The session target is refreshed automatically; do not loop on `revit.set_target`.
 3. If an element/type/host is missing, rerun `revit.query` or `revit.catalog` instead of guessing.
 4. If a room number duplicates, choose a new number or explicitly set `allowDuplicateNumber` only when the user accepts that outcome.
 5. If an element is pinned, preview `set_element_pinned` first or ask for confirmation before moving/deleting it.

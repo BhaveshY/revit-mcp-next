@@ -59,7 +59,9 @@ const scopedQueryFilterSchema = queryFilterSchema.omit({ viewId: true, selection
 const documentGuardSchema = {
   instanceId: boundedString.optional().describe("Optional stable Revit runtime instance ID from revit.list_instances."),
   documentFingerprint: boundedString.optional().describe("Optional active document fingerprint from revit.status."),
-  expectedGeneration: generationSchema.optional().describe("Expected active document generation from revit.status."),
+  expectedGeneration: generationSchema
+    .optional()
+    .describe("Optional concurrency guard. Omit for normal reads: any model change, including the user editing in Revit, makes a mismatched call fail with GENERATION_MISMATCH."),
 };
 
 const querySchema = {

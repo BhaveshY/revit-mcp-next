@@ -62,7 +62,7 @@ export const toolDiscoveryCatalog: ToolDiscovery[] = [
     destructive: false,
     idempotent: true,
     whenToUse: "Use to confirm the project before a sensitive preview or write.",
-    compactUse: "Treat unavailable or generation-changed errors as a requirement to re-list and re-select.",
+    compactUse: "Generation changes caused by edits in Revit are refreshed automatically (warning TARGET_GENERATION_ADVANCED); only TARGET_DOCUMENT_UNAVAILABLE or TARGET_INSTANCE_UNAVAILABLE require re-listing and re-selecting.",
     related: ["revit.set_target", "revit.list_instances", "revit.clear_target"],
   },
   {
