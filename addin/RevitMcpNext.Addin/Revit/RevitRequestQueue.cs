@@ -24,6 +24,13 @@ namespace RevitMcpNext.Addin.Revit
         private DateTimeOffset? _lastCancelledAtUtc;
         private DateTimeOffset? _lastRaiseAtUtc;
         private string _lastRaiseResult = "not-attached";
+        private readonly object _executionGate = new object();
+        private string _executingRequestId;
+        private string _executingOperation;
+        private DateTimeOffset? _executingSinceUtc;
+        private string _lastDialogId;
+        private string _lastDialogMessage;
+        private DateTimeOffset? _lastDialogAtUtc;
 
         public event Action<BridgeRequestEnvelope> RequestStarted;
 
@@ -51,6 +58,7 @@ namespace RevitMcpNext.Addin.Revit
                 {
                     Interlocked.Increment(ref _dequeuedCount);
                     _lastDequeuedAtUtc = DateTimeOffset.UtcNow;
+                    BeginExecution(item.Envelope.RequestId, item.Envelope.Operation);
                     RequestStarted?.Invoke(item.Envelope);
                     return true;
                 }
@@ -62,6 +70,42 @@ namespace RevitMcpNext.Addin.Revit
         }
 
         public bool HasPending => !_queue.IsEmpty;
+
+        // Execution tracking lets the broker tell "Revit is running our (or another) request"
+        // apart from "Revit is not servicing the ExternalEvent at all" (modal dialog, active
+        // edit mode, long native command), so it can fail fast instead of waiting for the
+        // full request timeout.
+        public void BeginExecution(string requestId, string operation)
+        {
+            lock (_executionGate)
+            {
+                _executingRequestId = requestId;
+                _executingOperation = operation;
+                _executingSinceUtc = DateTimeOffset.UtcNow;
+            }
+        }
+
+        public void EndExecution()
+        {
+            lock (_executionGate)
+            {
+                _executingRequestId = null;
+                _executingOperation = null;
+                _executingSinceUtc = null;
+            }
+        }
+
+        public void RecordDialog(string dialogId, string message)
+        {
+            lock (_executionGate)
+            {
+                _lastDialogId = string.IsNullOrWhiteSpace(dialogId) ? "(unnamed dialog)" : dialogId;
+                _lastDialogMessage = string.IsNullOrWhiteSpace(message)
+                    ? null
+                    : (message.Length > 240 ? message.Substring(0, 240) : message);
+                _lastDialogAtUtc = DateTimeOffset.UtcNow;
+            }
+        }
 
         public void Raise()
         {
@@ -150,6 +194,24 @@ namespace RevitMcpNext.Addin.Revit
             AddTimestamp(snapshot, "lastDequeuedAtUtc", _lastDequeuedAtUtc);
             AddTimestamp(snapshot, "lastCancelledAtUtc", _lastCancelledAtUtc);
             AddTimestamp(snapshot, "lastRaiseAtUtc", _lastRaiseAtUtc);
+
+            lock (_executionGate)
+            {
+                snapshot["executing"] = _executingSinceUtc.HasValue;
+                if (_executingSinceUtc.HasValue)
+                {
+                    if (_executingRequestId != null) snapshot["executingRequestId"] = _executingRequestId;
+                    if (_executingOperation != null) snapshot["executingOperation"] = _executingOperation;
+                    snapshot["executingForMs"] = Math.Max(0, (long)(now - _executingSinceUtc.Value).TotalMilliseconds);
+                }
+
+                if (_lastDialogAtUtc.HasValue)
+                {
+                    snapshot["lastDialogId"] = _lastDialogId;
+                    if (_lastDialogMessage != null) snapshot["lastDialogMessage"] = _lastDialogMessage;
+                    snapshot["lastDialogAgeMs"] = Math.Max(0, (long)(now - _lastDialogAtUtc.Value).TotalMilliseconds);
+                }
+            }
 
             if (oldest != null)
             {

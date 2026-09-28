@@ -118,15 +118,30 @@ namespace RevitMcpNext.Addin.Revit
             {
                 processed++;
                 var execution = Stopwatch.StartNew();
-                BridgeResponseEnvelope response = Handle(app, item.Envelope);
-                execution.Stop();
-                item.TrySetResult(response, execution.ElapsedMilliseconds);
+                try
+                {
+                    BridgeResponseEnvelope response = Handle(app, item.Envelope);
+                    execution.Stop();
+                    item.TrySetResult(response, execution.ElapsedMilliseconds);
+                }
+                finally
+                {
+                    _queue.EndExecution();
+                }
                 if (elapsed.ElapsedMilliseconds >= MaxExternalEventElapsedMs) break;
             }
 
             if (_modelDelivery.HasPendingWork)
             {
-                _modelDelivery.ProcessNext(app);
+                _queue.BeginExecution(null, "model_delivery_step");
+                try
+                {
+                    _modelDelivery.ProcessNext(app);
+                }
+                finally
+                {
+                    _queue.EndExecution();
+                }
             }
 
             if (_queue.HasPending || _modelDelivery.HasPendingWork)

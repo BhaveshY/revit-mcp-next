@@ -26,6 +26,7 @@ namespace RevitMcpNext.Addin
                 _queue = new RevitRequestQueue();
                 _generationTracker = new DocumentGenerationTracker();
                 application.ControlledApplication.DocumentChanged += OnDocumentChanged;
+                application.DialogBoxShowing += OnDialogBoxShowing;
 
                 _runtimeInstanceId = PipeNameProvider.CreateRuntimeInstanceId(application.ControlledApplication.VersionNumber);
 
@@ -60,6 +61,7 @@ namespace RevitMcpNext.Addin
             catch (Exception ex)
             {
                 application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+                application.DialogBoxShowing -= OnDialogBoxShowing;
                 _instanceRegistration?.Dispose();
                 RevitMcpInProcessBridge.Clear(_handler);
                 _pipeHost?.Dispose();
@@ -75,6 +77,7 @@ namespace RevitMcpNext.Addin
             try
             {
                 application.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+                application.DialogBoxShowing -= OnDialogBoxShowing;
                 _instanceRegistration?.Dispose();
                 RevitMcpInProcessBridge.Clear(_handler);
                 _pipeHost?.Dispose();
@@ -108,6 +111,25 @@ namespace RevitMcpNext.Addin
             catch (Exception ex)
             {
                 DiagnosticsLogger.Error("Failed to update document generation after Revit document change.", ex);
+            }
+        }
+
+        private void OnDialogBoxShowing(object sender, Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs args)
+        {
+            // Diagnostics only: never override the dialog result. The broker surfaces the
+            // last dialog when Revit stops servicing queued MCP requests, so the agent can
+            // tell the user which dialog to close instead of waiting for a timeout.
+            try
+            {
+                if (args == null || _queue == null) return;
+                string message = null;
+                if (args is Autodesk.Revit.UI.Events.TaskDialogShowingEventArgs taskDialog) message = taskDialog.Message;
+                else if (args is Autodesk.Revit.UI.Events.MessageBoxShowingEventArgs messageBox) message = messageBox.Message;
+                _queue.RecordDialog(args.DialogId, message);
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("Failed to record Revit dialog diagnostics.", ex);
             }
         }
 
