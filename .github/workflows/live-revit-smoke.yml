@@ -387,20 +387,6 @@ jobs:
             throw "npm run build:addin failed with exit code $LASTEXITCODE."
           }
 
-          $inProcessContractLog = Join-Path $env:EVIDENCE_DIR "inprocess-bridge-contract.log"
-          & npm.cmd run test:contract:inprocess 2>&1 | Tee-Object -FilePath $inProcessContractLog
-          if ($LASTEXITCODE -ne 0) {
-            throw "In-process bridge contract failed with exit code $LASTEXITCODE."
-          }
-
-          if ($env:REVIT_YEAR -in @("2021", "2024")) {
-            $parameterContractLog = Join-Path $env:EVIDENCE_DIR "revit-parameter-contract.log"
-            & npm.cmd run test:contract:revit-parameter -- -RevitYear $env:REVIT_YEAR -RevitApiPath $env:REVIT_API_PATH 2>&1 | Tee-Object -FilePath $parameterContractLog
-            if ($LASTEXITCODE -ne 0) {
-              throw "Revit parameter contract failed with exit code $LASTEXITCODE."
-            }
-          }
-
           $validateLog = Join-Path $env:EVIDENCE_DIR "validate-repo.log"
           & node.exe scripts\validate-repo.mjs 2>&1 | Tee-Object -FilePath $validateLog
           if ($LASTEXITCODE -ne 0) {

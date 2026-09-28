@@ -9,7 +9,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 ## Current Evidence
 
 - CI builds and tests the broker/contracts workspaces on Windows with Node 24.
-- The broker uses the stable TypeScript SDK v2 package split. Boundary tests cover MCP `2026-07-28` over the production stdio entry point, legacy `2025-11-25`, deterministic discovery order, private discovery cache hints, cancellation propagation without replay, and a split 2 MiB stdio frame.
+- The broker uses the stable TypeScript SDK v2 package split and serves MCP `2026-07-28` plus legacy `2025-11-25` over stdio. The repo keeps no unit tests; MCP boundary behaviour is covered by the live smoke (`npm run smoke:revit`) and `npm run doctor:clients`.
 - CI runs `node scripts/validate-repo.mjs`.
 - CI builds the .NET bridge contracts.
 - CI attempts each Revit 2021, Revit 2024, and Revit 2027 add-in build only when that year's API DLLs are present on the runner.
@@ -24,7 +24,7 @@ See [fork-parity.md](fork-parity.md) for the current old-fork capability compari
 - `npm run smoke:host-integrations` runs the pyRevit host smoke, runs or validates the Dynamo-for-Revit host smoke, composes `host-integrations-summary.json`, and leaves command logs that can be included in release evidence.
 - `npm run evidence:release:windows` creates a release evidence bundle for one staged package. It records package metadata, package zip SHA-256, signing status, named validation logs, support-bundle evidence, passed live-smoke summary evidence tied to the packaged add-in SHA-256, hosted pyRevit/Dynamo evidence backed by raw host/preflight files, explicit skip reasons, an inventory of copied evidence files, and rejects copied text evidence with known raw-secret patterns.
 - `npm run test:evidence:release:windows` runs in hosted CI with synthetic add-in DLL placeholders. It validates release evidence generation, explicit missing-evidence gates, failed live-smoke and hosted-integration summary rejection, package hash capture, copied package metadata, support/live-smoke/hosted evidence capture, validation log capture, token redaction, and readiness rejection of contract-fixture evidence for release-candidate or production profiles.
-- `npm run test:integrations:python` syntax-checks pyRevit/Dynamo status, preview/apply examples, and host-smoke examples, and validates the shared stdlib Python MCP client against a fake stdio MCP server.
+- `npm run check:integrations:python` syntax-checks pyRevit/Dynamo status, preview/apply examples, and host-smoke examples, and validates the Dynamo host-smoke graph shape.
 - `npm run doctor:windows` validates the installed MCP launcher, installed `revitctl` launcher, staged broker files, add-in DLLs, Revit manifest assembly path and stable add-in identity, packaged production dependencies, local pipe auth token shape, staged pyRevit/Dynamo examples, and add-in DLL signature status.
 - `npm run doctor:clients` validates generated Claude/Codex client config snippets, existing user config entries when present, stale install roots, launcher quoting, raw token leakage risk, supported Revit 2021/2024/2027 client discovery including per-year add-in paths and `revitctlPath`, and legacy MCP `2025-11-25` startup plus `tools/list` without requiring a Revit connection. The broker boundary suite validates modern MCP separately.
 - `npm run support:bundle` collects doctor output, install metadata, logs, file hashes, staged integration example hashes, and redacted auth configuration.

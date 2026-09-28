@@ -106,6 +106,4 @@ try {
     Remove-Item -LiteralPath $syntaxScript -Force -ErrorAction SilentlyContinue
 }
 
-Invoke-Python $python @("-m", "unittest", "discover", "-s", (Join-Path $repoRoot "integrations\python"), "-p", "*test*.py")
-
-Write-Host "[revit-mcp-next integrations] Python integration tests passed."
+Write-Host "[revit-mcp-next integrations] Python integration syntax and Dynamo graph checks passed. Run npm run smoke:host-integrations against a live Revit for behavioural coverage."

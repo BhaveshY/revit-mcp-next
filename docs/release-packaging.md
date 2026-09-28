@@ -44,7 +44,7 @@ That contract packages the built broker/contracts with synthetic add-in DLL plac
 
 The contract also verifies that unsupported Revit years fail instead of writing misleading manifests. Release packaging and install support any requested combination of `-RevitYears 2021,2024,2027` when the matching add-in artifacts are present.
 
-`npm test` also runs `npm run test:integrations:python`, which syntax-checks the pyRevit/Dynamo Python examples and exercises the shared Python MCP client against a fake stdio MCP server.
+`npm run check:integrations:python` syntax-checks the pyRevit/Dynamo Python examples and validates the packaged Dynamo graph shape. Behavioural coverage for those clients comes from `npm run smoke:host-integrations` against a live Revit.
 
 Hosted CI also runs the release evidence contract:
 

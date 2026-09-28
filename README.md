@@ -62,9 +62,9 @@ AI agents setting up this repo or an extracted package should start with the con
 npm install
 npm run build
 npm run build:addin
-npm test
+npm run typecheck
 node scripts\validate-repo.mjs
-npm run test:integrations:python
+npm run check:integrations:python
 npm run install:windows
 npm run doctor:windows
 npm run mcp:config

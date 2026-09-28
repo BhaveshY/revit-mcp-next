@@ -3,7 +3,8 @@
 ## Verification
 
 - [ ] `npm run build`
-- [ ] `npm test`
+- [ ] `npm run typecheck`
+- [ ] `npm run smoke:revit` against a disposable model (behaviour changes)
 - [ ] `node scripts/validate-repo.mjs`
 
 ## Clean-Room Check

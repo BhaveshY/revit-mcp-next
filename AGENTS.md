@@ -64,8 +64,8 @@ For add-in or package changes, also run:
 ```powershell
 npm run build
 npm run build:addin
-npm run test
 npm run typecheck
+npm run smoke:revit   # live, disposable .rvt only
 ```
 
 Live Revit smoke mutates the active model. Use only disposable/test `.rvt` files.

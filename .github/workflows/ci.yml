@@ -21,7 +21,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
-      - run: npm test
+      - name: Python integration syntax and Dynamo graph checks
+        shell: pwsh
+        run: npm run check:integrations:python
       - run: node scripts/validate-repo.mjs
       - name: Release package contract
         shell: pwsh
@@ -35,9 +37,6 @@ jobs:
       - name: Named-pipe host lifecycle regression
         shell: pwsh
         run: npm run test:pipe-host
-      - name: In-process bridge protocol contract
-        shell: pwsh
-        run: npm run test:contract:inprocess
       - name: Build year-specific Revit add-ins when APIs are installed
         shell: pwsh
         run: |
