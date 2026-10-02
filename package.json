@@ -16,24 +16,16 @@
     "broker"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build -w contracts && npm run build -w broker && npm run gen:catalog",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "gen:catalog": "node contracts/dist/catalog/emit.js",
+    "e2e": "node e2e/run.mjs",
+    "e2e:surface": "node e2e/run.mjs --profile surface",
     "build:addin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-addin.ps1",
     "check:integrations:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-python-integrations.ps1",
-    "test:pipe-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-named-pipe-host-lifecycle.ps1",
-    "test:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-package-contract.ps1",
-    "test:evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-evidence-contract.ps1",
-    "typecheck": "npm run typecheck --workspaces --if-present",
     "install:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/install-windows.ps1",
     "doctor:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor.ps1",
-    "smoke:revit": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-smoke-revit.ps1",
-    "smoke:release-local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local-release-smoke.ps1",
-    "smoke:pyrevit-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-pyrevit-host-smoke.ps1",
-    "smoke:dynamo-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-dynamo-host-smoke.ps1",
-    "smoke:host-integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-host-integrations-smoke.ps1",
     "sign:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-release.ps1",
-    "evidence:release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-release-evidence.ps1",
-    "evidence:host-integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-host-integration-evidence.ps1",
-    "evidence:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-readiness.ps1",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "package:windows:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -DryRun",
     "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1",
@@ -43,8 +35,7 @@
     "pyrevit:hosts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-pyrevit-hosts-cache.ps1",
     "dynamo:warmup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-dynamo-profile.ps1",
     "mcp:config": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/print-mcp-config.ps1",
-    "doctor:clients": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor-clients.ps1",
-    "revitctl": "node broker/dist/src/cli/revitctl.js"
+    "doctor:clients": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor-clients.ps1"
   },
   "engines": {
     "node": ">=24"
