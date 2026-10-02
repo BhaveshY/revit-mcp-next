@@ -13,6 +13,20 @@
   },
   "include": [
     "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/cli/revitctl.ts",
+    "src/tools/coreTools.ts",
+    "src/tools/discovery.ts",
+    "src/tools/pageCursor.ts",
+    "src/tools/toolResult.ts",
+    "src/ipc/NamedPipeBridgeClient.ts",
+    "src/ipc/RevitBridgeClient.ts",
+    "src/ipc/BridgeResponseValidation.ts",
+    "src/ipc/RequestFactory.ts",
+    "src/instances/FileSystemRevitInstanceDirectory.ts",
+    "src/instances/RevitInstanceDirectory.ts",
+    "src/targeting/SessionTargetingBridgeRouter.ts",
+    "src/targeting/SessionTargetStore.ts"
   ]
 }
-
