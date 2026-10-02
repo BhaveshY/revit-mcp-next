@@ -87,7 +87,7 @@ namespace RevitMcpNext.Addin
 
             // 1. preview: a dry run reports the plan and changes nothing.
             BridgeResponse preview = Run(ctx, "dev.selftest_create_planes", createArgs, RequestModes.Preview, null);
-            Check("preview", preview.Ok && preview.NeedsConfirm?.Rule == "preview" && preview.NeedsConfirm.Blast.CreateTotal == PlaneCount && CountPlanes(doc, prefix) == 0,
+            Check("preview", preview.Ok && preview.NeedsConfirm != null && preview.NeedsConfirm.Rule == null && preview.NeedsConfirm.Blast.CreateTotal == PlaneCount && CountPlanes(doc, prefix) == 0,
                 Describe(preview) + "; planes after preview: " + CountPlanes(doc, prefix).ToString(CultureInfo.InvariantCulture));
 
             // 2. apply: 25 creations stay below confirm.createOver, so the call applies at once.

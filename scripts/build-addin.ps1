@@ -103,6 +103,12 @@ if (-not $SkipCatalog) {
         Write-Host "[revit-mcp-next addin] npm run gen:catalog"
         Push-Location $repoRoot
         try {
+            # gen:catalog runs the compiled emitter; build the contracts workspace first when it is missing.
+            if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "contracts\dist\catalog\emit.js") -PathType Leaf)) {
+                Write-Host "[revit-mcp-next addin] npm run build -w contracts"
+                & $npm.Source run build -w contracts
+                if ($LASTEXITCODE -ne 0) { throw "npm run build -w contracts failed with exit code $LASTEXITCODE." }
+            }
             & $npm.Source run gen:catalog
             if ($LASTEXITCODE -ne 0) { throw "npm run gen:catalog failed with exit code $LASTEXITCODE." }
         } finally {

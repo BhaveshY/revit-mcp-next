@@ -39,15 +39,16 @@ namespace RevitMcpNext.Addin
                 if (message != null && message.Length > 240) message = message.Substring(0, 240);
                 var record = new DialogRecord
                 {
-                    Id = string.IsNullOrWhiteSpace(args.DialogId) ? "(unnamed dialog)" : args.DialogId,
-                    Message = message,
+                    DialogId = string.IsNullOrWhiteSpace(args.DialogId) ? "(unnamed dialog)" : args.DialogId,
+                    Text = message,
                     Answer = null,
                     Auto = false,
                     RequestId = McpRuntime.Queue?.Executing?.RequestId,
+                    Ours = McpRuntime.Queue?.Executing != null,
                     AtUtc = DocumentRegistry.Utc(DateTime.UtcNow)
                 };
                 lock (_gate) _last = record;
-                DiagnosticsLogger.Info("dialog", "Revit showed dialog " + record.Id + (message == null ? string.Empty : ": " + message));
+                DiagnosticsLogger.Info("dialog", "Revit showed dialog " + record.DialogId + (message == null ? string.Empty : ": " + message));
             }
             catch (Exception ex)
             {

@@ -167,18 +167,21 @@ namespace RevitMcpNext.Addin
         /// <summary>
         /// For rules the handler evaluates itself (file_overwrite, unsaved_close, always, ...): returns null when the
         /// request carries a confirmation, else a NOT APPLIED result with needsConfirm {rule, plan, stamp}.
+        /// <paramref name="summary"/> becomes needsConfirm.plan (the broker's one-line summary); a structured
+        /// <paramref name="plan"/> goes in the response data.
         /// </summary>
         public OpResult ConfirmOrPlan(string rule, object plan, string summary, IEnumerable<long> deleteSet = null)
         {
             if (Confirmed != null) return null;
-            var needs = new NeedsConfirm { Rule = rule, Plan = plan, Stamp = Generation };
+            var needs = new NeedsConfirm { Rule = rule, Plan = summary ?? plan as string ?? rule, Stamp = Generation };
             if (deleteSet != null)
             {
                 needs.DeleteSet = deleteSet.ToList();
                 needs.Blast.DeleteTotal = needs.DeleteSet.Count;
                 needs.Blast.Sample = needs.DeleteSet.Take(50).ToList();
             }
-            return OpResult.Success(null, summary).WithNeedsConfirm(needs);
+            object data = plan == null || plan is string ? null : plan;
+            return OpResult.Success(data, summary).WithNeedsConfirm(needs);
         }
 
         // Deferral and jobs -------------------------------------------------------------------------------------

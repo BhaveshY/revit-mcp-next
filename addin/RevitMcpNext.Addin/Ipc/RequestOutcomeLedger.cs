@@ -228,7 +228,7 @@ namespace RevitMcpNext.Addin.Ipc
         {
             if (response.Ok)
             {
-                if (response.NeedsConfirm != null) return OutcomeStates.NotApplied;
+                if (response.NeedsConfirm != null) return OutcomeStates.RolledBack;
                 if (response.Job != null && !JobStates.IsTerminal(response.Job.State)) return OutcomeStates.Running;
                 return OutcomeStates.Committed;
             }

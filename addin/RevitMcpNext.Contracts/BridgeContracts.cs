@@ -126,13 +126,13 @@ namespace RevitMcpNext.Contracts
         public const string Accepted = "accepted";
         public const string Running = "running";
         public const string Committed = "committed";
-        public const string RolledBack = "rolled_back";
+        /// <summary>Also used when nothing was applied (needsConfirm); the recorded response carries the plan.</summary>
+        public const string RolledBack = "rolledBack";
         public const string Failed = "failed";
-        public const string NotApplied = "not_applied";
 
         public static bool IsTerminal(string? state)
         {
-            return state == Committed || state == RolledBack || state == Failed || state == NotApplied;
+            return state == Committed || state == RolledBack || state == Failed;
         }
     }
 
@@ -348,15 +348,16 @@ namespace RevitMcpNext.Contracts
     }
 
     /// <summary>
-    /// Returned instead of committing when a blast rule triggers (SPEC §6.1) and, in preview mode, always
-    /// (rule "preview" when no rule triggered) so the broker can mint a confirm token for the dry run.
+    /// Returned instead of committing when a blast rule triggers (SPEC §6.1) and, in preview mode, always (rule null
+    /// when no rule triggered) so the broker can mint a confirm token for the dry run. Structured plan details go in
+    /// the response data; <see cref="Plan"/> is the one-line text the broker shows as the summary.
     /// </summary>
     public sealed class NeedsConfirm : IWireObject
     {
-        /// <summary>delete | bulk | create | file_overwrite | unsaved_close | always | ... | preview.</summary>
-        public string Rule { get; set; } = string.Empty;
-        /// <summary>Human-readable plan (per-op summaries for change_set).</summary>
-        public object? Plan { get; set; }
+        /// <summary>delete | bulk | create | file_overwrite | unsaved_close | always | multi_doc | central_open | code_commit; null for a plain preview.</summary>
+        public string? Rule { get; set; }
+        /// <summary>One-line human-readable plan (the broker uses it as the NOT APPLIED / preview summary).</summary>
+        public string Plan { get; set; } = string.Empty;
         public BlastInfo Blast { get; set; } = new BlastInfo();
         /// <summary>Document generation the plan was computed at; per-element stamps above it make the plan stale.</summary>
         public long Stamp { get; set; }
@@ -1086,28 +1087,34 @@ namespace RevitMcpNext.Contracts
         }
     }
 
+    /// <summary>The last dialog Revit showed (health.lastDialog; protocol.ts LastDialog plus diagnostics fields).</summary>
     public sealed class DialogRecord : IWireObject
     {
-        public string Id { get; set; } = string.Empty;
-        public string? Message { get; set; }
+        public string DialogId { get; set; } = string.Empty;
+        public string? Title { get; set; }
+        public string? Text { get; set; }
         /// <summary>Button answered automatically (null when nothing was answered).</summary>
         public string? Answer { get; set; }
+        public string? AtUtc { get; set; }
+        /// <summary>True when the dialog appeared while one of our requests was executing.</summary>
+        public bool Ours { get; set; }
         public bool Auto { get; set; }
         public bool OverrideRejected { get; set; }
         public string? RequestId { get; set; }
-        public string? AtUtc { get; set; }
 
         public Dictionary<string, object?> ToWire()
         {
             return new Dictionary<string, object?>
             {
-                ["id"] = Id,
-                ["message"] = Message,
+                ["dialogId"] = DialogId,
+                ["title"] = Title,
+                ["text"] = Text,
                 ["answer"] = Answer,
+                ["atUtc"] = AtUtc,
+                ["ours"] = Ours,
                 ["auto"] = Auto,
                 ["overrideRejected"] = OverrideRejected,
-                ["requestId"] = RequestId,
-                ["atUtc"] = AtUtc
+                ["requestId"] = RequestId
             };
         }
     }

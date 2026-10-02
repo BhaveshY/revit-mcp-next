@@ -624,15 +624,17 @@ namespace RevitMcpNext.Addin
         {
             BlastInfo info = BlastInfoOf(ctx.Doc, totals);
             List<long> deleteSet = totals.CountedDeleteSet.Take(MaxDeleteSet).ToList();
+            string summary = blast.PendingPlan as string ?? NotAppliedSummary(blast.Rule, info, totals, outcomes, isChangeSet, setName);
             var needs = new NeedsConfirm
             {
                 Rule = blast.Rule,
-                Plan = PlanOf(outcomes, isChangeSet, blast.PendingPlan),
+                Plan = summary,
                 Blast = info,
                 Stamp = stamp,
                 DeleteSet = deleteSet
             };
-            var result = OpResult.Success(null, NotAppliedSummary(blast.Rule, info, totals, outcomes, isChangeSet, setName)).WithNeedsConfirm(needs);
+            var data = new Dictionary<string, object> { ["plan"] = PlanOf(outcomes, isChangeSet, blast.PendingPlan) };
+            var result = OpResult.Success(data, summary).WithNeedsConfirm(needs);
             foreach (OpOutcome outcome in outcomes)
             {
                 foreach (BridgeWarning warning in outcome.Warnings) OpResult.AddWarning(result.Warnings, warning.Code, warning.Text, warning.Ids, warning.N);
@@ -668,10 +670,13 @@ namespace RevitMcpNext.Addin
         private static OpResult PreviewResult(RequestContext ctx, List<OpOutcome> outcomes, Totals totals, Blast blast, long stamp, bool isChangeSet, string setName)
         {
             BlastInfo info = BlastInfoOf(ctx.Doc, totals);
+            string what = isChangeSet ? "change_set" + (string.IsNullOrWhiteSpace(setName) ? string.Empty : " " + setName) : outcomes.FirstOrDefault()?.Key ?? "write";
+            string summary = "preview of " + what + ": would " + CountsText(totals.Created.Count, info.ModifyTotal, info.DeleteTotal) + "; nothing was changed";
             var needs = new NeedsConfirm
             {
-                Rule = blast.Rule ?? "preview",
-                Plan = PlanOf(outcomes, isChangeSet, blast.PendingPlan),
+                // null unless a blast rule would also need the user's OK on apply.
+                Rule = blast.Rule,
+                Plan = summary,
                 Blast = info,
                 Stamp = stamp,
                 DeleteSet = totals.CountedDeleteSet.Take(MaxDeleteSet).ToList()
@@ -680,7 +685,7 @@ namespace RevitMcpNext.Addin
             var data = new Dictionary<string, object>
             {
                 ["preview"] = true,
-                ["plan"] = needs.Plan,
+                ["plan"] = PlanOf(outcomes, isChangeSet, blast.PendingPlan),
                 ["counts"] = new Dictionary<string, object> { ["create"] = totals.Created.Count, ["modify"] = info.ModifyTotal, ["delete"] = info.DeleteTotal },
                 ["delete_set"] = new Dictionary<string, object>
                 {
@@ -691,9 +696,7 @@ namespace RevitMcpNext.Addin
                 ["expected_warnings"] = warningCount
             };
             if (blast.Rule != null) data["rule"] = blast.Rule;
-            string what = isChangeSet ? "change_set" + (string.IsNullOrWhiteSpace(setName) ? string.Empty : " " + setName) : outcomes.FirstOrDefault()?.Key ?? "write";
-            var result = OpResult.Success(data, "preview of " + what + ": would " + CountsText(totals.Created.Count, info.ModifyTotal, info.DeleteTotal) + "; nothing was changed")
-                .WithNeedsConfirm(needs);
+            var result = OpResult.Success(data, summary).WithNeedsConfirm(needs);
             foreach (OpOutcome outcome in outcomes)
             {
                 foreach (BridgeWarning warning in outcome.Warnings) OpResult.AddWarning(result.Warnings, warning.Code, warning.Text, warning.Ids, warning.N);
@@ -712,16 +715,15 @@ namespace RevitMcpNext.Addin
                 ["owners"] = report.Owners.Cast<object>().ToList(),
                 ["plan"] = ops.Select(op => (object)new List<object> { op.Index, op.Key }).ToList()
             };
+            string summary = "preview (static validation only): not probed: " + report.NotProbed.Count.ToString(CultureInfo.InvariantCulture) +
+                             " elements owned by " + owners + "; nothing was changed";
             var needs = new NeedsConfirm
             {
-                Rule = "preview",
-                Plan = data["plan"],
+                Rule = null,
+                Plan = summary,
                 Stamp = ctx.Registry?.GetGeneration(ctx.Doc) ?? 0
             };
-            return OpResult.Success(data,
-                    "preview (static validation only): not probed: " + report.NotProbed.Count.ToString(CultureInfo.InvariantCulture) +
-                    " elements owned by " + owners + "; nothing was changed")
-                .WithNeedsConfirm(needs);
+            return OpResult.Success(data, summary).WithNeedsConfirm(needs);
         }
 
         private static OpResult Applied(RequestContext ctx, List<OpOutcome> outcomes, Totals totals, bool isChangeSet, string setName)
