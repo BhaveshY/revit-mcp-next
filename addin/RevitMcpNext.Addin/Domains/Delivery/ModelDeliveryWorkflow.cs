@@ -1362,23 +1362,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static ICollection<ElementId> GetUnusedElements(Document document)
         {
-#if REVIT2021
-            // Document.GetUnusedElements was added after Revit 2021. The
-            // built-in Purge Unused performance-adviser rule exposes the same
-            // candidate set without depending on a localized rule name.
-            var ruleId = new PerformanceAdviserRuleId(new Guid("e8c63650-70b7-435a-9010-ec97660c1bda"));
-            IList<FailureMessage> messages = PerformanceAdviser.GetPerformanceAdviser().ExecuteRules(
-                document,
-                new List<PerformanceAdviserRuleId> { ruleId });
-            return (messages ?? new List<FailureMessage>())
-                .SelectMany(message => message.GetFailingElements() ?? new List<ElementId>())
-                .Where(id => id != null && id != ElementId.InvalidElementId)
-                .GroupBy(IdValue, StringComparer.Ordinal)
-                .Select(group => group.First())
-                .ToList();
-#else
             return document.GetUnusedElements(new HashSet<ElementId>());
-#endif
         }
 
         private static CleanupPlan BuildCleanupPlan(Document document, DeliveryCleanup cleanup, DeliverySource source)
@@ -2083,13 +2067,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static string IdValue(ElementId id)
         {
-#if REVIT2027
             return id?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-#else
-#pragma warning disable CS0618
-            return id?.IntegerValue.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-#pragma warning restore CS0618
-#endif
         }
 
         private static Dictionary<string, object> GetDictionary(Dictionary<string, object> root, string key)

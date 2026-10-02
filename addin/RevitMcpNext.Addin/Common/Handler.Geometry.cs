@@ -40,18 +40,6 @@ namespace RevitMcpNext.Addin.Revit
             return loop;
         }
 
-#if REVIT2021
-        private static CurveArray BuildCurveArray(IReadOnlyList<XYZ> points)
-        {
-            var profile = new CurveArray();
-            for (int index = 0; index < points.Count; index++)
-            {
-                profile.Append(Line.CreateBound(points[index], points[(index + 1) % points.Count]));
-            }
-
-            return profile;
-        }
-#endif
 
         private static double PolygonAreaInternal(IReadOnlyList<XYZ> points)
         {

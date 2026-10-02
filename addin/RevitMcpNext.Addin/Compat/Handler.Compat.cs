@@ -40,14 +40,7 @@ namespace RevitMcpNext.Addin.Revit
                 throw new ArgumentException("Element id must be numeric: " + value);
             }
 
-            try
-            {
-                return (ElementId)Activator.CreateInstance(typeof(ElementId), idValue);
-            }
-            catch
-            {
-                return (ElementId)Activator.CreateInstance(typeof(ElementId), Convert.ToInt32(idValue));
-            }
+            return new ElementId(idValue);
         }
 
         private static object GetPropertyValue(object target, string propertyName)
@@ -110,22 +103,12 @@ namespace RevitMcpNext.Addin.Revit
         {
             if (id == null) return string.Empty;
 
-            object value = typeof(WorksetId).GetProperty("IntegerValue")?.GetValue(id, null);
-            return value == null ? id.ToString() : Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
+            return id.IntegerValue.ToString(CultureInfo.InvariantCulture);
         }
 
         private static long GetElementIdValue(ElementId id)
         {
-#if REVIT2027
             return id.Value;
-#else
-            object value = typeof(ElementId).GetProperty("Value")?.GetValue(id, null);
-            if (value != null) return Convert.ToInt64(value, CultureInfo.InvariantCulture);
-
-#pragma warning disable CS0618
-            return id.IntegerValue;
-#pragma warning restore CS0618
-#endif
         }
     }
 }

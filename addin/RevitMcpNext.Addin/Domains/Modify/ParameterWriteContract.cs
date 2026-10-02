@@ -7,13 +7,7 @@ namespace RevitMcpNext.Addin.Revit
     {
         internal static bool IsYesNoDataType(ForgeTypeId dataType)
         {
-#if REVIT2021
-            // Revit 2021 does not expose SpecTypeId.Boolean.YesNo. Callers must
-            // use Definition.ParameterType for Yes/No detection in that host.
-            return false;
-#else
             return dataType != null && !dataType.Empty() && dataType == SpecTypeId.Boolean.YesNo;
-#endif
         }
 
         internal static string GetForgeTypeIdString(ForgeTypeId typeId)

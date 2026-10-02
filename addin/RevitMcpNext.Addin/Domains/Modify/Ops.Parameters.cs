@@ -591,13 +591,7 @@ namespace RevitMcpNext.Addin.Revit
         {
             try
             {
-#if REVIT2021
-#pragma warning disable CS0618
-                return parameter?.Definition?.GetSpecTypeId();
-#pragma warning restore CS0618
-#else
                 return parameter?.Definition?.GetDataType();
-#endif
             }
             catch
             {
@@ -619,26 +613,12 @@ namespace RevitMcpNext.Addin.Revit
 
         private static bool IsMeasurableParameter(Parameter parameter, ForgeTypeId dataType)
         {
-#if REVIT2021
-#pragma warning disable CS0618
-            return parameter?.StorageType == StorageType.Double &&
-                   parameter.Definition != null &&
-                   parameter.Definition.UnitType != UnitType.UT_Undefined;
-#pragma warning restore CS0618
-#else
             return dataType != null && !dataType.Empty() && UnitUtils.IsMeasurableSpec(dataType);
-#endif
         }
 
         private static bool IsYesNoParameter(Parameter parameter, ForgeTypeId dataType)
         {
-#if REVIT2021
-#pragma warning disable CS0618
-            return parameter?.Definition?.ParameterType == ParameterType.YesNo;
-#pragma warning restore CS0618
-#else
             return ParameterWriteContract.IsYesNoDataType(dataType);
-#endif
         }
 
         private static string GetForgeTypeIdString(ForgeTypeId typeId)

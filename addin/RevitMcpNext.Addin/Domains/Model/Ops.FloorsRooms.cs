@@ -78,15 +78,8 @@ namespace RevitMcpNext.Addin.Revit
             FloorType floorType = ResolveFloorType(document, GetString(operation, "floorTypeId"));
             List<XYZ> points = NormalizeClosedLoop(ToInternalPointList(GetPointList(operation, "outline"), "outline"));
             bool structural = GetBool(operation, "structural", false);
-#if REVIT2021
-            CurveArray profile = BuildCurveArray(points);
-#pragma warning disable CS0618
-            Floor floor = document.Create.NewFloor(profile, floorType, level, structural);
-#pragma warning restore CS0618
-#else
             CurveLoop loop = BuildCurveLoop(points);
             Floor floor = Floor.Create(document, new List<CurveLoop> { loop }, floorType.Id, level.Id, structural, null, 0.0);
-#endif
 
             return Change(operation, index, "applied",
                 target: ElementTarget(floor, null),

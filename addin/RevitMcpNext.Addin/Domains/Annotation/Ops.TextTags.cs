@@ -431,11 +431,7 @@ namespace RevitMcpNext.Addin.Revit
             if (string.Equals(orientation, "Vertical", StringComparison.OrdinalIgnoreCase)) return TagOrientation.Vertical;
             if (string.Equals(orientation, "AnyModelDirection", StringComparison.OrdinalIgnoreCase))
             {
-#if REVIT2021
-                throw new ArgumentException("AnyModelDirection element tags require Revit 2022 or newer.");
-#else
                 return TagOrientation.AnyModelDirection;
-#endif
             }
             throw new ArgumentException("Unsupported element tag orientation: " + orientation + ".");
         }
@@ -800,14 +796,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static IEnumerable<ElementId> GetTaggedLocalElementIds(IndependentTag tag)
         {
-#if REVIT2021
-#pragma warning disable CS0618
-            Element taggedElement = tag?.GetTaggedLocalElement();
-#pragma warning restore CS0618
-            return taggedElement == null ? Enumerable.Empty<ElementId>() : new[] { taggedElement.Id };
-#else
             return tag?.GetTaggedLocalElementIds() ?? Enumerable.Empty<ElementId>();
-#endif
         }
     }
 }

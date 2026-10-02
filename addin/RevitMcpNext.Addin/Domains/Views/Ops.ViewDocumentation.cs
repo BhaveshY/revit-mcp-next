@@ -116,9 +116,7 @@ namespace RevitMcpNext.Addin.Revit
         private static Dictionary<string, object> ViewportData(Viewport viewport)
         {
             var data = new Dictionary<string, object> { ["id"] = ToElementIdString(viewport.Id), ["viewId"] = ToElementIdString(viewport.ViewId), ["center"] = PointValue(viewport.GetBoxCenter()), ["typeId"] = ToElementIdString(viewport.GetTypeId()), ["rotation"] = viewport.Rotation.ToString() };
-#if !REVIT2021
             data["labelOffset"] = PointValue(viewport.LabelOffset); data["labelLineLength"] = viewport.LabelLineLength * 304.8;
-#endif
             return data;
         }
 
@@ -232,16 +230,12 @@ namespace RevitMcpNext.Addin.Revit
                 if (!string.IsNullOrWhiteSpace(error)) throw new InvalidOperationException(error);
                 if (type == "duplicate_sheet")
                 {
-#if REVIT2021
-                    throw new InvalidOperationException("Complete native sheet duplication requires Revit 2024 or 2027; Revit 2021 has no supported ViewSheet.Duplicate API.");
-#else
                     var sheet = source as ViewSheet ?? throw new InvalidOperationException("sheetId must be a ViewSheet.");
                     string number = GetString(op, "sheetNumber"), prefix = GetString(op, "viewNamePrefix");
                     if (string.IsNullOrWhiteSpace(number) || string.IsNullOrWhiteSpace(prefix)) throw new InvalidOperationException("sheetNumber and viewNamePrefix are required.");
                     if (new FilteredElementCollector(doc).OfClass(typeof(ViewSheet)).Cast<ViewSheet>().Any(s => s.SheetNumber == number)) throw new InvalidOperationException("Sheet number already exists.");
                     if (sheet.GetAllViewports().Count > 100) throw new InvalidOperationException("Sheet exceeds the 100-viewport transaction bound.");
                     foreach (var id in sheet.GetAllPlacedViews()) EnsureViewName(doc, prefix + doc.GetElement(id).Name);
-#endif
                 }
                 else
                 {
@@ -339,7 +333,6 @@ namespace RevitMcpNext.Addin.Revit
             }
             else if (type == "duplicate_sheet")
             {
-#if !REVIT2021
                 var source = RequireElement<ViewSheet>(doc, GetString(op, "sheetId"));
                 var sheet = (ViewSheet)doc.GetElement(source.Duplicate(SheetDuplicateOption.DuplicateSheetWithViewsAndDetailing));
                 CopySheetParameters(source, sheet);
@@ -369,7 +362,6 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 if (copies.Count != 0) throw new InvalidOperationException("Unexpected duplicated schedule instances.");
                 result = sheet;
-#endif
             }
             else if (type == "copy_view_annotations")
             {
