@@ -26,12 +26,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/core": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/core": "2.2.0",
+    "@modelcontextprotocol/server": "2.2.0",
     "@revit-mcp-next/contracts": "file:../contracts",
     "zod": "4.4.3"
   },

@@ -47,7 +47,7 @@
     "revitctl": "node broker/dist/src/cli/revitctl.js"
   },
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24"
   },
   "license": "MIT"
 }
