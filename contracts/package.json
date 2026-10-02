@@ -27,5 +27,56 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./naming": {
+      "types": "./dist/naming.d.ts",
+      "default": "./dist/naming.js"
+    },
+    "./home": {
+      "types": "./dist/home.d.ts",
+      "default": "./dist/home.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog/index.d.ts",
+      "default": "./dist/catalog/index.js"
+    },
+    "./catalog/types": {
+      "types": "./dist/catalog/types.d.ts",
+      "default": "./dist/catalog/types.js"
+    },
+    "./catalog/params": {
+      "types": "./dist/catalog/params.d.ts",
+      "default": "./dist/catalog/params.js"
+    },
+    "./catalog/topics": {
+      "types": "./dist/catalog/topics.d.ts",
+      "default": "./dist/catalog/topics.js"
+    },
+    "./catalog/instructions": {
+      "types": "./dist/catalog/instructions.d.ts",
+      "default": "./dist/catalog/instructions.js"
+    },
+    "./catalog/checks": {
+      "types": "./dist/catalog/checks.d.ts",
+      "default": "./dist/catalog/checks.js"
+    },
+    "./catalog/emit": {
+      "types": "./dist/catalog/emit.d.ts",
+      "default": "./dist/catalog/emit.js"
+    },
+    "./package.json": "./package.json"
   }
 }

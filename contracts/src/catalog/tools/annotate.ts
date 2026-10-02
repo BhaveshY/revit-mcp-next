@@ -1,0 +1,62 @@
+// Catalog entry for `annotate` (SPEC Appendix A/B). The advertised part must stay equal to docs/design/SPEC-catalog.mjs
+// unless the lead approves a surface change (e2e/budgets.json baseline). Lanes extend examples, help and errors.
+import { B, E, LOOPS, meta, mm, N, OA, op, P, PT, PTS, S, SA, syn, W, WRITE, WRITE_TAIL } from "../params.js";
+import type { ToolSpec } from "../types.js";
+
+const M = meta(WRITE);
+
+export const tool: ToolSpec = {
+  name: "annotate",
+  title: "Annotate views",
+  description: "Annotation in a view: tag elements or tag_all by category, text notes, dimensions (refs, grids, walls), spot elevations/coordinates, detail lines, filled regions, detail items/symbols, revision clouds, copy to views.",
+  group: "write",
+  annotations: W,
+  discriminator: "op",
+  profiles: ["full"],
+  properties: {
+    view: S("View name/id or 'active'."),
+    views: SA("copy_to_views: target views."),
+    ids: P.ids,
+    from: P.from,
+    filter: P.filter,
+    category: P.category,
+    type: S("Tag/text/dimension/region/detail type. Default: category default."),
+    at: P.at,
+    start: mm(PT("Dimension line start / line-based item start.")),
+    end: mm(PT("Dimension line end / line-based item end.")),
+    through: mm(PT("Point on arc.")),
+    points: mm(PTS("Line/loop points [[x,y],...] mm.")),
+    holes: mm(LOOPS("filled_region inner loops.")),
+    text: S("Text note content."),
+    width: mm(N("Text wrap width mm (paper).")),
+    rotation: P.rotation,
+    leader: B("Add a leader."),
+    orientation: syn(E(["horizontal","vertical","model"], "Tag orientation."), {"h":"horizontal","v":"vertical","anymodeldirection":"model"}),
+    untagged_only: B("tag_all: skip elements already tagged. Default true."),
+    offset: mm(PT("tag_all: tag head offset [dx,dy] mm from element center.")),
+    refs: SA("dimension: stable reference strings from describe_elements."),
+    mode: syn(E(["centers","faces","exterior","core"], "dimension with ids: which references. Default centers."), {"center":"centers","centre":"centers","centres":"centers","face":"faces"}),
+    overrides: OA("Dimension text: [{segment,value,prefix,suffix,above,below}]."),
+    by: P.by,
+    kind: syn(E(["elevation","coordinate","slope"], "spot kind."), {"spotelevation":"elevation","spotcoordinate":"coordinate","spotslope":"slope"}),
+    host: S("spot: element id whose face is picked at 'at'."),
+    revision: S("Revision description or number."),
+    line_style: S("Line style name."),
+    closed: B("Close the loop."),
+    ...WRITE_TAIL,
+  },
+  required: ["op"],
+  ops: {
+    tag: op("view,ids/from/filter", "type,at,leader,orientation", M, [{"op":"tag","view":"Level 1","ids":["306100"],"leader":true}]),
+    tag_all: op("view,category", "type,untagged_only,leader,offset", meta(M, { blast: ["create"] }), [{"op":"tag_all","view":"Level 1","category":["Doors","Windows"]}]),
+    text: op("view,at,text", "type,width,rotation,leader", M, [{"op":"text","view":"Level 1","at":[500,9000],"text":"Existing stair to remain"}]),
+    dimension: op("view,refs/ids,start,end", "type,mode,overrides", meta(M, { strict: true }), [{"op":"dimension","view":"Level 1","ids":["301001","301002","301003"],"start":[0,-2000],"end":[12000,-2000]}]),
+    dimension_edit: op("ids", "type,by,overrides,refs,start,end", meta(M, { strict: true }), [{"op":"dimension_edit","ids":["308000"],"by":[0,500]}]),
+    spot: op("view,kind,host,at", "type,leader", M, [{"op":"spot","view":"Level 1","kind":"elevation","host":"305000","at":[3000,2000]}]),
+    detail_line: op("view,points", "line_style,closed,through", M, [{"op":"detail_line","view":"Level 1","points":[[0,-1000],[12000,-1000]],"line_style":"Thin Lines"}]),
+    filled_region: op("view,points", "type,holes,line_style", M, [{"op":"filled_region","view":"Level 1","points":[[0,0],[2000,0],[2000,2000],[0,2000]]}]),
+    detail_item: op("view,type,at/start+end", "rotation", M, [{"op":"detail_item","view":"Detail 1","type":"Break Line: Break Line","start":[0,0],"end":[2000,0]}]),
+    revision_cloud: op("view,points,revision", "", M, [{"op":"revision_cloud","view":"Level 1","points":[[0,0],[3000,0],[3000,2000],[0,2000]],"revision":"Issue 2"}]),
+    copy_to_views: op("view,views,ids/from", "", meta(M, { strict: true }), [{"op":"copy_to_views","view":"Level 1","views":["Level 2"],"from":"r9"}]),
+  },
+};
