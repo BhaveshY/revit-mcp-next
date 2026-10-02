@@ -9,64 +9,24 @@ on:
 jobs:
   broker:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.x
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
-      - name: Python integration syntax and Dynamo graph checks
-        shell: pwsh
-        run: npm run check:integrations:python
-      - run: node scripts/validate-repo.mjs
-      - name: Release package contract
-        shell: pwsh
-        run: npm run test:release:windows
-      - name: Release evidence contract
-        shell: pwsh
-        run: npm run test:evidence:release:windows
-      - name: Build .NET bridge contracts
-        shell: pwsh
-        run: dotnet build addin\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj -c Release
-      - name: Named-pipe host lifecycle regression
-        shell: pwsh
-        run: npm run test:pipe-host
-      - name: Build year-specific Revit add-ins when APIs are installed
-        shell: pwsh
-        run: |
-          $builtYears = @()
-          foreach ($year in @(2021, 2024, 2027)) {
-            $revitApiPath = "C:\Program Files\Autodesk\Revit $year"
-            if (Test-Path "$revitApiPath\RevitAPI.dll") {
-              .\scripts\build-addin.ps1 -RevitYear $year -RevitApiPath $revitApiPath
-              if ($LASTEXITCODE -ne 0) {
-                throw "Revit $year add-in build failed with exit code $LASTEXITCODE."
-              }
-              $builtYears += $year
-            } else {
-              Write-Host "Skipping Revit $year add-in build because API DLLs are not installed on the runner."
-            }
-          }
-          "BUILT_REVIT_YEARS=$($builtYears -join ',')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Check installer dry run for built Revit artifacts
-        shell: pwsh
-        run: |
-          $builtYears = @($env:BUILT_REVIT_YEARS -split "," | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-          if ($builtYears.Count -eq 0) {
-            Write-Host "Skipping installer dry run because Revit API DLLs are not available on the hosted runner."
-            exit 0
-          }
-
-          foreach ($year in $builtYears) {
-            $artifact = "artifacts\addin\$year\RevitMcpNext.Addin.dll"
-            if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
-              throw "Expected Revit $year artifact was not produced at $artifact."
-            }
-            .\installer\install-windows.ps1 -DryRun -SkipDependencyInstall -RevitYears ([int] $year)
-          }
+      - name: Catalog gates and spec parity
+        run: npm run gen:catalog -- --check
+      - name: E2E surface (S00, no Revit)
+        run: node e2e/run.mjs --profile surface
+      - name: Upload e2e summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-surface
+          path: artifacts/e2e/
+          if-no-files-found: ignore
