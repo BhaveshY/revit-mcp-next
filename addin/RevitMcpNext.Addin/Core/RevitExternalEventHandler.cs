@@ -16,11 +16,18 @@ using RevitMcpNext.Contracts;
 
 namespace RevitMcpNext.Addin.Revit
 {
+    /// <summary>
+    /// The ExternalEvent handler: drains the request queue on the Revit UI thread (SPEC §9.1). ExecuteBatch runs at
+    /// most 16 items / 100 ms, then one job step, then refreshes the document snapshot; deferred completions block
+    /// later items until they finish. The other partial files hold the legacy per-op helpers that the wave-2 lanes
+    /// rewrite (they are no longer dispatched; see OperationRegistry).
+    /// </summary>
     internal sealed partial class RevitExternalEventHandler : IExternalEventHandler
     {
-        private const string AddinVersion = "0.3.0";
         private const int MaxItemsPerExternalEvent = 16;
         private const int MaxExternalEventElapsedMs = 100;
+
+        // Limits used by the legacy helpers in the other partial files.
         private const int MaxQueryLimit = 500;
         private const int MaxViewLimit = 500;
         private const int MaxSheetLimit = 500;
@@ -41,48 +48,11 @@ namespace RevitMcpNext.Addin.Revit
         private const long MaxFamilyLoadBytes = 100L * 1024L * 1024L;
         private const int DefaultDeleteDependentLimit = 25;
         private const int MaxDeleteDependentLimit = 256;
-        private static readonly IReadOnlyDictionary<string, string> ExpectedOperationKinds =
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["status"] = "read",
-                ["list_documents"] = "read",
-                ["create_project_from_template"] = "write",
-                ["create_model_delivery_fixture"] = "write",
-                ["get_view_details"] = "read",
-                ["get_dimensions"] = "read",
-                ["activate_view"] = "write",
-                ["get_levels"] = "read",
-                ["get_views"] = "read",
-                ["get_sheets"] = "read",
-                ["get_schedules"] = "read",
-                ["get_schedule_fields"] = "read",
-                ["get_current_view"] = "read",
-                ["get_current_view_elements"] = "read",
-                ["get_selection"] = "read",
-                ["analyze_model"] = "read",
-                ["get_model_readiness"] = "read",
-                ["get_model_context"] = "read",
-                ["get_material_quantities"] = "read",
-                ["get_warnings"] = "read",
-                ["get_rooms"] = "read",
-                ["catalog"] = "read",
-                ["query"] = "read",
-                ["describe_parameters"] = "read",
-                ["inspect_model_delivery"] = "read",
-                ["preview_model_delivery"] = "preview",
-                ["execute_model_delivery"] = "destructive",
-                ["get_model_delivery_status"] = "read",
-                ["cancel_model_delivery"] = "debug",
-                ["preview_change_set"] = "preview",
-                ["apply_change_set"] = "write",
-                ["cancel_request"] = "debug"
-            };
+
         private readonly RevitRequestQueue _queue;
-        private readonly TransactionService _transactions;
-        private readonly DocumentGenerationTracker _generations;
-        private readonly PreviewTokenStore _previewTokens;
         private readonly ModelDeliveryWorkflow _modelDelivery;
         private readonly string _runtimeInstanceId;
+        private volatile bool _inExecute;
 
         private sealed class TargetResolutionException : Exception
         {
@@ -95,59 +65,19 @@ namespace RevitMcpNext.Addin.Revit
             public string Code { get; }
         }
 
-        public RevitExternalEventHandler(
-            RevitRequestQueue queue,
-            TransactionService transactions,
-            DocumentGenerationTracker generations = null,
-            PreviewTokenStore previewTokens = null,
-            string runtimeInstanceId = null)
+        public RevitExternalEventHandler(RevitRequestQueue queue)
         {
-            _queue = queue;
-            _transactions = transactions;
-            _generations = generations ?? new DocumentGenerationTracker();
-            _previewTokens = previewTokens ?? new PreviewTokenStore();
-            _runtimeInstanceId = string.IsNullOrWhiteSpace(runtimeInstanceId) ? "in-process" : runtimeInstanceId;
-            _modelDelivery = new ModelDeliveryWorkflow(_runtimeInstanceId, document => _generations.GetGeneration(document));
+            _queue = queue ?? throw new ArgumentNullException(nameof(queue));
+            _runtimeInstanceId = McpRuntime.Instance?.InstanceId ?? "in-process";
+            _modelDelivery = new ModelDeliveryWorkflow(_runtimeInstanceId, document => McpRuntime.Registry?.GetGeneration(document) ?? 0);
         }
+
+        /// <summary>True while ExecuteBatch runs on the UI thread (the pump does not need to wake Revit then).</summary>
+        public bool InExecute => _inExecute;
 
         public void Execute(UIApplication app)
         {
-            int processed = 0;
-            var elapsed = Stopwatch.StartNew();
-            while (processed < MaxItemsPerExternalEvent && _queue.TryDequeue(out QueuedRevitWorkItem item))
-            {
-                processed++;
-                var execution = Stopwatch.StartNew();
-                try
-                {
-                    BridgeResponseEnvelope response = Handle(app, item.Envelope);
-                    execution.Stop();
-                    item.TrySetResult(response, execution.ElapsedMilliseconds);
-                }
-                finally
-                {
-                    _queue.EndExecution();
-                }
-                if (elapsed.ElapsedMilliseconds >= MaxExternalEventElapsedMs) break;
-            }
-
-            if (_modelDelivery.HasPendingWork)
-            {
-                _queue.BeginExecution(null, "model_delivery_step");
-                try
-                {
-                    _modelDelivery.ProcessNext(app);
-                }
-                finally
-                {
-                    _queue.EndExecution();
-                }
-            }
-
-            if (_queue.HasPending || _modelDelivery.HasPendingWork)
-            {
-                _queue.Raise();
-            }
+            ExecuteBatch(app, "externalEvent", MaxItemsPerExternalEvent, MaxExternalEventElapsedMs, null);
         }
 
         public string GetName()
@@ -155,24 +85,160 @@ namespace RevitMcpNext.Addin.Revit
             return "Revit MCP Next External Event Handler";
         }
 
-        internal BridgeResponseEnvelope HandleDirect(UIApplication app, BridgeRequestEnvelope request)
+        /// <summary>
+        /// Runs queued work (UI thread, API context). <paramref name="filter"/> restricts which items/jobs may run
+        /// (the Idling fallback passes idle-safe ops only). Never throws.
+        /// </summary>
+        public void ExecuteBatch(UIApplication app, string via, int maxItems, int budgetMs, Func<OpMeta, bool> filter)
         {
-            return Handle(app, request);
+            if (_inExecute) return;
+            _inExecute = true;
+            var elapsed = Stopwatch.StartNew();
+            try
+            {
+                try
+                {
+                    McpRuntime.UiMonitor?.RefreshHandle(app.MainWindowHandle);
+                }
+                catch
+                {
+                    // The handle is advisory.
+                }
+
+                if (!CompleteDeferred()) return;
+
+                int processed = 0;
+                Func<QueuedRevitWorkItem, bool> itemFilter = null;
+                if (filter != null) itemFilter = item => filter(McpRuntime.Ops?.GetMeta(item.Op) ?? new OpMeta { Idle = false });
+                while (processed < maxItems && _queue.TryDequeue(out QueuedRevitWorkItem item, itemFilter))
+                {
+                    McpRuntime.Pump?.OnExecuteStart(processed == 0 ? item.RaiseToExecMs : -1);
+                    processed++;
+                    RunItem(app, item, via);
+                    if (_queue.Deferred != null) return;
+                    if (elapsed.ElapsedMilliseconds >= budgetMs) break;
+                }
+
+                Func<JobRecord, bool> jobFilter = null;
+                if (filter != null) jobFilter = job => filter(McpRuntime.Ops?.GetMeta(job.Key) ?? new OpMeta { Idle = false });
+                McpRuntime.Jobs?.RunNext(app, jobFilter);
+
+                try
+                {
+                    McpRuntime.Registry?.RefreshActive(app);
+                    McpRuntime.Registry?.SampleSelection(app);
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLogger.Debug("execute", "Snapshot refresh failed: " + ex.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("execute", "ExecuteBatch failed.", ex);
+            }
+            finally
+            {
+                _inExecute = false;
+                // Re-raise only for work that can run right away; deferred completions and delayed job steps are
+                // picked up by the pump's watchdog (wake.watchdogMs) instead of a tight Execute loop.
+                bool runnable = _queue.Deferred == null && (_queue.HasPending || (McpRuntime.Jobs?.HasRunnableStep ?? false));
+                if (runnable) McpRuntime.Pump?.Raise();
+            }
         }
 
-        private long GetActiveDocumentGeneration(UIApplication app)
+        private void RunItem(UIApplication app, QueuedRevitWorkItem item, string via)
         {
-            Document activeDocument = app.ActiveUIDocument?.Document;
-            return activeDocument == null ? 0 : _generations.GetGeneration(activeDocument);
+            _queue.BeginExecution(item, new ExecutingInfo
+            {
+                RequestId = item.RequestId,
+                Op = item.Op,
+                SinceUtc = DocumentRegistry.Utc(DateTime.UtcNow),
+                ClientKey = item.ClientKey,
+                WriteTag = item.WriteTag
+            });
+            bool deferred = false;
+            try
+            {
+                BridgeResponse response = Dispatcher.Execute(item, app, via);
+                if (response != null)
+                {
+                    item.TrySetResult(response);
+                }
+                else if (item.DeferredTask != null)
+                {
+                    deferred = true;
+                    _queue.SetDeferred(item);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("execute", "Request " + item.RequestId + " (" + item.Op + ") failed outside the dispatcher.", ex);
+                item.TrySetResult(BridgeResponse.Failure(item.RequestId, ErrorCodes.InternalError, ex.Message,
+                    new Dictionary<string, object> { ["requestId"] = item.RequestId, ["logPath"] = DiagnosticsLogger.CurrentLogFile }));
+            }
+            finally
+            {
+                if (!deferred) _queue.EndExecution();
+            }
         }
 
-        private BridgeResponseEnvelope ValidateExpectedGeneration(
-            BridgeRequestEnvelope request,
+        /// <summary>Finishes a deferred item when its task completed or timed out. Returns false while it must keep waiting.</summary>
+        private bool CompleteDeferred()
+        {
+            QueuedRevitWorkItem item = _queue.Deferred;
+            if (item == null) return true;
+            RequestContext ctx = item.Context;
+            OpResult result = null;
+            if (item.DeferredTask.IsCompleted)
+            {
+                if (item.DeferredTask.Status == System.Threading.Tasks.TaskStatus.RanToCompletion)
+                {
+                    result = item.DeferredTask.Result ?? OpResult.Success();
+                }
+                else
+                {
+                    Exception error = item.DeferredTask.Exception?.GetBaseException() ?? new OperationCanceledException();
+                    result = Dispatcher.MapException(ctx, error);
+                }
+            }
+            else if (DateTime.UtcNow >= item.DeferredDeadlineUtc)
+            {
+                try
+                {
+                    result = item.DeferredOnTimeout?.Invoke() ??
+                             OpResult.Fail(ErrorCodes.InternalError, item.Op + " did not complete within its deferral timeout.");
+                }
+                catch (Exception ex)
+                {
+                    result = Dispatcher.MapException(ctx, ex);
+                }
+            }
+            if (result == null) return false;
+
+            RequestContext previous = RequestContext.Current;
+            try
+            {
+                RequestContext.Current = ctx;
+                item.TrySetResult(Dispatcher.BuildResponse(ctx, result, item.Request));
+            }
+            finally
+            {
+                RequestContext.Current = previous;
+                _queue.ClearDeferred(item);
+                _queue.EndExecution();
+            }
+            return true;
+        }
+
+        /// <summary>Legacy helper kept for the old per-op functions: fails when an expected generation is stale.</summary>
+        private LegacyResponse ValidateExpectedGeneration(
+            LegacyRequest request,
             Document document,
             Stopwatch sw,
             out long generation)
         {
-            generation = _generations.GetGeneration(document);
+            generation = McpRuntime.Registry?.GetGeneration(document) ?? 0;
             long? expectedGeneration =
                 request.ExpectedGeneration ??
                 GetLong(request.Payload, "expectedGeneration") ??
@@ -189,128 +255,6 @@ namespace RevitMcpNext.Addin.Revit
             }
 
             return null;
-        }
-
-        private BridgeResponseEnvelope Handle(UIApplication app, BridgeRequestEnvelope request)
-        {
-            var sw = Stopwatch.StartNew();
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(request.InstanceId) &&
-                    !string.Equals(request.InstanceId, _runtimeInstanceId, StringComparison.Ordinal))
-                {
-                    return Failure(
-                        request,
-                        "TARGET_INSTANCE_MISMATCH",
-                        "This request targets Revit instance " + request.InstanceId +
-                        " but reached instance " + _runtimeInstanceId + ". Refresh revit.list_instances before retrying.",
-                        sw);
-                }
-
-                BridgeResponseEnvelope operationKindFailure = ValidateOperationKind(request, sw);
-                if (operationKindFailure != null) return operationKindFailure;
-
-                return _transactions.Read(() =>
-                {
-                    switch (request.Operation)
-                    {
-                        case "status":
-                            return Success(request, BuildStatus(app), sw, generation: GetActiveDocumentGeneration(app));
-                        case "list_documents":
-                            return Success(request, BuildDocumentList(app), sw, generation: GetActiveDocumentGeneration(app));
-                        case "create_project_from_template":
-                            return HandleCreateProjectFromTemplate(app, request, sw);
-                        case "create_model_delivery_fixture":
-                            return HandleCreateModelDeliveryFixture(app, request, sw);
-                        case "get_levels":
-                            return HandleGetLevels(app, request, sw);
-                        case "get_view_details":
-                        case "get_dimensions":
-                        case "activate_view":
-                            return HandleViewWorkflow(app, request, sw);
-                        case "get_views":
-                            return HandleGetViews(app, request, sw);
-                        case "get_sheets":
-                            return HandleGetSheets(app, request, sw);
-                        case "get_schedules":
-                            return HandleGetSchedules(app, request, sw);
-                        case "get_schedule_fields":
-                            return HandleGetScheduleFields(app, request, sw);
-                        case "get_current_view":
-                            return HandleGetCurrentView(app, request, sw);
-                        case "get_current_view_elements":
-                            return HandleGetCurrentViewElements(app, request, sw);
-                        case "get_selection":
-                            return HandleGetSelection(app, request, sw);
-                        case "analyze_model":
-                            return HandleAnalyzeModel(app, request, sw);
-                        case "get_model_readiness":
-                            return HandleGetModelReadiness(app, request, sw);
-                        case "get_model_context":
-                            return HandleGetModelContext(app, request, sw);
-                        case "get_material_quantities":
-                            return HandleGetMaterialQuantities(app, request, sw);
-                        case "get_warnings":
-                            return HandleGetWarnings(app, request, sw);
-                        case "get_rooms":
-                            return HandleGetRooms(app, request, sw);
-                        case "catalog":
-                            return HandleCatalog(app, request, sw);
-                        case "query":
-                            return HandleQuery(app, request, sw);
-                        case "describe_parameters":
-                            return HandleDescribeParameters(app, request, sw);
-                        case "inspect_model_delivery":
-                            return HandleInspectModelDelivery(app, request, sw);
-                        case "preview_model_delivery":
-                            return HandlePreviewModelDelivery(app, request, sw);
-                        case "execute_model_delivery":
-                            return HandleExecuteModelDelivery(app, request, sw);
-                        case "get_model_delivery_status":
-                            return HandleGetModelDeliveryStatus(request, sw);
-                        case "cancel_model_delivery":
-                            return HandleCancelModelDelivery(request, sw);
-                        case "preview_change_set":
-                            return HandlePreviewChange(app, request, sw);
-                        case "apply_change_set":
-                            return HandleApplyChange(app, request, sw);
-                        case "cancel_request":
-                            return HandleCancel(request, sw);
-                        default:
-                            return Failure(request, "UNSUPPORTED_OPERATION", "Unsupported Revit MCP operation: " + request.Operation, sw);
-                    }
-                });
-            }
-            catch (TargetResolutionException ex)
-            {
-                return Failure(request, ex.Code, ex.Message, sw);
-            }
-            catch (Exception ex)
-            {
-                DiagnosticsLogger.Error("Revit command failed. requestId=" + request.RequestId + " operation=" + request.Operation, ex);
-                return Failure(request, "REVIT_COMMAND_FAILED", ex.Message, sw);
-            }
-        }
-
-        private static BridgeResponseEnvelope ValidateOperationKind(BridgeRequestEnvelope request, Stopwatch sw)
-        {
-            if (request == null) return null;
-            if (!ExpectedOperationKinds.TryGetValue(request.Operation ?? string.Empty, out string expectedKind))
-            {
-                return null;
-            }
-
-            string actualKind = string.IsNullOrWhiteSpace(request.OperationKind) ? "read" : request.OperationKind.Trim();
-            if (string.Equals(actualKind, expectedKind, StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            return Failure(
-                request,
-                "OPERATION_KIND_MISMATCH",
-                "Bridge request operation '" + request.Operation + "' must use operationKind '" + expectedKind + "' but received '" + actualKind + "'.",
-                sw);
         }
     }
 }

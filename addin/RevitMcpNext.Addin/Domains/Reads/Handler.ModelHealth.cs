@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleAnalyzeModel(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleAnalyzeModel(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -26,10 +26,10 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.analyze_model.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             int bucketLimit = Math.Min(MaxStatisticsBucketLimit, Math.Max(1, GetInt(payload, "bucketLimit") ?? 50));
             int maxElementsScanned = Math.Min(MaxStatisticsScanLimit, Math.Max(100, GetInt(payload, "maxElementsScanned") ?? 50000));
@@ -53,7 +53,7 @@ namespace RevitMcpNext.Addin.Revit
 
             if (truncated)
             {
-                warnings.Add(new BridgeWarning
+                warnings.Add(new LegacyWarning
                 {
                     Code = "MODEL_STATISTICS_TRUNCATED",
                     Message = "Model statistics were computed from the first " + elements.Count.ToString(CultureInfo.InvariantCulture) + " non-type elements. Increase maxElementsScanned for a deeper scan."
@@ -90,7 +90,7 @@ namespace RevitMcpNext.Addin.Revit
                 data,
                 sw,
                 warnings,
-                new BridgeMetrics
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
@@ -100,7 +100,7 @@ namespace RevitMcpNext.Addin.Revit
                 generation: generation);
         }
 
-        private BridgeResponseEnvelope HandleGetModelReadiness(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetModelReadiness(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -108,7 +108,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_model_readiness.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
             var collectorSw = Stopwatch.StartNew();
@@ -119,7 +119,7 @@ namespace RevitMcpNext.Addin.Revit
                 request,
                 data,
                 sw,
-                metrics: new BridgeMetrics
+                metrics: new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
@@ -129,7 +129,7 @@ namespace RevitMcpNext.Addin.Revit
                 generation: generation);
         }
 
-        private BridgeResponseEnvelope HandleGetModelContext(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetModelContext(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -137,7 +137,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_model_context.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
             var collectorSw = Stopwatch.StartNew();
@@ -170,8 +170,8 @@ namespace RevitMcpNext.Addin.Revit
                 request,
                 data,
                 sw,
-                new List<BridgeWarning>(),
-                new BridgeMetrics
+                new List<LegacyWarning>(),
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds

@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleQuery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleQuery(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -26,10 +26,10 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.query.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             var collectorSw = Stopwatch.StartNew();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
@@ -71,7 +71,7 @@ namespace RevitMcpNext.Addin.Revit
                 data,
                 sw,
                 warnings,
-                new BridgeMetrics
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
@@ -85,7 +85,7 @@ namespace RevitMcpNext.Addin.Revit
             UIApplication app,
             Document document,
             Dictionary<string, object> filter,
-            List<BridgeWarning> warnings,
+            List<LegacyWarning> warnings,
             out string scope)
         {
             IReadOnlyList<string> elementIds = GetStringList(filter, "elementIds");
@@ -146,7 +146,7 @@ namespace RevitMcpNext.Addin.Revit
             Document document,
             IReadOnlyList<string> elementIds,
             IReadOnlyList<string> uniqueIds,
-            List<BridgeWarning> warnings)
+            List<LegacyWarning> warnings)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var resolved = new List<Element>();
@@ -160,7 +160,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 catch
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "INVALID_ELEMENT_ID_FILTER",
                         Message = "filter.elementIds contains a non-numeric element ID; it was ignored."
@@ -181,7 +181,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 catch
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "INVALID_UNIQUE_ID_FILTER",
                         Message = "filter.uniqueIds contains an invalid UniqueId; it was ignored."
@@ -199,7 +199,7 @@ namespace RevitMcpNext.Addin.Revit
         private static bool TryApplyCategoryFilter(
             FilteredElementCollector collector,
             IReadOnlyList<string> categories,
-            List<BridgeWarning> warnings)
+            List<LegacyWarning> warnings)
         {
             if (categories.Count == 0) return true;
 
@@ -208,7 +208,7 @@ namespace RevitMcpNext.Addin.Revit
             {
                 if (!TryParseBuiltInCategory(category, out BuiltInCategory builtInCategory))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "CATEGORY_POST_FILTER",
                         Message = "Category '" + category + "' is not a BuiltInCategory name; applying a slower post-filter."
@@ -226,7 +226,7 @@ namespace RevitMcpNext.Addin.Revit
         private static bool TryApplyClassFilter(
             FilteredElementCollector collector,
             IReadOnlyList<string> classes,
-            List<BridgeWarning> warnings)
+            List<LegacyWarning> warnings)
         {
             if (classes.Count == 0) return true;
 
@@ -236,7 +236,7 @@ namespace RevitMcpNext.Addin.Revit
                 Type type = ResolveElementType(className);
                 if (type == null)
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "CLASS_POST_FILTER",
                         Message = "Class '" + className + "' is not a recognized Autodesk.Revit.DB element class; applying a slower post-filter."

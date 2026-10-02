@@ -293,10 +293,9 @@ namespace RevitMcpNext.Addin.Revit
                 // Column heading can be unavailable for some calculated/internal fields.
             }
 
-            object fieldType = GetPropertyValue(field, "FieldType");
-            if (fieldType != null) summary["fieldType"] = fieldType.ToString();
+            try { summary["fieldType"] = field.FieldType.ToString(); } catch { }
 
-            ElementId parameterId = GetReflectedElementId(field, "ParameterId");
+            ElementId parameterId = SafeParameterId(field);
             if (IsScheduleCategoryId(parameterId) || IsValidElementId(parameterId)) summary["parameterId"] = ToElementIdString(parameterId);
 
             try
@@ -308,8 +307,7 @@ namespace RevitMcpNext.Addin.Revit
                 // Hidden state is not exposed on every schedule field variant.
             }
 
-            object canTotal = InvokeParameterless(field, "CanTotal");
-            if (canTotal is bool canTotalValue) summary["canTotal"] = canTotalValue;
+            try { summary["canTotal"] = field.CanTotal(); } catch { }
 
             return summary;
         }
@@ -323,10 +321,9 @@ namespace RevitMcpNext.Addin.Revit
                 ["name"] = string.IsNullOrWhiteSpace(name) ? "(unnamed)" : name
             };
 
-            object fieldType = GetPropertyValue(field, "FieldType");
-            if (fieldType != null) summary["fieldType"] = fieldType.ToString();
+            try { summary["fieldType"] = field.FieldType.ToString(); } catch { }
 
-            ElementId parameterId = GetReflectedElementId(field, "ParameterId");
+            ElementId parameterId = SafeParameterId(field);
             if (IsScheduleCategoryId(parameterId) || IsValidElementId(parameterId)) summary["parameterId"] = ToElementIdString(parameterId);
 
             if (schedule != null) summary["alreadyInSchedule"] = ScheduleHasFieldNamed(schedule, name);
@@ -373,7 +370,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static ElementId GetScheduleCategoryId(ViewSchedule schedule)
         {
-            ElementId categoryId = GetReflectedElementId(schedule?.Definition, "CategoryId");
+            ElementId categoryId = schedule?.Definition?.CategoryId ?? ElementId.InvalidElementId;
             return IsScheduleCategoryId(categoryId) ? categoryId : ElementId.InvalidElementId;
         }
 
@@ -585,23 +582,43 @@ namespace RevitMcpNext.Addin.Revit
 
         private static string GetSchedulableFieldName(Document document, SchedulableField field)
         {
-            object value = InvokeMethod(field, "GetName", document);
-            return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            try
+            {
+                return field.GetName(document) ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static string ScheduleFieldIdString(ScheduleField field)
         {
-            object fieldId = GetPropertyValue(field, "FieldId");
-            return fieldId == null ? string.Empty : fieldId.ToString();
+            try
+            {
+                return field.FieldId?.ToString() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static string SchedulableFieldIdString(SchedulableField field)
         {
-            ElementId parameterId = GetReflectedElementId(field, "ParameterId");
+            ElementId parameterId = SafeParameterId(field);
             if (IsScheduleCategoryId(parameterId) || IsValidElementId(parameterId)) return ToElementIdString(parameterId);
+            return field.ToString();
+        }
 
-            object fieldId = GetPropertyValue(field, "FieldId");
-            return fieldId == null ? field.ToString() : fieldId.ToString();
+        private static ElementId SafeParameterId(ScheduleField field)
+        {
+            try { return field?.ParameterId ?? ElementId.InvalidElementId; } catch { return ElementId.InvalidElementId; }
+        }
+
+        private static ElementId SafeParameterId(SchedulableField field)
+        {
+            try { return field?.ParameterId ?? ElementId.InvalidElementId; } catch { return ElementId.InvalidElementId; }
         }
     }
 }

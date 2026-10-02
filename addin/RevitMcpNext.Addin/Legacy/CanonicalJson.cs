@@ -69,7 +69,10 @@ namespace RevitMcpNext.Addin.Revit
                     throw new InvalidOperationException("Canonical JSON does not support non-finite numbers.");
                 }
 
-                builder.Append(Convert.ToString(value, CultureInfo.InvariantCulture));
+                // "R" round-trips identically on net48 and net10 (D3 B20); other numeric types format invariantly.
+                if (value is double roundTrip) builder.Append(roundTrip.ToString("R", CultureInfo.InvariantCulture));
+                else if (value is float single) builder.Append(single.ToString("R", CultureInfo.InvariantCulture));
+                else builder.Append(Convert.ToString(value, CultureInfo.InvariantCulture));
                 return;
             }
 

@@ -660,7 +660,7 @@ namespace RevitMcpNext.Addin.Revit
                     candidate.IsValidObject &&
                     !candidate.IsLinked &&
                     string.Equals(
-                        DocumentGenerationTracker.ComputeDocumentFingerprint(candidate),
+                        LegacyFingerprint.Compute(candidate),
                         targetBinding.DocumentFingerprint,
                         StringComparison.OrdinalIgnoreCase));
             if (document == null)
@@ -673,7 +673,7 @@ namespace RevitMcpNext.Addin.Revit
 
             var current = new DeliveryTargetBinding(
                 _runtimeInstanceId,
-                DocumentGenerationTracker.ComputeDocumentFingerprint(document),
+                LegacyFingerprint.Compute(document),
                 _generationProvider(document),
                 document.PathName,
                 GetCentralModelPath(document));

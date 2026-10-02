@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleDescribeParameters(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleDescribeParameters(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -26,10 +26,10 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.describe_parameters.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             var collectorSw = Stopwatch.StartNew();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = GetDictionary(payload, "filter") ?? new Dictionary<string, object>();
@@ -77,7 +77,7 @@ namespace RevitMcpNext.Addin.Revit
                 data,
                 sw,
                 warnings,
-                new BridgeMetrics
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,

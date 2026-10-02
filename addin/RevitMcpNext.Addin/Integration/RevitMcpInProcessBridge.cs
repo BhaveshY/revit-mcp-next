@@ -1,356 +1,83 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Security.Cryptography;
 using Autodesk.Revit.UI;
 using RevitMcpNext.Addin.Ipc;
-using RevitMcpNext.Addin.Revit;
 using RevitMcpNext.Contracts;
 
 namespace RevitMcpNext.Addin
 {
+    /// <summary>
+    /// In-process entry for pyRevit/Dynamo (SPEC §9.3): protocol v3 request JSON in, response JSON out, executed
+    /// synchronously on the caller's Revit API thread through the normal dispatch pipeline. Only registry keys with
+    /// inproc:true are reachable (destructive, lifecycle and code ops are refused). No auth: the caller already runs
+    /// inside Revit.
+    /// </summary>
     public static class RevitMcpInProcessBridge
     {
-        private static readonly object Gate = new object();
-        private static RevitExternalEventHandler _handler;
-        private static RevitExternalEventHandler _directFallbackHandler;
-
-        internal static void Configure(RevitExternalEventHandler handler)
-        {
-            if (handler == null) throw new ArgumentNullException(nameof(handler));
-            lock (Gate)
-            {
-                _handler = handler;
-            }
-        }
-
-        internal static void Clear(RevitExternalEventHandler handler)
-        {
-            lock (Gate)
-            {
-                if (ReferenceEquals(_handler, handler))
-                {
-                    _handler = null;
-                }
-            }
-        }
-
+        /// <summary>The add-in's hello data plus the document snapshot (no Revit API work).</summary>
         public static string StatusJson(UIApplication app)
         {
-            return ExecuteEnvelope(
-                app,
-                new BridgeRequestEnvelope
+            try
+            {
+                var control = new ControlOperations(null);
+                var data = new Dictionary<string, object>
                 {
-                    BridgeProtocolVersion = BridgeProtocol.Version,
-                    RequestId = Guid.NewGuid().ToString("N"),
-                    SessionId = "in-process",
-                    Operation = "status",
-                    OperationKind = "read",
-                    TimeoutMs = 5000,
-                    Payload = new Dictionary<string, object>()
-                });
+                    ["hello"] = control.Hello(),
+                    ["snapshot"] = McpRuntime.Registry?.Current
+                };
+                return NamedPipeHost.SerializeResponse(BridgeResponse.Success(Guid.NewGuid().ToString("N"), data, "in-process status"));
+            }
+            catch (Exception ex)
+            {
+                return NamedPipeHost.SerializeResponse(BridgeResponse.Failure(null, ErrorCodes.InternalError, ex.Message));
+            }
         }
 
+        /// <summary>
+        /// Executes one v3 request ({op, kind, args, doc?, mode?}). "v" may be omitted; requestId defaults to a new id.
+        /// Must be called from a valid Revit API context (pyRevit command, Dynamo node, ExternalEvent).
+        /// </summary>
         public static string ExecuteJson(UIApplication app, string bridgeRequestJson)
         {
-            BridgeRequestEnvelope request = null;
+            BridgeRequest request = null;
             try
             {
-                request = ParseRequest(bridgeRequestJson);
-                return ExecuteEnvelope(app, request);
+                if (string.IsNullOrWhiteSpace(bridgeRequestJson)) throw new InvalidDataException("The request JSON is empty.");
+                if (!(JsonWireCodec.DeserializeObject(bridgeRequestJson) is IDictionary<string, object> root))
+                {
+                    throw new InvalidDataException("The request must be a JSON object.");
+                }
+                request = BridgeRequest.FromWire(root);
+                if (string.IsNullOrWhiteSpace(request.V)) request.V = BridgeProtocol.Version;
+                if (string.IsNullOrWhiteSpace(request.RequestId)) request.RequestId = Guid.NewGuid().ToString("N");
+                if (string.IsNullOrWhiteSpace(request.ClientKey)) request.ClientKey = "in-process";
+
+                BridgeResponse protocolError = BridgeProtocolGuard.Check(request, McpRuntime.Instance?.AddinVersion);
+                if (protocolError != null) return NamedPipeHost.SerializeResponse(protocolError);
+                if (app == null)
+                {
+                    return NamedPipeHost.SerializeResponse(BridgeResponse.Failure(request.RequestId, ErrorCodes.InvalidArgs,
+                        "A Revit UIApplication is required (pyRevit __revit__ or Dynamo DocumentManager.Instance.CurrentUIApplication).",
+                        new Dictionary<string, object> { ["param"] = "app", ["reason"] = "required" }));
+                }
+                if (McpRuntime.Ops == null)
+                {
+                    return NamedPipeHost.SerializeResponse(BridgeResponse.Failure(request.RequestId, ErrorCodes.RevitStarting,
+                        "Revit MCP Next is not running in this Revit session."));
+                }
+                if (ControlOps.IsControlOp(request.Op))
+                {
+                    return NamedPipeHost.SerializeResponse(new ControlOperations(null).Handle(request));
+                }
+                return NamedPipeHost.SerializeResponse(Dispatcher.InvokeInProcess(app, request));
             }
             catch (Exception ex)
             {
-                return SerializeResponse(Failure(
-                    request ?? new BridgeRequestEnvelope { RequestId = Guid.NewGuid().ToString("N") },
-                    "IN_PROCESS_BRIDGE_FAILED",
-                    ex.Message,
-                    "Pass a valid bridge request JSON object and call from an active Revit API context."));
+                return NamedPipeHost.SerializeResponse(BridgeResponse.Failure(request?.RequestId, ErrorCodes.InvalidArgs,
+                    "Invalid in-process request: " + ex.Message,
+                    new Dictionary<string, object> { ["param"] = "request", ["reason"] = ex.Message }));
             }
-        }
-
-        private static string ExecuteEnvelope(UIApplication app, BridgeRequestEnvelope request)
-        {
-            BridgeProtocolStatus protocolStatus = BridgeProtocolGuard.Classify(request?.BridgeProtocolVersion);
-            if (protocolStatus == BridgeProtocolStatus.Missing)
-            {
-                return SerializeResponse(Failure(
-                    request,
-                    "PROTOCOL_VERSION_REQUIRED",
-                    "Bridge request is missing protocolVersion.",
-                    "Update the in-process caller so every request includes the current protocol version."));
-            }
-            if (protocolStatus == BridgeProtocolStatus.Mismatch)
-            {
-                return SerializeResponse(Failure(
-                    request,
-                    "PROTOCOL_VERSION_MISMATCH",
-                    "Bridge protocol " + request.BridgeProtocolVersion + " does not match add-in bridge protocol " + BridgeProtocol.Version + ".",
-                    "Rebuild the in-process integration against the installed Revit MCP Next version."));
-            }
-
-            if (app == null)
-            {
-                return SerializeResponse(Failure(
-                    request,
-                    "NO_UI_APPLICATION",
-                    "A Revit UIApplication is required for in-process pyRevit/Dynamo calls.",
-                    "Pass pyRevit __revit__ or Dynamo DocumentManager.Instance.CurrentUIApplication."));
-            }
-
-            RevitExternalEventHandler handler;
-            bool addinHandlerActive;
-            lock (Gate)
-            {
-                handler = _handler;
-                addinHandlerActive = handler != null;
-                if (handler == null)
-                {
-                    _directFallbackHandler = _directFallbackHandler ??
-                        new RevitExternalEventHandler(
-                            new RevitRequestQueue(),
-                            new TransactionService(),
-                            new DocumentGenerationTracker());
-                    handler = _directFallbackHandler;
-                }
-            }
-
-            if (handler == null)
-            {
-                return SerializeResponse(Failure(
-                    request,
-                    "ADDIN_NOT_READY",
-                    "Revit MCP Next is not configured in this Revit session.",
-                    "Confirm the Revit MCP Next add-in loaded successfully before calling the in-process bridge."));
-            }
-
-            BridgeResponseEnvelope response = handler.HandleDirect(app, request);
-            AddInProcessBridgeStatus(response, request, addinHandlerActive);
-            return SerializeResponse(response);
-        }
-
-        private static void AddInProcessBridgeStatus(
-            BridgeResponseEnvelope response,
-            BridgeRequestEnvelope request,
-            bool addinHandlerActive)
-        {
-            if (response == null ||
-                request == null ||
-                !string.Equals(request.Operation, "status", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            var data = response.Data as Dictionary<string, object>;
-            if (data == null)
-            {
-                data = new Dictionary<string, object>();
-                response.Data = data;
-            }
-
-            var bridgeStatus = new Dictionary<string, object>
-            {
-                ["addinHandlerActive"] = addinHandlerActive,
-                ["handler"] = addinHandlerActive ? "configuredAddin" : "directFallback",
-                ["directFallbackActive"] = !addinHandlerActive
-            };
-
-            foreach (KeyValuePair<string, object> entry in GetLoadedAssemblyIdentity())
-            {
-                bridgeStatus[entry.Key] = entry.Value;
-            }
-
-            data["inProcessBridge"] = bridgeStatus;
-        }
-
-        private static Dictionary<string, object> GetLoadedAssemblyIdentity()
-        {
-            var identity = new Dictionary<string, object>();
-
-            try
-            {
-                string assemblyPath = typeof(RevitMcpInProcessBridge).Assembly.Location;
-                if (!string.IsNullOrWhiteSpace(assemblyPath))
-                {
-                    identity["assemblyPath"] = assemblyPath;
-                    if (File.Exists(assemblyPath))
-                    {
-                        identity["assemblySha256"] = ComputeSha256(assemblyPath);
-                        FileVersionInfo version = FileVersionInfo.GetVersionInfo(assemblyPath);
-                        if (!string.IsNullOrWhiteSpace(version.FileVersion)) identity["fileVersion"] = version.FileVersion;
-                        if (!string.IsNullOrWhiteSpace(version.ProductVersion)) identity["productVersion"] = version.ProductVersion;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                identity["assemblyIdentityError"] = ex.Message;
-            }
-
-            return identity;
-        }
-
-        private static string ComputeSha256(string path)
-        {
-            using (SHA256 sha256 = SHA256.Create())
-            using (FileStream stream = File.OpenRead(path))
-            {
-                return BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
-            }
-        }
-
-        private static BridgeRequestEnvelope ParseRequest(string requestJson)
-        {
-            if (string.IsNullOrWhiteSpace(requestJson))
-            {
-                throw new InvalidDataException("Bridge request JSON cannot be empty.");
-            }
-
-            object parsed = JsonWireCodec.DeserializeObject(requestJson);
-            var root = parsed as Dictionary<string, object>;
-            if (root == null)
-            {
-                throw new InvalidDataException("Bridge request must be a JSON object.");
-            }
-
-            string requestId = GetString(root, "requestId");
-            string operation = GetString(root, "operation");
-            if (string.IsNullOrWhiteSpace(requestId)) throw new InvalidDataException("Bridge request is missing requestId.");
-            if (string.IsNullOrWhiteSpace(operation)) throw new InvalidDataException("Bridge request is missing operation.");
-
-            return new BridgeRequestEnvelope
-            {
-                BridgeProtocolVersion = GetString(root, "protocolVersion"),
-                RequestId = requestId,
-                SessionId = GetString(root, "sessionId") ?? "in-process",
-                AuthToken = GetString(root, "authToken"),
-                Operation = operation,
-                OperationKind = GetString(root, "operationKind") ?? "read",
-                TimeoutMs = GetInt(root, "timeoutMs") ?? 30000,
-                InstanceId = GetString(root, "instanceId"),
-                DocumentFingerprint = GetString(root, "documentFingerprint"),
-                ExpectedGeneration = GetLong(root, "expectedGeneration"),
-                Payload = GetDictionary(root, "payload") ?? new Dictionary<string, object>()
-            };
-        }
-
-        private static string SerializeResponse(BridgeResponseEnvelope response)
-        {
-            var body = new Dictionary<string, object>
-            {
-                ["ok"] = response.Ok,
-                ["requestId"] = response.RequestId,
-                ["warnings"] = response.Warnings.Select(ToWireWarning).ToArray(),
-                ["metrics"] = ToWireMetrics(response.Metrics)
-            };
-
-            if (response.Ok)
-            {
-                body["data"] = response.Data ?? new Dictionary<string, object>();
-                if (response.Generation.HasValue) body["generation"] = response.Generation.Value;
-            }
-            else
-            {
-                body["error"] = ToWireError(response.Error);
-            }
-
-            return JsonWireCodec.Serialize(body);
-        }
-
-        private static BridgeResponseEnvelope Failure(
-            BridgeRequestEnvelope request,
-            string code,
-            string message,
-            string suggestedNextAction = null)
-        {
-            return new BridgeResponseEnvelope
-            {
-                Ok = false,
-                RequestId = request?.RequestId ?? string.Empty,
-                Error = new BridgeError
-                {
-                    Code = code,
-                    Message = message,
-                    Recoverable = true,
-                    SuggestedNextAction = suggestedNextAction
-                },
-                Warnings = new List<BridgeWarning>(),
-                Metrics = new BridgeMetrics { ElapsedMs = 0 }
-            };
-        }
-
-        private static Dictionary<string, object> GetDictionary(Dictionary<string, object> root, string key)
-        {
-            return root.TryGetValue(key, out object value) ? value as Dictionary<string, object> : null;
-        }
-
-        private static string GetString(Dictionary<string, object> root, string key)
-        {
-            return root.TryGetValue(key, out object value) ? Convert.ToString(value) : null;
-        }
-
-        private static int? GetInt(Dictionary<string, object> root, string key)
-        {
-            if (!root.TryGetValue(key, out object value) || value == null) return null;
-            return Convert.ToInt32(value);
-        }
-
-        private static long? GetLong(Dictionary<string, object> root, string key)
-        {
-            if (!root.TryGetValue(key, out object value) || value == null) return null;
-            return Convert.ToInt64(value);
-        }
-
-        private static Dictionary<string, object> ToWireWarning(BridgeWarning warning)
-        {
-            return new Dictionary<string, object>
-            {
-                ["code"] = warning.Code,
-                ["message"] = warning.Message
-            };
-        }
-
-        private static Dictionary<string, object> ToWireError(BridgeError error)
-        {
-            if (error == null)
-            {
-                return new Dictionary<string, object>
-                {
-                    ["code"] = "UNKNOWN_ERROR",
-                    ["message"] = "The Revit add-in failed without error details.",
-                    ["recoverable"] = true
-                };
-            }
-
-            var body = new Dictionary<string, object>
-            {
-                ["code"] = error.Code,
-                ["message"] = error.Message,
-                ["recoverable"] = error.Recoverable
-            };
-            if (!string.IsNullOrWhiteSpace(error.SuggestedNextAction))
-            {
-                body["suggestedNextAction"] = error.SuggestedNextAction;
-            }
-
-            return body;
-        }
-
-        private static Dictionary<string, object> ToWireMetrics(BridgeMetrics metrics)
-        {
-            var body = new Dictionary<string, object>
-            {
-                ["elapsedMs"] = metrics?.ElapsedMs ?? 0
-            };
-            if (metrics?.QueueWaitMs != null) body["queueWaitMs"] = metrics.QueueWaitMs.Value;
-            if (metrics?.RevitExecutionMs != null) body["revitExecutionMs"] = metrics.RevitExecutionMs.Value;
-            if (metrics?.CollectorElapsedMs != null) body["collectorElapsedMs"] = metrics.CollectorElapsedMs.Value;
-            if (metrics?.CacheHit != null) body["cacheHit"] = metrics.CacheHit.Value;
-            if (metrics?.ReturnedCount != null) body["returnedCount"] = metrics.ReturnedCount.Value;
-            if (metrics?.TotalCount != null) body["totalCount"] = metrics.TotalCount.Value;
-            return body;
         }
     }
 }

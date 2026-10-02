@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleGetRooms(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetRooms(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -26,10 +26,10 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_rooms.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             var collectorSw = Stopwatch.StartNew();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
@@ -77,7 +77,7 @@ namespace RevitMcpNext.Addin.Revit
                 data,
                 sw,
                 warnings,
-                new BridgeMetrics
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
@@ -87,7 +87,7 @@ namespace RevitMcpNext.Addin.Revit
                 generation: generation);
         }
 
-        private static IEnumerable<Room> CreateRoomElements(Document document, Dictionary<string, object> filter, List<BridgeWarning> warnings)
+        private static IEnumerable<Room> CreateRoomElements(Document document, Dictionary<string, object> filter, List<LegacyWarning> warnings)
         {
             IReadOnlyList<string> elementIds = GetStringList(filter, "elementIds");
             IReadOnlyList<string> uniqueIds = GetStringList(filter, "uniqueIds");
@@ -104,7 +104,7 @@ namespace RevitMcpNext.Addin.Revit
                     }
                     catch
                     {
-                        warnings.Add(new BridgeWarning
+                        warnings.Add(new LegacyWarning
                         {
                             Code = "INVALID_ROOM_ID",
                             Message = "filter.elementIds contains an invalid room ElementId; it was ignored."
@@ -126,7 +126,7 @@ namespace RevitMcpNext.Addin.Revit
                     }
                     catch
                     {
-                        warnings.Add(new BridgeWarning
+                        warnings.Add(new LegacyWarning
                         {
                             Code = "INVALID_ROOM_UNIQUE_ID",
                             Message = "filter.uniqueIds contains an invalid room UniqueId; it was ignored."

@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleGetCurrentView(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetCurrentView(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -30,7 +30,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "TARGET_DOCUMENT_NOT_ACTIVE", "The targeted document is open but is not the UI-active Revit document required by revit.get_current_view.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
             View view = SafeActiveView(document);
@@ -52,7 +52,7 @@ namespace RevitMcpNext.Addin.Revit
                 request,
                 data,
                 sw,
-                metrics: new BridgeMetrics
+                metrics: new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     ReturnedCount = 1,
@@ -61,7 +61,7 @@ namespace RevitMcpNext.Addin.Revit
                 generation: generation);
         }
 
-        private BridgeResponseEnvelope HandleGetCurrentViewElements(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetCurrentViewElements(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -73,7 +73,7 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "TARGET_DOCUMENT_NOT_ACTIVE", "The targeted document is open but is not the UI-active Revit document required by revit.get_current_view_elements.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
             View view = SafeActiveView(document);
@@ -82,14 +82,14 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_VIEW", "The active Revit document does not expose an active view.", sw);
             }
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
             filter["viewId"] = ToElementIdString(view.Id);
 
             if (GetBool(payload, "includeHidden", false))
             {
-                warnings.Add(new BridgeWarning
+                warnings.Add(new LegacyWarning
                 {
                     Code = "INCLUDE_HIDDEN_LIMITED",
                     Message = "Revit view collectors only return elements visible to the collector; hidden element expansion is not available in this release."
@@ -110,7 +110,7 @@ namespace RevitMcpNext.Addin.Revit
                 includeSelection: false);
         }
 
-        private BridgeResponseEnvelope HandleGetSelection(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetSelection(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -122,10 +122,10 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "TARGET_DOCUMENT_NOT_ACTIVE", "The targeted document is open but is not the UI-active Revit document required by revit.get_selection.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
             filter["selectionOnly"] = true;
@@ -144,15 +144,15 @@ namespace RevitMcpNext.Addin.Revit
                 includeSelection: true);
         }
 
-        private BridgeResponseEnvelope HandleScopedElementList(
+        private LegacyResponse HandleScopedElementList(
             UIApplication app,
-            BridgeRequestEnvelope request,
+            LegacyRequest request,
             Stopwatch sw,
             Document document,
             long generation,
             Dictionary<string, object> payload,
             Dictionary<string, object> filter,
-            List<BridgeWarning> warnings,
+            List<LegacyWarning> warnings,
             string scopeOverride,
             View view,
             bool includeSelection)
@@ -209,7 +209,7 @@ namespace RevitMcpNext.Addin.Revit
                 data,
                 sw,
                 warnings,
-                new BridgeMetrics
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,

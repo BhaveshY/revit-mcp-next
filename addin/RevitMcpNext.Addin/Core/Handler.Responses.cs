@@ -18,52 +18,52 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private static void AddWarningOnce(List<BridgeWarning> warnings, string code, string message)
+        private static void AddWarningOnce(List<LegacyWarning> warnings, string code, string message)
         {
             if (warnings.Any(warning => string.Equals(warning.Code, code, StringComparison.OrdinalIgnoreCase))) return;
-            warnings.Add(new BridgeWarning
+            warnings.Add(new LegacyWarning
             {
                 Code = code,
                 Message = message
             });
         }
 
-        private static BridgeResponseEnvelope Success(
-            BridgeRequestEnvelope request,
+        private static LegacyResponse Success(
+            LegacyRequest request,
             object data,
             Stopwatch sw,
-            List<BridgeWarning> warnings = null,
-            BridgeMetrics metrics = null,
+            List<LegacyWarning> warnings = null,
+            LegacyMetrics metrics = null,
             long? generation = null)
         {
             sw.Stop();
-            BridgeMetrics actualMetrics = metrics ?? new BridgeMetrics();
+            LegacyMetrics actualMetrics = metrics ?? new LegacyMetrics();
             actualMetrics.ElapsedMs = sw.ElapsedMilliseconds;
-            return new BridgeResponseEnvelope
+            return new LegacyResponse
             {
                 Ok = true,
                 RequestId = request.RequestId,
                 Data = data,
-                Warnings = warnings ?? new List<BridgeWarning>(),
+                Warnings = warnings ?? new List<LegacyWarning>(),
                 Metrics = actualMetrics,
                 Generation = generation ?? 0
             };
         }
 
-        private static BridgeResponseEnvelope Failure(BridgeRequestEnvelope request, string code, string message, Stopwatch sw = null)
+        private static LegacyResponse Failure(LegacyRequest request, string code, string message, Stopwatch sw = null)
         {
             sw?.Stop();
-            return new BridgeResponseEnvelope
+            return new LegacyResponse
             {
                 Ok = false,
                 RequestId = request.RequestId,
-                Error = new BridgeError
+                Error = new LegacyError
                 {
                     Code = code,
                     Message = message,
                     Recoverable = true
                 },
-                Metrics = new BridgeMetrics { ElapsedMs = sw?.ElapsedMilliseconds ?? 0 }
+                Metrics = new LegacyMetrics { ElapsedMs = sw?.ElapsedMilliseconds ?? 0 }
             };
         }
     }

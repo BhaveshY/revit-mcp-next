@@ -1,176 +1,206 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Architecture;
-using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
-using RevitMcpNext.Addin.Diagnostics;
-using RevitMcpNext.Contracts;
 
-namespace RevitMcpNext.Addin.Revit
+namespace RevitMcpNext.Addin
 {
-    internal sealed partial class RevitExternalEventHandler
+    /// <summary>
+    /// manage_document.new_project (W1 adapter of the old create_project_from_template; P-DOCS owns this file in wave 2).
+    /// Args: path (.rvt, required); template (path or name; default settings.defaultTemplate[year], else
+    /// %ProgramData%\Autodesk\RVT &lt;year&gt;\Templates\English\Default-Multi-Discipline_Metric.rte, else Revit's default
+    /// project template); overwrite; activate (default true: OpenAndActivateDocument after SaveAs).
+    /// An existing file at path needs a confirmed plan (rule file_overwrite).
+    /// </summary>
+    internal static class ProjectFromTemplateOps
     {
-        private BridgeResponseEnvelope HandleCreateProjectFromTemplate(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        [Op("manage_document.new_project")]
+        public static OpResult NewProject(RequestContext ctx)
         {
-            Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
-            if (!GetBool(payload, "confirm", false))
-            {
-                return Failure(request, "CONFIRMATION_REQUIRED", "revit.create_project_from_template requires confirm=true because it creates or overwrites a local RVT file.", sw);
-            }
-
-            string templatePathRaw = GetString(payload, "templatePath");
-            string outputPathRaw = GetString(payload, "outputPath");
-            if (string.IsNullOrWhiteSpace(templatePathRaw))
-            {
-                return Failure(request, "TEMPLATE_PATH_REQUIRED", "templatePath is required and must point to a local .rte file.", sw);
-            }
-            if (string.IsNullOrWhiteSpace(outputPathRaw))
-            {
-                return Failure(request, "OUTPUT_PATH_REQUIRED", "outputPath is required and must point to a disposable .rvt file.", sw);
-            }
-
-            string templatePath;
-            string outputPath;
-            try
-            {
-                templatePath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(templatePathRaw.Trim()));
-                outputPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(outputPathRaw.Trim()));
-            }
-            catch (Exception ex)
-            {
-                return Failure(request, "INVALID_MODEL_PATH", "templatePath and outputPath must be valid local paths. " + ex.Message, sw);
-            }
-
-            if (!string.Equals(Path.GetExtension(templatePath), ".rte", StringComparison.OrdinalIgnoreCase))
-            {
-                return Failure(request, "TEMPLATE_EXTENSION_REQUIRED", "templatePath must point to a Revit template file (.rte): " + templatePath, sw);
-            }
+            PayloadReader args = ctx.Args;
+            string outputPath = FullPath(args.ReqStr("path"), "path");
             if (!string.Equals(Path.GetExtension(outputPath), ".rvt", StringComparison.OrdinalIgnoreCase))
             {
-                return Failure(request, "OUTPUT_EXTENSION_REQUIRED", "outputPath must point to a Revit project file (.rvt): " + outputPath, sw);
+                throw OpException.InvalidArgs("path", "must be a Revit project file (.rvt), got " + outputPath,
+                    new Dictionary<string, object> { ["op"] = "new_project", ["path"] = Path.ChangeExtension(outputPath, ".rvt") });
             }
-            if (!File.Exists(templatePath))
-            {
-                return Failure(request, "TEMPLATE_NOT_FOUND", "Revit template file was not found: " + templatePath, sw);
-            }
-
             string outputDirectory = Path.GetDirectoryName(outputPath);
-            if (string.IsNullOrWhiteSpace(outputDirectory))
+            if (string.IsNullOrWhiteSpace(outputDirectory)) throw OpException.InvalidArgs("path", "must include a folder");
+
+            string templatePath = ResolveTemplate(ctx, args.Str("template"));
+            bool activate = args.Bool("activate", true);
+            bool exists = File.Exists(outputPath);
+            if (exists)
             {
-                return Failure(request, "OUTPUT_DIRECTORY_REQUIRED", "outputPath must include a parent directory: " + outputPath, sw);
+                OpResult plan = ctx.ConfirmOrPlan("file_overwrite",
+                    new Dictionary<string, object> { ["op"] = "new_project", ["overwrite"] = outputPath, ["template"] = templatePath },
+                    "new_project would overwrite the existing file " + Path.GetFileName(outputPath));
+                if (plan != null) return plan;
             }
 
-            bool overwrite = GetBool(payload, "overwrite", false);
-            bool outputExists = File.Exists(outputPath);
-            if (outputExists && !overwrite)
+            Directory.CreateDirectory(outputDirectory);
+            Document created = ctx.RevitApp.NewProjectDocument(templatePath);
+            if (created == null)
             {
-                return Failure(request, "OUTPUT_ALREADY_EXISTS", "Output RVT already exists. Pass overwrite=true only for a known disposable fixture: " + outputPath, sw);
+                throw new OpException(ErrorCodes.RevitRefused, "Revit did not create a project from " + templatePath + ".",
+                    new Dictionary<string, object> { ["apiMessage"] = "NewProjectDocument returned null" });
             }
 
-            Document createdDocument = null;
+            Document result;
             try
             {
-                Directory.CreateDirectory(outputDirectory);
-                createdDocument = app.Application.NewProjectDocument(templatePath);
-                if (createdDocument == null)
-                {
-                    return Failure(request, "PROJECT_CREATE_FAILED", "Revit did not create a project document from template: " + templatePath, sw);
-                }
-
-                var saveAsOptions = new SaveAsOptions
-                {
-                    OverwriteExistingFile = overwrite
-                };
-                createdDocument.SaveAs(outputPath, saveAsOptions);
-
-                Document resultDocument = ActivateCreatedProject(app, createdDocument, outputPath);
-                createdDocument = resultDocument;
-                Document activeDocument = app.ActiveUIDocument?.Document;
-                bool activated = IsExactDocumentIdentity(resultDocument, activeDocument, outputPath);
-                if (!activated)
-                {
-                    throw new InvalidOperationException(
-                        "Revit created the project, but the active UI document identity did not match the saved output. " +
-                        "Expected path: " + outputPath + ". No target confirmation was issued.");
-                }
-                long generation = _generations.GetGeneration(resultDocument);
-                string fingerprint = ComputeDocumentFingerprint(resultDocument);
-                string centralModelPath = GetDocumentCentralModelPath(resultDocument);
-                var data = new Dictionary<string, object>
-                {
-                    ["templatePath"] = templatePath,
-                    ["outputPath"] = outputPath,
-                    ["overwritten"] = outputExists,
-                    ["activated"] = activated,
-                    ["instanceId"] = _runtimeInstanceId,
-                    ["document"] = BuildDocumentSummary(resultDocument, activeDocument),
-                    ["activationConfirmation"] = new Dictionary<string, object>
-                    {
-                        ["confirmed"] = true,
-                        ["instanceId"] = _runtimeInstanceId,
-                        ["documentFingerprint"] = fingerprint,
-                        ["documentPath"] = resultDocument.PathName,
-                        ["centralModelPath"] = centralModelPath,
-                        ["generation"] = generation,
-                        ["uiActive"] = true
-                    },
-                    ["source"] = "revit-api"
-                };
-
-                return Success(request, data, sw, generation: generation);
+                created.SaveAs(outputPath, new SaveAsOptions { OverwriteExistingFile = exists });
+                result = activate ? Activate(ctx.App, created, outputPath) : created;
             }
             catch
             {
-                if (createdDocument != null && string.IsNullOrWhiteSpace(createdDocument.PathName))
+                CloseQuietly(created);
+                throw;
+            }
+
+            DocumentRegistry registry = ctx.Registry;
+            registry?.Rebuild(ctx.RevitApp, ctx.App);
+            ResponseDocOrNull(registry, result, out RevitMcpNext.Contracts.ResponseDoc doc);
+            bool activated = false;
+            try
+            {
+                Document active = ctx.App.ActiveUIDocument?.Document;
+                activated = active != null && registry != null && doc != null && registry.TryGetRid(active, out long activeRid) && activeRid == doc.Rid;
+            }
+            catch
+            {
+                activated = false;
+            }
+
+            var data = new Dictionary<string, object>
+            {
+                ["doc"] = doc == null ? null : new Dictionary<string, object> { ["rid"] = doc.Rid, ["key"] = doc.Key, ["title"] = doc.Title },
+                ["path"] = outputPath,
+                ["template"] = templatePath,
+                ["activated"] = activated,
+                ["overwritten"] = exists
+            };
+            string summary = "created project '" + (doc?.Title ?? Path.GetFileNameWithoutExtension(outputPath)) + "' from " +
+                             Path.GetFileName(templatePath) + (activated ? " (active in Revit)" : " (not activated)");
+            return OpResult.Success(data, summary).WithDoc(doc).WithOutput("doc", doc?.Rid);
+        }
+
+        /// <summary>Settings template, the English multi-discipline template of this year, then Revit's default template.</summary>
+        internal static string ResolveTemplate(RequestContext ctx, string requested)
+        {
+            int year = ctx.Year;
+            if (!string.IsNullOrWhiteSpace(requested))
+            {
+                string candidate = Environment.ExpandEnvironmentVariables(requested.Trim().Trim('"'));
+                if (candidate.IndexOfAny(new[] { '\\', '/' }) >= 0 || candidate.EndsWith(".rte", StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        createdDocument.Close(false);
-                    }
-                    catch
-                    {
-                        // Preserve the original Revit API failure.
-                    }
+                    string full = FullPath(candidate, "template");
+                    if (File.Exists(full)) return full;
+                    throw OpException.NotFound("template", "template", requested, TemplateCandidates(year).Take(5).Select(Path.GetFileName));
                 }
 
-                throw;
+                string match = TemplateCandidates(year).FirstOrDefault(path =>
+                    string.Equals(Path.GetFileNameWithoutExtension(path), candidate, StringComparison.OrdinalIgnoreCase));
+                if (match != null) return match;
+                throw OpException.NotFound("template", "template", requested, TemplateCandidates(year).Take(8).Select(Path.GetFileNameWithoutExtension));
+            }
+
+            string configured = ctx.Settings.DefaultTemplateFor(year);
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                string full = FullPath(configured, "settings.defaultTemplate");
+                if (File.Exists(full)) return full;
+                ctx.Warn(WarningCodes.SettingsInvalid, "settings.defaultTemplate." + year.ToString(CultureInfo.InvariantCulture) + " (" + full + ") does not exist; using the standard template.");
+            }
+
+            string english = Path.Combine(TemplatesRoot(year), "English", "Default-Multi-Discipline_Metric.rte");
+            if (File.Exists(english)) return english;
+
+            string revitDefault = null;
+            try { revitDefault = ctx.RevitApp.DefaultProjectTemplate; } catch { }
+            if (!string.IsNullOrWhiteSpace(revitDefault) && File.Exists(revitDefault)) return revitDefault;
+
+            string any = TemplateCandidates(year).FirstOrDefault();
+            if (any != null) return any;
+            throw OpException.NotFound("template", "template", "Default-Multi-Discipline_Metric", new string[0]);
+        }
+
+        private static void ResponseDocOrNull(DocumentRegistry registry, Document document, out RevitMcpNext.Contracts.ResponseDoc doc)
+        {
+            doc = null;
+            try
+            {
+                doc = registry?.Describe(document);
+            }
+            catch
+            {
+                doc = null;
             }
         }
 
-        private static Document ActivateCreatedProject(UIApplication app, Document createdDocument, string outputPath)
+        private static IEnumerable<string> TemplateCandidates(int year)
         {
-            Document activeDocument = app.ActiveUIDocument?.Document;
-            if (IsExactDocumentIdentity(createdDocument, activeDocument, outputPath))
+            string root = TemplatesRoot(year);
+            if (!Directory.Exists(root)) return new string[0];
+            try
             {
-                return activeDocument;
+                return Directory.GetFiles(root, "*.rte", SearchOption.AllDirectories)
+                    .OrderBy(path => path.IndexOf("\\English\\", StringComparison.OrdinalIgnoreCase) >= 0 ? 0 : 1)
+                    .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
             }
+            catch
+            {
+                return new string[0];
+            }
+        }
 
-            if (createdDocument != null)
-            {
-                createdDocument.Close(false);
-            }
+        private static string TemplatesRoot(int year)
+        {
+            string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            return Path.Combine(programData, "Autodesk", "RVT " + year.ToString(CultureInfo.InvariantCulture), "Templates");
+        }
 
-            UIDocument activatedDocument = app.OpenAndActivateDocument(outputPath);
-            if (activatedDocument?.Document == null)
+        /// <summary>Shows the saved project in the UI: closes the background copy and opens/activates the file.</summary>
+        private static Document Activate(UIApplication app, Document created, string outputPath)
+        {
+            Document active = app.ActiveUIDocument?.Document;
+            if (active != null && McpHome.PathsEqual(active.PathName, outputPath)) return active;
+            created.Close(false);
+            UIDocument opened = app.OpenAndActivateDocument(outputPath);
+            if (opened?.Document == null)
             {
-                throw new InvalidOperationException("Revit created the project but did not activate it in the UI: " + outputPath);
+                throw new OpException(ErrorCodes.RevitRefused, "Revit saved the project but did not show it: " + outputPath,
+                    new Dictionary<string, object> { ["apiMessage"] = "OpenAndActivateDocument returned null" });
             }
-            Document confirmedActiveDocument = app.ActiveUIDocument?.Document;
-            if (!IsExactDocumentIdentity(activatedDocument.Document, confirmedActiveDocument, outputPath))
-            {
-                throw new InvalidOperationException(
-                    "Revit opened the created project, but the active UI document did not match its exact path and fingerprint: " + outputPath);
-            }
+            return opened.Document;
+        }
 
-            return confirmedActiveDocument;
+        private static string FullPath(string raw, string param)
+        {
+            try
+            {
+                return Path.GetFullPath(Environment.ExpandEnvironmentVariables(raw.Trim().Trim('"')));
+            }
+            catch (Exception ex)
+            {
+                throw OpException.InvalidArgs(param, "is not a valid path (" + ex.Message + ")");
+            }
+        }
+
+        private static void CloseQuietly(Document document)
+        {
+            try
+            {
+                if (document != null && document.IsValidObject) document.Close(false);
+            }
+            catch
+            {
+                // Keep the original failure.
+            }
         }
     }
 }

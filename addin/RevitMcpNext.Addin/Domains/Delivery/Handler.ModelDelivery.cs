@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleCreateModelDeliveryFixture(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleCreateModelDeliveryFixture(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             try
             {
@@ -30,11 +30,11 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private BridgeResponseEnvelope HandlePreviewModelDelivery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandlePreviewModelDelivery(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             try
             {
-                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out BridgeResponseEnvelope failure);
+                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out LegacyResponse failure);
                 if (failure != null) return failure;
                 return Success(request, _modelDelivery.Preview(app, request.SessionId, target, request.Payload), sw, generation: target.Generation);
             }
@@ -44,11 +44,11 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private BridgeResponseEnvelope HandleInspectModelDelivery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleInspectModelDelivery(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             try
             {
-                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out BridgeResponseEnvelope failure);
+                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out LegacyResponse failure);
                 if (failure != null) return failure;
                 return Success(request, _modelDelivery.Inspect(app, target, request.Payload), sw, generation: target.Generation);
             }
@@ -58,11 +58,11 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private BridgeResponseEnvelope HandleExecuteModelDelivery(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleExecuteModelDelivery(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             try
             {
-                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out BridgeResponseEnvelope failure);
+                DeliveryTargetBinding target = ResolveDeliveryTarget(app, request, sw, out LegacyResponse failure);
                 if (failure != null) return failure;
                 return Success(request, _modelDelivery.Execute(app, request.SessionId, target, request.Payload), sw, generation: target.Generation);
             }
@@ -74,9 +74,9 @@ namespace RevitMcpNext.Addin.Revit
 
         private DeliveryTargetBinding ResolveDeliveryTarget(
             UIApplication app,
-            BridgeRequestEnvelope request,
+            LegacyRequest request,
             Stopwatch sw,
-            out BridgeResponseEnvelope failure)
+            out LegacyResponse failure)
         {
             failure = null;
             Document document = ResolveDocument(app, request);
@@ -100,7 +100,7 @@ namespace RevitMcpNext.Addin.Revit
                 GetDocumentCentralModelPath(document));
         }
 
-        private BridgeResponseEnvelope HandleGetModelDeliveryStatus(BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetModelDeliveryStatus(LegacyRequest request, Stopwatch sw)
         {
             try
             {
@@ -112,7 +112,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private BridgeResponseEnvelope HandleCancelModelDelivery(BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleCancelModelDelivery(LegacyRequest request, Stopwatch sw)
         {
             try
             {

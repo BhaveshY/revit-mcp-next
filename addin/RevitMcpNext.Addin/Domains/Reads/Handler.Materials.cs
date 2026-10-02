@@ -18,7 +18,7 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private BridgeResponseEnvelope HandleGetMaterialQuantities(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleGetMaterialQuantities(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document document = ResolveDocument(app, request);
             if (document == null)
@@ -26,10 +26,10 @@ namespace RevitMcpNext.Addin.Revit
                 return Failure(request, "NO_ACTIVE_DOCUMENT", "Open a Revit project document before calling revit.get_material_quantities.", sw);
             }
 
-            BridgeResponseEnvelope generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
+            LegacyResponse generationFailure = ValidateExpectedGeneration(request, document, sw, out long generation);
             if (generationFailure != null) return generationFailure;
 
-            var warnings = new List<BridgeWarning>();
+            var warnings = new List<LegacyWarning>();
             Dictionary<string, object> payload = request.Payload ?? new Dictionary<string, object>();
             Dictionary<string, object> filter = CloneDictionary(GetDictionary(payload, "filter"));
             IReadOnlyList<string> categoryFilters = GetStringList(payload, "categoryFilters");
@@ -75,7 +75,7 @@ namespace RevitMcpNext.Addin.Revit
 
             if (scanTruncated)
             {
-                warnings.Add(new BridgeWarning
+                warnings.Add(new LegacyWarning
                 {
                     Code = "MATERIAL_SCAN_TRUNCATED",
                     Message = "Material quantities were computed from the first " + elementsScanned.ToString(CultureInfo.InvariantCulture) + " scoped elements. Increase maxElementsScanned for a deeper scan."
@@ -118,7 +118,7 @@ namespace RevitMcpNext.Addin.Revit
                 data,
                 sw,
                 warnings,
-                new BridgeMetrics
+                new LegacyMetrics
                 {
                     ElapsedMs = sw.ElapsedMilliseconds,
                     CollectorElapsedMs = collectorSw.ElapsedMilliseconds,
@@ -133,7 +133,7 @@ namespace RevitMcpNext.Addin.Revit
             Element element,
             bool includePaint,
             Dictionary<string, MaterialQuantityAccumulator> accumulators,
-            List<BridgeWarning> warnings)
+            List<LegacyWarning> warnings)
         {
             bool found = AccumulateMaterialIds(document, element, usePaintMaterial: false, accumulators, warnings);
             if (includePaint)
@@ -149,7 +149,7 @@ namespace RevitMcpNext.Addin.Revit
             Element element,
             bool usePaintMaterial,
             Dictionary<string, MaterialQuantityAccumulator> accumulators,
-            List<BridgeWarning> warnings)
+            List<LegacyWarning> warnings)
         {
             ICollection<ElementId> materialIds;
             try

@@ -29,7 +29,7 @@ namespace RevitMcpNext.Addin.Revit
             return fields;
         }
 
-        private static string[] NormalizeFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
+        private static string[] NormalizeFields(IReadOnlyList<string> requested, string preset, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -60,7 +60,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_FIELD",
                         Message = "Field '" + field + "' is not supported by the current query projection."
@@ -71,7 +71,7 @@ namespace RevitMcpNext.Addin.Revit
             return normalized.Count == 0 ? new[] { "id" } : normalized.ToArray();
         }
 
-        private static string[] NormalizeRoomFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
+        private static string[] NormalizeRoomFields(IReadOnlyList<string> requested, string preset, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -99,7 +99,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedRoomField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_ROOM_FIELD",
                         Message = "Room field '" + field + "' is not supported by the current room projection."
@@ -166,7 +166,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string[] NormalizeWarningFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
+        private static string[] NormalizeWarningFields(IReadOnlyList<string> requested, string preset, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -208,7 +208,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedWarningField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_WARNING_FIELD",
                         Message = "Warning field '" + field + "' is not supported by the current warning projection."
@@ -240,7 +240,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string[] NormalizeViewFields(IReadOnlyList<string> requested, string preset, bool includeCropBox, List<BridgeWarning> warnings)
+        private static string[] NormalizeViewFields(IReadOnlyList<string> requested, string preset, bool includeCropBox, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -264,7 +264,7 @@ namespace RevitMcpNext.Addin.Revit
                 if (string.IsNullOrWhiteSpace(field)) continue;
                 if (string.Equals(field, "cropBox", StringComparison.OrdinalIgnoreCase) && !includeCropBox)
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "CROP_BOX_NOT_INCLUDED",
                         Message = "Field cropBox requires includeCropBox=true."
@@ -278,7 +278,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedViewField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_VIEW_FIELD",
                         Message = "View field '" + field + "' is not supported by the current view projection."
@@ -316,7 +316,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string[] NormalizeSheetFields(IReadOnlyList<string> requested, string preset, bool includePlacedViews, List<BridgeWarning> warnings)
+        private static string[] NormalizeSheetFields(IReadOnlyList<string> requested, string preset, bool includePlacedViews, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -340,7 +340,7 @@ namespace RevitMcpNext.Addin.Revit
                 if (string.IsNullOrWhiteSpace(field)) continue;
                 if (string.Equals(field, "placedViews", StringComparison.OrdinalIgnoreCase) && !includePlacedViews)
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "PLACED_VIEWS_NOT_INCLUDED",
                         Message = "Field placedViews requires includePlacedViews=true."
@@ -354,7 +354,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedSheetField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_SHEET_FIELD",
                         Message = "Sheet field '" + field + "' is not supported by the current sheet projection."
@@ -381,7 +381,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string[] NormalizeScheduleFields(IReadOnlyList<string> requested, string preset, bool includeFields, List<BridgeWarning> warnings)
+        private static string[] NormalizeScheduleFields(IReadOnlyList<string> requested, string preset, bool includeFields, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -405,7 +405,7 @@ namespace RevitMcpNext.Addin.Revit
                 if (string.IsNullOrWhiteSpace(field)) continue;
                 if (string.Equals(field, "fields", StringComparison.OrdinalIgnoreCase) && !includeFields)
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "SCHEDULE_FIELDS_NOT_INCLUDED",
                         Message = "Field fields requires includeFields=true or preset=fields."
@@ -419,7 +419,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedScheduleField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_SCHEDULE_FIELD",
                         Message = "Schedule field '" + field + "' is not supported by the current schedule projection."
@@ -451,7 +451,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string[] NormalizeCatalogFields(IReadOnlyList<string> requested, string preset, List<BridgeWarning> warnings)
+        private static string[] NormalizeCatalogFields(IReadOnlyList<string> requested, string preset, List<LegacyWarning> warnings)
         {
             string[] defaults;
             switch (preset)
@@ -488,7 +488,7 @@ namespace RevitMcpNext.Addin.Revit
                 }
                 else if (!IsSupportedCatalogField(field))
                 {
-                    warnings.Add(new BridgeWarning
+                    warnings.Add(new LegacyWarning
                     {
                         Code = "UNSUPPORTED_CATALOG_FIELD",
                         Message = "Catalog field '" + field + "' is not supported by the current catalog projection."

@@ -1,250 +1,321 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Autodesk.Revit.UI;
 using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Contracts;
 
-namespace RevitMcpNext.Addin.Revit
+namespace RevitMcpNext.Addin
 {
+    /// <summary>
+    /// The queue between pipe threads and the Revit UI thread (SPEC §9.4, D2 §5.4/§5.6). FIFO with an optional
+    /// dequeue filter (Idling fallback runs idle-safe ops only), execution tracking for health/snapshot, cooperative
+    /// cancel, and deferred completion: while an item's completion is deferred no other item starts.
+    /// Admission control and per-client round-robin are P-REL-ADDIN's (wave 2).
+    /// </summary>
     internal sealed class RevitRequestQueue
     {
-        private readonly ConcurrentQueue<QueuedRevitWorkItem> _queue = new ConcurrentQueue<QueuedRevitWorkItem>();
-        private ExternalEvent _externalEvent;
-        private long _enqueuedCount;
-        private long _dequeuedCount;
-        private long _cancelledCount;
-        private long _raiseCount;
-        private long _raiseNotAcceptedCount;
-        private DateTimeOffset? _lastEnqueuedAtUtc;
-        private DateTimeOffset? _lastDequeuedAtUtc;
-        private DateTimeOffset? _lastCancelledAtUtc;
-        private DateTimeOffset? _lastRaiseAtUtc;
-        private string _lastRaiseResult = "not-attached";
-        private readonly object _executionGate = new object();
-        private string _executingRequestId;
-        private string _executingOperation;
-        private DateTimeOffset? _executingSinceUtc;
-        private string _lastDialogId;
-        private string _lastDialogMessage;
-        private DateTimeOffset? _lastDialogAtUtc;
+        private readonly object _gate = new object();
+        private readonly LinkedList<QueuedRevitWorkItem> _pending = new LinkedList<QueuedRevitWorkItem>();
+        private ExternalEventPump _pump;
+        private ExecutingInfo _executing;
+        private QueuedRevitWorkItem _current;
+        private QueuedRevitWorkItem _deferred;
+        private long _enqueued;
+        private long _dequeued;
+        private long _cancelled;
 
-        public event Action<BridgeRequestEnvelope> RequestStarted;
+        /// <summary>Raised on the UI thread when an item starts executing.</summary>
+        public event Action<QueuedRevitWorkItem> RequestStarted;
 
-        public void AttachExternalEvent(ExternalEvent externalEvent)
+        public void AttachPump(ExternalEventPump pump)
         {
-            _externalEvent = externalEvent;
+            _pump = pump;
         }
 
-        public Task<BridgeResponseEnvelope> EnqueueAsync(BridgeRequestEnvelope envelope, CancellationToken cancellationToken)
+        /// <summary>Queues a request; the task completes with its response (or a cancellation failure).</summary>
+        public Task<BridgeResponse> EnqueueAsync(BridgeRequest request, CancellationToken cancellationToken)
         {
-            var item = new QueuedRevitWorkItem(envelope, cancellationToken);
-            Interlocked.Increment(ref _enqueuedCount);
-            _lastEnqueuedAtUtc = item.EnqueuedAtUtc;
-            _queue.Enqueue(item);
-            RaiseExternalEvent();
-
-            return item.Completion.Task;
+            return Enqueue(request, cancellationToken).Completion.Task;
         }
 
-        public bool TryDequeue(out QueuedRevitWorkItem item)
+        public QueuedRevitWorkItem Enqueue(BridgeRequest request, CancellationToken cancellationToken)
         {
-            while (_queue.TryDequeue(out item))
+            var item = new QueuedRevitWorkItem(request, cancellationToken);
+            if (item.IsCancelled) return item;
+            lock (_gate)
             {
-                if (item.TryBeginExecution())
-                {
-                    Interlocked.Increment(ref _dequeuedCount);
-                    _lastDequeuedAtUtc = DateTimeOffset.UtcNow;
-                    BeginExecution(item.Envelope.RequestId, item.Envelope.Operation);
-                    RequestStarted?.Invoke(item.Envelope);
-                    return true;
-                }
-                item.Dispose();
+                _pending.AddLast(item);
+                _enqueued++;
             }
+            item.MarkRaised();
+            _pump?.OnEnqueue();
+            return item;
+        }
 
+        /// <summary>
+        /// Takes the next pending item (UI thread). Returns false while a deferred completion is outstanding.
+        /// <paramref name="filter"/> skips (but keeps) items it rejects, e.g. non-idle-safe ops in the Idling fallback.
+        /// </summary>
+        public bool TryDequeue(out QueuedRevitWorkItem item, Func<QueuedRevitWorkItem, bool> filter = null)
+        {
             item = null;
-            return false;
+            lock (_gate)
+            {
+                if (_deferred != null) return false;
+                LinkedListNode<QueuedRevitWorkItem> node = _pending.First;
+                while (node != null)
+                {
+                    LinkedListNode<QueuedRevitWorkItem> next = node.Next;
+                    QueuedRevitWorkItem candidate = node.Value;
+                    if (!candidate.IsPending)
+                    {
+                        _pending.Remove(node);
+                        if (candidate.IsCancelled) _cancelled++;
+                    }
+                    else if (filter == null || filter(candidate))
+                    {
+                        _pending.Remove(node);
+                        if (candidate.TryBeginExecution())
+                        {
+                            item = candidate;
+                            _dequeued++;
+                            break;
+                        }
+                        if (candidate.IsCancelled) _cancelled++;
+                    }
+                    node = next;
+                }
+            }
+
+            if (item == null) return false;
+            try
+            {
+                RequestStarted?.Invoke(item);
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("queue", "A RequestStarted subscriber failed.", ex);
+            }
+            return true;
         }
 
-        public bool HasPending => !_queue.IsEmpty;
-
-        // Execution tracking lets the broker tell "Revit is running our (or another) request"
-        // apart from "Revit is not servicing the ExternalEvent at all" (modal dialog, active
-        // edit mode, long native command), so it can fail fast instead of waiting for the
-        // full request timeout.
-        public void BeginExecution(string requestId, string operation)
+        public bool HasPending
         {
-            lock (_executionGate)
+            get
             {
-                _executingRequestId = requestId;
-                _executingOperation = operation;
-                _executingSinceUtc = DateTimeOffset.UtcNow;
+                lock (_gate) return _pending.Any(item => item.IsPending);
             }
+        }
+
+        public int PendingCount
+        {
+            get
+            {
+                lock (_gate) return _pending.Count(item => item.IsPending);
+            }
+        }
+
+        /// <summary>Age of the oldest pending item in ms (0 when none).</summary>
+        public long OldestPendingAgeMs
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    QueuedRevitWorkItem oldest = _pending.FirstOrDefault(item => item.IsPending);
+                    return oldest?.AgeMs ?? 0;
+                }
+            }
+        }
+
+        public QueuedRevitWorkItem OldestPending
+        {
+            get
+            {
+                lock (_gate) return _pending.FirstOrDefault(item => item.IsPending);
+            }
+        }
+
+        /// <summary>True while an item or job step runs on the UI thread (including deferred completions).</summary>
+        public bool IsExecuting
+        {
+            get
+            {
+                lock (_gate) return _executing != null || _deferred != null;
+            }
+        }
+
+        /// <summary>The executing item (request or job step) for health and snapshot; null when idle.</summary>
+        public ExecutingInfo Executing
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    if (_executing == null) return null;
+                    return new ExecutingInfo
+                    {
+                        RequestId = _executing.RequestId,
+                        Op = _executing.Op,
+                        SinceUtc = _executing.SinceUtc,
+                        ClientKey = _executing.ClientKey,
+                        WriteTag = _executing.WriteTag,
+                        JobId = _executing.JobId,
+                        ElapsedMs = ElapsedSince(_executing.SinceUtc)
+                    };
+                }
+            }
+        }
+
+        /// <summary>The running queue item (null for job steps or when idle).</summary>
+        public QueuedRevitWorkItem Current
+        {
+            get { lock (_gate) return _current; }
+        }
+
+        /// <summary>The item whose completion is deferred, or null.</summary>
+        public QueuedRevitWorkItem Deferred
+        {
+            get { lock (_gate) return _deferred; }
+        }
+
+        /// <summary>Marks an item (or a job step when item is null) as executing on the UI thread.</summary>
+        public void BeginExecution(QueuedRevitWorkItem item, ExecutingInfo info)
+        {
+            lock (_gate)
+            {
+                _current = item;
+                _executing = info;
+            }
+            McpRuntime.Registry?.SetExecuting(info);
         }
 
         public void EndExecution()
         {
-            lock (_executionGate)
+            bool stillDeferred;
+            lock (_gate)
             {
-                _executingRequestId = null;
-                _executingOperation = null;
-                _executingSinceUtc = null;
+                _current = null;
+                _executing = null;
+                stillDeferred = _deferred != null;
             }
+            if (!stillDeferred) McpRuntime.Registry?.ClearExecuting();
         }
 
-        public void RecordDialog(string dialogId, string message)
+        /// <summary>Holds the queue until the item's deferred task completes (see RequestContext.DeferCompletion).</summary>
+        public void SetDeferred(QueuedRevitWorkItem item)
         {
-            lock (_executionGate)
-            {
-                _lastDialogId = string.IsNullOrWhiteSpace(dialogId) ? "(unnamed dialog)" : dialogId;
-                _lastDialogMessage = string.IsNullOrWhiteSpace(message)
-                    ? null
-                    : (message.Length > 240 ? message.Substring(0, 240) : message);
-                _lastDialogAtUtc = DateTimeOffset.UtcNow;
-            }
+            lock (_gate) _deferred = item;
+            _pump?.OnEnqueue();
         }
 
-        public void Raise()
+        public void ClearDeferred(QueuedRevitWorkItem item)
         {
-            RaiseExternalEvent();
+            lock (_gate)
+            {
+                if (ReferenceEquals(_deferred, item)) _deferred = null;
+            }
+            McpRuntime.Registry?.ClearExecuting();
         }
 
-        private void RaiseExternalEvent()
+        /// <summary>
+        /// cancel_request: "queued" (cancelled before it ran), "cooperative" (a running read was asked to yield),
+        /// "running_write" (writes are never interrupted) or "not_found".
+        /// </summary>
+        public string TryCancel(string requestId, string reason = null)
         {
-            Interlocked.Increment(ref _raiseCount);
-            _lastRaiseAtUtc = DateTimeOffset.UtcNow;
-            if (_externalEvent == null)
+            if (string.IsNullOrWhiteSpace(requestId)) return CancelOutcomes.NotFound;
+            QueuedRevitWorkItem running = null;
+            lock (_gate)
             {
-                _lastRaiseResult = "not-attached";
-                Interlocked.Increment(ref _raiseNotAcceptedCount);
-                DiagnosticsLogger.Info("Revit MCP request queued before ExternalEvent was attached.");
-                return;
-            }
-
-            ExternalEventRequest result = _externalEvent.Raise();
-            _lastRaiseResult = result.ToString();
-            if (result != ExternalEventRequest.Accepted && result != ExternalEventRequest.Pending)
-            {
-                Interlocked.Increment(ref _raiseNotAcceptedCount);
-                DiagnosticsLogger.Info("Revit MCP ExternalEvent raise returned " + result + ". Revit may be busy or blocked by a modal dialog.");
-            }
-        }
-
-        public bool TryCancelQueued(string requestId, string reason, string sessionId = null)
-        {
-            if (string.IsNullOrWhiteSpace(requestId)) return false;
-
-            foreach (QueuedRevitWorkItem item in _queue)
-            {
-                if (item.IsCancelled) continue;
-                if (!string.Equals(item.Envelope.RequestId, requestId, StringComparison.Ordinal)) continue;
-                if (sessionId != null &&
-                    !string.Equals(item.Envelope.SessionId ?? string.Empty, sessionId, StringComparison.Ordinal)) continue;
-
-                if (item.TryCancel("REQUEST_CANCELLED", string.IsNullOrWhiteSpace(reason)
-                    ? "The queued request was cancelled before Revit processed it."
-                    : "The queued request was cancelled before Revit processed it: " + reason))
+                foreach (QueuedRevitWorkItem item in _pending)
                 {
-                    Interlocked.Increment(ref _cancelledCount);
-                    _lastCancelledAtUtc = DateTimeOffset.UtcNow;
-                    return true;
+                    if (!string.Equals(item.RequestId, requestId, StringComparison.Ordinal)) continue;
+                    if (item.TryCancel(ErrorCodes.RequestCancelled, string.IsNullOrWhiteSpace(reason)
+                            ? "The queued request was cancelled before Revit processed it."
+                            : "The queued request was cancelled before Revit processed it: " + reason))
+                    {
+                        _cancelled++;
+                        return CancelOutcomes.Queued;
+                    }
                 }
+                if (_current != null && string.Equals(_current.RequestId, requestId, StringComparison.Ordinal)) running = _current;
+                else if (_deferred != null && string.Equals(_deferred.RequestId, requestId, StringComparison.Ordinal)) running = _deferred;
             }
 
-            return false;
+            if (running == null) return CancelOutcomes.NotFound;
+            string kind = running.Request.Kind;
+            if (kind == RequestKinds.Read || kind == RequestKinds.Ui || kind == RequestKinds.Control)
+            {
+                running.CancelRequested = true;
+                return CancelOutcomes.Cooperative;
+            }
+            return CancelOutcomes.RunningWrite;
         }
 
+        /// <summary>Fails every pending item (shutdown or startup failure).</summary>
         public void CancelAll(string code, string message)
         {
-            while (_queue.TryDequeue(out QueuedRevitWorkItem item))
+            List<QueuedRevitWorkItem> items;
+            lock (_gate)
             {
-                if (item.TrySetResult(Failure(item.Envelope, code, message)))
-                {
-                    Interlocked.Increment(ref _cancelledCount);
-                    _lastCancelledAtUtc = DateTimeOffset.UtcNow;
-                }
+                items = _pending.ToList();
+                _pending.Clear();
             }
+            foreach (QueuedRevitWorkItem item in items)
+            {
+                if (item.TryCancel(code, message)) Interlocked.Increment(ref _cancelled);
+            }
+            QueuedRevitWorkItem deferred;
+            lock (_gate)
+            {
+                deferred = _deferred;
+                _deferred = null;
+            }
+            deferred?.TrySetResult(BridgeResponse.Failure(deferred.RequestId, code, message));
         }
 
-        public Dictionary<string, object> GetDiagnosticsSnapshot()
+        public QueueHealth GetHealth()
         {
-            QueuedRevitWorkItem[] pending = _queue
-                .Where(item => item.State == QueuedRevitWorkState.Pending)
-                .ToArray();
-            DateTimeOffset now = DateTimeOffset.UtcNow;
-            QueuedRevitWorkItem oldest = pending.OrderBy(item => item.EnqueuedAtUtc).FirstOrDefault();
-
-            var snapshot = new Dictionary<string, object>
+            var health = new QueueHealth { Executing = Executing };
+            lock (_gate)
             {
-                ["pendingCount"] = pending.Length,
-                ["hasPending"] = pending.Length > 0,
-                ["enqueuedCount"] = Interlocked.Read(ref _enqueuedCount),
-                ["dequeuedCount"] = Interlocked.Read(ref _dequeuedCount),
-                ["cancelledCount"] = Interlocked.Read(ref _cancelledCount),
-                ["raiseCount"] = Interlocked.Read(ref _raiseCount),
-                ["raiseNotAcceptedCount"] = Interlocked.Read(ref _raiseNotAcceptedCount),
-                ["lastRaiseResult"] = _lastRaiseResult,
-                ["externalEventAttached"] = _externalEvent != null
-            };
-
-            AddTimestamp(snapshot, "lastEnqueuedAtUtc", _lastEnqueuedAtUtc);
-            AddTimestamp(snapshot, "lastDequeuedAtUtc", _lastDequeuedAtUtc);
-            AddTimestamp(snapshot, "lastCancelledAtUtc", _lastCancelledAtUtc);
-            AddTimestamp(snapshot, "lastRaiseAtUtc", _lastRaiseAtUtc);
-
-            lock (_executionGate)
-            {
-                snapshot["executing"] = _executingSinceUtc.HasValue;
-                if (_executingSinceUtc.HasValue)
+                foreach (QueuedRevitWorkItem item in _pending)
                 {
-                    if (_executingRequestId != null) snapshot["executingRequestId"] = _executingRequestId;
-                    if (_executingOperation != null) snapshot["executingOperation"] = _executingOperation;
-                    snapshot["executingForMs"] = Math.Max(0, (long)(now - _executingSinceUtc.Value).TotalMilliseconds);
-                }
-
-                if (_lastDialogAtUtc.HasValue)
-                {
-                    snapshot["lastDialogId"] = _lastDialogId;
-                    if (_lastDialogMessage != null) snapshot["lastDialogMessage"] = _lastDialogMessage;
-                    snapshot["lastDialogAgeMs"] = Math.Max(0, (long)(now - _lastDialogAtUtc.Value).TotalMilliseconds);
+                    if (!item.IsPending) continue;
+                    health.Pending++;
+                    string key = string.IsNullOrEmpty(item.ClientKey) ? "(unknown)" : item.ClientKey;
+                    health.ByClient.TryGetValue(key, out int count);
+                    health.ByClient[key] = count + 1;
                 }
             }
-
-            if (oldest != null)
-            {
-                snapshot["oldestPendingRequestId"] = oldest.Envelope.RequestId;
-                snapshot["oldestPendingOperation"] = oldest.Envelope.Operation;
-                snapshot["oldestPendingAgeMs"] = Math.Max(0, (long)(now - oldest.EnqueuedAtUtc).TotalMilliseconds);
-            }
-
-            return snapshot;
+            return health;
         }
 
-        private static void AddTimestamp(Dictionary<string, object> snapshot, string key, DateTimeOffset? value)
+        public Dictionary<string, object> GetCounters()
         {
-            if (value.HasValue)
+            lock (_gate)
             {
-                snapshot[key] = value.Value.ToUniversalTime().ToString("o");
+                return new Dictionary<string, object>
+                {
+                    ["enqueued"] = _enqueued,
+                    ["dequeued"] = _dequeued,
+                    ["cancelled"] = _cancelled
+                };
             }
         }
 
-        private static BridgeResponseEnvelope Failure(BridgeRequestEnvelope request, string code, string message)
+        private static long ElapsedSince(string isoUtc)
         {
-            return new BridgeResponseEnvelope
+            if (string.IsNullOrEmpty(isoUtc)) return 0;
+            if (!DateTime.TryParse(isoUtc, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime since))
             {
-                Ok = false,
-                RequestId = request.RequestId,
-                Error = new BridgeError
-                {
-                    Code = code,
-                    Message = message,
-                    Recoverable = true
-                }
-            };
+                return 0;
+            }
+            return Math.Max(0, (long)(DateTime.UtcNow - since).TotalMilliseconds);
         }
-
     }
 }

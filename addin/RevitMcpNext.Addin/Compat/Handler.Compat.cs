@@ -43,52 +43,6 @@ namespace RevitMcpNext.Addin.Revit
             return new ElementId(idValue);
         }
 
-        private static object GetPropertyValue(object target, string propertyName)
-        {
-            if (target == null || string.IsNullOrWhiteSpace(propertyName)) return null;
-            try
-            {
-                return target.GetType().GetProperty(propertyName)?.GetValue(target, null);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static object InvokeParameterless(object target, string methodName)
-        {
-            if (target == null || string.IsNullOrWhiteSpace(methodName)) return null;
-            try
-            {
-                return target.GetType().GetMethod(methodName, Type.EmptyTypes)?.Invoke(target, null);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static object InvokeMethod(object target, string methodName, params object[] args)
-        {
-            if (target == null || string.IsNullOrWhiteSpace(methodName)) return null;
-            try
-            {
-                Type[] argumentTypes = args?.Select(arg => arg?.GetType() ?? typeof(object)).ToArray() ?? Type.EmptyTypes;
-                return target.GetType().GetMethod(methodName, argumentTypes)?.Invoke(target, args);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static ElementId GetReflectedElementId(object target, string propertyName)
-        {
-            object value = GetPropertyValue(target, propertyName);
-            return value is ElementId elementId ? elementId : ElementId.InvalidElementId;
-        }
-
         private static bool IsValidElementId(ElementId id)
         {
             return id != null && GetElementIdValue(id) >= 0;

@@ -14,7 +14,7 @@ namespace RevitMcpNext.Addin.Revit
             "create_plan_view", "duplicate_view", "duplicate_sheet", "copy_view_annotations", "create_dimension", "update_dimension"
         }.Contains(type, StringComparer.Ordinal);
 
-        private BridgeResponseEnvelope HandleViewWorkflow(UIApplication app, BridgeRequestEnvelope request, Stopwatch sw)
+        private LegacyResponse HandleViewWorkflow(UIApplication app, LegacyRequest request, Stopwatch sw)
         {
             Document doc = ResolveDocument(app, request);
             if (doc == null) return Failure(request, "NO_ACTIVE_DOCUMENT", "Open the targeted project document.", sw);

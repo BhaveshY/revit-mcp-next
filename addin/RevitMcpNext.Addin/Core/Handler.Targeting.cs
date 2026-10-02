@@ -67,7 +67,7 @@ namespace RevitMcpNext.Addin.Revit
                 ["isActive"] = string.Equals(fingerprint, activeFingerprint, StringComparison.OrdinalIgnoreCase),
                 ["isWorkshared"] = document.IsWorkshared,
                 ["isModified"] = document.IsModified,
-                ["generation"] = _generations.GetGeneration(document)
+                ["generation"] = McpRuntime.Registry?.GetGeneration(document) ?? 0
             };
 
             if (!string.IsNullOrWhiteSpace(document.PathName)) summary["path"] = document.PathName;
@@ -117,7 +117,7 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static Document ResolveDocument(UIApplication app, BridgeRequestEnvelope request)
+        private static Document ResolveDocument(UIApplication app, LegacyRequest request)
         {
             string requestedFingerprint = request.DocumentFingerprint ?? GetString(request.Payload, "documentFingerprint");
             List<Document> documents = EnumerateDocuments(app).ToList();
@@ -168,7 +168,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static string ComputeDocumentFingerprint(Document document)
         {
-            return DocumentGenerationTracker.ComputeDocumentFingerprint(document);
+            return LegacyFingerprint.Compute(document);
         }
 
         private static View SafeActiveView(Document document)

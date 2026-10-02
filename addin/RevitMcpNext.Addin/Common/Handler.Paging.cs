@@ -18,12 +18,12 @@ namespace RevitMcpNext.Addin.Revit
 {
     internal sealed partial class RevitExternalEventHandler
     {
-        private static int ParseCursor(string cursor, List<BridgeWarning> warnings)
+        private static int ParseCursor(string cursor, List<LegacyWarning> warnings)
         {
             if (string.IsNullOrWhiteSpace(cursor)) return 0;
             if (int.TryParse(cursor, NumberStyles.Integer, CultureInfo.InvariantCulture, out int offset) && offset >= 0) return offset;
 
-            warnings.Add(new BridgeWarning
+            warnings.Add(new LegacyWarning
             {
                 Code = "INVALID_CURSOR",
                 Message = "Cursor '" + cursor + "' is invalid; returning the first page."
