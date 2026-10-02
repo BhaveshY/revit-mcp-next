@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
+  <!-- Points at the loader (SPEC section 9.2); the loader loads the payload of the runtime home. Same ClientId as 0.3.x so Revit's add-in trust carries over. -->
   <AddIn Type="Application">
     <Name>Revit MCP Next</Name>
     <Assembly>{{ASSEMBLY_PATH}}</Assembly>
     <ClientId>6F78E70D-BE13-4E0B-9B11-9E28F876AF71</ClientId>
-    <FullClassName>RevitMcpNext.Addin.RevitMcpApplication</FullClassName>
+    <FullClassName>RevitMcpNext.Loader.LoaderApplication</FullClassName>
     <VendorId>BHVY</VendorId>
     <VendorDescription>BhaveshY Revit MCP Next</VendorDescription>
   </AddIn>

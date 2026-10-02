@@ -155,8 +155,10 @@ if ($RevitYear -eq 2027) {
     $common += "-p:MSBuildWarningsAsMessages=MSB3277"
 }
 
-# 3. Payload.
-if (Test-Path -LiteralPath $scriptingOutput) { Remove-Item -LiteralPath $scriptingOutput -Recurse -Force }
+# 3. Payload (clean output folders, so stale files never end up in a payload or its payloadId).
+foreach ($folder in @($yearOutput, $loaderOutput)) {
+    if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
+}
 Invoke-DotnetBuild $DotnetPath (@("build", $project) + $common + @("-o", $yearOutput)) "Revit $RevitYear add-in build"
 
 # 4. Loader (the manifest target; it has no dependency on the payload).
