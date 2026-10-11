@@ -1,7 +1,7 @@
 {
   "name": "revit-mcp-next-monorepo",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Clean-room, token-efficient Revit MCP bridge for Claude Code and Codex.",
   "homepage": "https://github.com/BhaveshY/revit-mcp-next#readme",
   "bugs": {
@@ -17,25 +17,23 @@
   ],
   "scripts": {
     "build": "npm run build -w contracts && npm run build -w broker && npm run gen:catalog",
+    "build:bundle": "node broker/build/bundle.mjs",
+    "build:addin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-addin.ps1",
+    "build:all": "npm run build && npm run build:bundle && npm run build:addin -- -RevitYear 2024 && npm run build:addin -- -RevitYear 2027",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "gen:catalog": "node contracts/dist/catalog/emit.js",
     "e2e": "node e2e/run.mjs",
     "e2e:surface": "node e2e/run.mjs --profile surface",
-    "build:addin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-addin.ps1",
+    "validate:plugins": "node scripts/validate-plugins.mjs",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1",
+    "install:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1",
+    "uninstall:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/uninstall.ps1",
+    "doctor": "node artifacts/broker/revit-mcp-cli.mjs doctor",
     "check:integrations:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-python-integrations.ps1",
-    "install:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/install-windows.ps1",
-    "doctor:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor.ps1",
-    "sign:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-release.ps1",
-    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
-    "package:windows:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -DryRun",
-    "support:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect-support-bundle.ps1",
     "fixture:revit-project": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-revit-project-from-template.ps1",
-    "dev-cert:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-dev-signing-certificate.ps1",
     "revit:trust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-revit-addin-trust.ps1",
     "pyrevit:hosts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-pyrevit-hosts-cache.ps1",
-    "dynamo:warmup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-dynamo-profile.ps1",
-    "mcp:config": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/print-mcp-config.ps1",
-    "doctor:clients": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/doctor-clients.ps1"
+    "dynamo:warmup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-dynamo-profile.ps1"
   },
   "engines": {
     "node": ">=24"
