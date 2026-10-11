@@ -1,0 +1,4 @@
+{
+  "note": "Coverage gate exemptions (SPEC §13.5, D4 §8.10). Each entry: key (an Appendix B key such as \"links.link_ifc\", or \"mode:<preview|confirm|detail:full|page|from:r#>\"), optional years (default all), reason (why it cannot be covered yet) and expires (YYYY-MM-DD; an expired entry fails the gate). A key counts as covered on a year when a scenario called it successfully or got the error it declared (t.expectError). Keys whose min year is above the run year are n/a. Every key is referenced by a scenario as of 2026-10-11, so the list starts empty; add an entry only with the scenario run that shows why.",
+  "exemptions": []
+}

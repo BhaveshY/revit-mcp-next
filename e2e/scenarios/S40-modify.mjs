@@ -158,6 +158,19 @@ export default {
       }
     });
 
+    await t.step("cut / uncut a floor with an overlapping wall (Revit may refuse solid cuts between host elements)", async () => {
+      const floor = firstCreated(await t.call("create_elements", { op: "floor", level: L1, points: [[60000, -2000], [64000, -2000], [64000, 2000], [60000, 2000]] }));
+      const wall = firstCreated(await t.call("create_elements", { op: "wall", level: L1, start: [59000, 0], end: [65000, 0], height: 3000 }));
+      const cut = await t.call("modify_elements", { op: "cut", ids: [floor], with: wall }, { allowError: true });
+      t.assert(cut.status === "ok" || cut.code === "UNSUPPORTED_OP", `cut: ${cut.status} ${cut.code ?? ""} ${cut.summary.slice(0, 160)}`);
+      if (cut.status !== "ok") {
+        t.log(`Revit refused the solid cut: ${cut.summary.slice(0, 160)}`);
+        await t.expectError("modify_elements", { op: "cut", ids: [floor], with: wall }, "UNSUPPORTED_OP");
+      }
+      const uncut = await t.call("modify_elements", { op: "uncut", ids: [floor], with: wall });
+      t.assertEq(uncut.status, "ok", "uncut (or nothing to uncut)");
+    });
+
     await t.step(t.year >= 2027 ? "attach wall top to a floor (2027)" : "attach → UNSUPPORTED_VERSION on 2024", async () => {
       const wall = await t.call("create_elements", { op: "wall", level: L1, start: [50000, 0], end: [54000, 0], height: 2000 });
       if (t.year < 2027) {

@@ -84,6 +84,27 @@ export default {
       t.assertEq(shared.status, "ok", "link_rvt base_point");
     });
 
+    await t.step("link_ifc of an IFC exported from the host (Revit converts it to <file>.ifc.RVT)", async () => {
+      const folder = join(t.yearDir, "ifc80");
+      const exported = await settle(t, await t.call("export", { format: "ifc", folder }, { timeoutMs: 180_000, allowError: true }), "export ifc");
+      if (exported.status === "error") {
+        t.log(`IFC export unavailable (${exported.code}); link_ifc is checked through its NOT_FOUND path only`);
+        await t.expectError("links", { op: "link_ifc", path: join(folder, "missing.ifc") }, "NOT_FOUND");
+        return;
+      }
+      const ifc = readdirSync(folder).filter((f) => f.toLowerCase().endsWith(".ifc")).map((f) => join(folder, f))[0];
+      t.assert(ifc && existsSync(ifc), "an IFC was exported");
+      const r = await settle(t, await t.call("links", { op: "link_ifc", path: ifc }, { timeoutMs: 300_000, allowError: true }), "link_ifc");
+      if (r.status === "error") {
+        t.assertEq(r.code, "REVIT_REFUSED", `link_ifc: ${r.code} ${r.summary.slice(0, 200)}`);
+        t.log(`link_ifc refused by Revit: ${r.summary.slice(0, 200)}`);
+        await t.expectError("links", { op: "link_ifc", path: ifc }, "REVIT_REFUSED", { timeoutMs: 300_000 });
+        return;
+      }
+      t.assert(Array.isArray(r.json?.created) && r.json.created.length >= 1, "the IFC link instance was created");
+      t.assert(existsSync(`${ifc}.RVT`) || existsSync(`${ifc}.rvt`), "Revit wrote the .ifc.RVT cache next to the IFC");
+    });
+
     await t.step("link_cad and import_cad of a DWG exported from the host", async () => {
       const folder = join(t.yearDir, "dwg80");
       const level1 = await viewRef(t, "Level 1", folder);

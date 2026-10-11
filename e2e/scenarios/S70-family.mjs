@@ -152,6 +152,10 @@ export default {
       t.assert(notice, `TARGET_NOW notice: ${r.notices.join(" | ")}`);
       const n = /#(\d+)/.exec(notice)?.[1];
       t.assert(n, "doc number in TARGET_NOW");
+      const category = r.json?.category;
+      t.assert(typeof category === "string" && category.length > 0, "open reports the family category");
+      const same = await t.call("edit_family", { op: "set_category", category });
+      t.assertEq(same.json?.unchanged, true, "set_category to its own category changes nothing");
       const edit = await t.call("edit_family", { op: "add_param", name: "E2E_Open", data: "yesno", kind: "instance" });
       t.assertEq(edit.status, "ok", "direct add_param on the open family doc");
       const read = await t.call("read_family", {});
