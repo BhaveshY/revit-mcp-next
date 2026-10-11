@@ -463,8 +463,10 @@ export const ERROR_SPECS: ErrorSpec[] = [
     code: "TEMPLATE_CONTROLLED",
     meaning: "The view's template controls this setting.",
     nothingChanged: true,
-    details: "template",
+    details: "template, template_id? (set_parameters), view, setting|param",
     fix: [
+      // set_parameters on a view: write the same values on the template element instead (set_parameters has no view param).
+      { kind: "call", when: has("details.template_id"), tool: "set_parameters", args: { ids: ["${details.template_id}"], values: "${args.values}" }, note: "changes the template, which affects every view using it" },
       { kind: "same_call_with", when: has("details.template"), set: { view: "${details.template}" }, note: "changes the template, which affects every view using it" },
       { kind: "ask", text: "remove the view template (edit_views set template:'none') or change the template itself" },
     ],

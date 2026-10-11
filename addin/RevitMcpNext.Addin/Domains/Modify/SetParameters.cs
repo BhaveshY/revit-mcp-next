@@ -400,7 +400,7 @@ namespace RevitMcpNext.Addin
                 if (!controlled.Contains(parameter.Id.Value)) return;
                 throw new OpException(ErrorCodes.TemplateControlled,
                     "'" + key + "' of view '" + view.Name + "' is controlled by its view template '" + template.Name + "'; nothing was written.",
-                    new Dictionary<string, object> { ["template"] = template.Name, ["view"] = view.Name, ["param"] = key });
+                    new Dictionary<string, object> { ["template"] = template.Name, ["template_id"] = template.Id.Value, ["view"] = view.Name, ["param"] = key });
             }
             catch (Autodesk.Revit.Exceptions.ApplicationException)
             {
