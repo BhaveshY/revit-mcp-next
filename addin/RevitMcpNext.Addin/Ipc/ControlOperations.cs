@@ -151,20 +151,26 @@ namespace RevitMcpNext.Addin.Ipc
             {
                 return Ok(request, new Dictionary<string, object> { ["found"] = false, ["requestId"] = requestId });
             }
-            return Ok(request, entry.ToWire());
+            Dictionary<string, object> body = entry.ToWire();
+            // Committed but not saved yet: the write survives only while this Revit keeps the document open.
+            DateTime? saved = LastSavedUtc(entry.DocKey);
+            body["saved"] = entry.State == OutcomeStates.Committed && entry.CompletedAtUtc.HasValue && saved.HasValue && saved.Value > entry.CompletedAtUtc.Value;
+            return Ok(request, body);
+        }
+
+        private static DateTime? LastSavedUtc(string docKey)
+        {
+            DocumentRegistry registry = McpRuntime.Registry;
+            if (registry == null || string.IsNullOrWhiteSpace(docKey)) return null;
+            SnapshotDoc doc = registry.Current.Docs.FirstOrDefault(d => string.Equals(d.Key, docKey, StringComparison.OrdinalIgnoreCase));
+            return doc == null ? null : registry.LastSavedUtc(doc.Rid);
         }
 
         private static BridgeResponse RecentWrites(BridgeRequest request)
         {
             string docKey = Wire.GetString(request.Args, "docKey");
             int limit = (int)Math.Max(1, Math.Min(20, Wire.GetLong(request.Args, "limit") ?? 20));
-            DocumentRegistry registry = McpRuntime.Registry;
-            List<RecentWrite> writes = McpRuntime.Ledger?.Recent(docKey, limit, key =>
-            {
-                if (registry == null || string.IsNullOrWhiteSpace(key)) return null;
-                SnapshotDoc doc = registry.Current.Docs.FirstOrDefault(d => string.Equals(d.Key, key, StringComparison.OrdinalIgnoreCase));
-                return doc == null ? null : registry.LastSavedUtc(doc.Rid);
-            }) ?? new List<RecentWrite>();
+            List<RecentWrite> writes = McpRuntime.Ledger?.Recent(docKey, limit, LastSavedUtc) ?? new List<RecentWrite>();
             return Ok(request, writes);
         }
 
