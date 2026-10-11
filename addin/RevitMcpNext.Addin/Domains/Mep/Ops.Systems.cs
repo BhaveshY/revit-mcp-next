@@ -36,12 +36,13 @@ namespace RevitMcpNext.Addin
                     throw OpException.InvalidArgs(c.Args.Field("ids"), ModelKit.Describe(a) + " and " + ModelKit.Describe(b) + " have no free connectors of the same domain");
                 }
                 double gap = pair.Item1.Origin.DistanceTo(pair.Item2.Origin);
-                if (gap <= MepKit.Coincident)
+                bool runs = a is MEPCurve && b is MEPCurve;
+                if (gap <= MepKit.Coincident && (!runs || (MepKit.Aligned(pair.Item1, pair.Item2) && MepKit.SameSize(pair.Item1, pair.Item2))))
                 {
                     pair.Item1.ConnectTo(pair.Item2);
                     joined.Add(a.Id.Value + "-" + b.Id.Value);
                 }
-                else if (a is MEPCurve && b is MEPCurve)
+                else if (runs)
                 {
                     FamilyInstance fitting = MepKit.TryFitting(doc, pair.Item1, pair.Item2, out string error);
                     if (fitting == null)

@@ -29,7 +29,7 @@ namespace RevitMcpNext.Addin
             if (manager == null) return result;
             foreach (Connector connector in manager.Connectors)
             {
-                if (connector.ConnectorType == ConnectorType.End || connector.ConnectorType == ConnectorType.Curve && element is FamilyInstance) result.Add(connector);
+                if (connector.ConnectorType == ConnectorType.End || (connector.ConnectorType == ConnectorType.Logical && element is FamilyInstance)) result.Add(connector);
             }
             return result;
         }
@@ -72,8 +72,7 @@ namespace RevitMcpNext.Addin
         public static FamilyInstance TryFitting(Document doc, Connector a, Connector b, out string error)
         {
             error = null;
-            XYZ da = a.CoordinateSystem?.BasisZ, db = b.CoordinateSystem?.BasisZ;
-            bool aligned = da != null && db != null && Math.Abs(da.DotProduct(db)) > 0.9999;
+            bool aligned = Aligned(a, b);
             using (var sub = new SubTransaction(doc))
             {
                 sub.Start();
@@ -101,7 +100,21 @@ namespace RevitMcpNext.Addin
             }
         }
 
-        private static bool SameSize(Connector a, Connector b)
+        /// <summary>True when the two connectors point along the same axis (a straight joint: union or transition).</summary>
+        public static bool Aligned(Connector a, Connector b)
+        {
+            try
+            {
+                XYZ da = a.CoordinateSystem?.BasisZ, db = b.CoordinateSystem?.BasisZ;
+                return da != null && db != null && Math.Abs(da.DotProduct(db)) > 0.9999;
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                return false;
+            }
+        }
+
+        public static bool SameSize(Connector a, Connector b)
         {
             try
             {
