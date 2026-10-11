@@ -148,7 +148,10 @@ export function ritualProblems(r) {
       const token = call.args.confirm;
       if (typeof token !== "string" || !CONFIRM_TOKEN.test(token)) problems.push(`NOT APPLIED confirm token ${JSON.stringify(token)} is not a 6-char token`);
       const allowed = new Set(["confirm", "doc", spec?.discriminator].filter(Boolean));
-      const extra = Object.keys(call.args).filter((k) => !allowed.has(k));
+      const props = spec ? fullProperties(spec) : {};
+      // A fixed enum value such as run_csharp {"mode":"commit"} is not a copy of the original call.
+      const fixedEnum = (k) => Array.isArray(props[k]?.enum) && props[k].enum.includes(call.args[k]);
+      const extra = Object.keys(call.args).filter((k) => !allowed.has(k) && !fixedEnum(k));
       if (extra.length) problems.push(`NOT APPLIED confirm call re-sends ${extra.join(", ")}; it must be only op + confirm`);
     }
   }
