@@ -37,7 +37,8 @@ namespace RevitMcpNext.Addin.Undo
         public List<long> Created { get; } = new List<long>();
         public int DeletedCount { get; set; }
         public int ModifiedCount { get; set; }
-        public bool Compensated { get; set; }
+        /// <summary>The request id of the compensation write that deleted this write's elements (null when none).</summary>
+        public string CompensatedBy { get; set; }
 
         public string Label => (WriteTag ?? "w?") + " " + (Key ?? "write");
     }
@@ -128,10 +129,15 @@ namespace RevitMcpNext.Addin.Undo
 
         public static bool IsCreationKey(string key) => key != null && (CreationKeys.Contains(key) || key.StartsWith("create_elements.", StringComparison.Ordinal));
 
+        /// <summary>True while the compensation of this record is applied (an undone compensation revives the record).</summary>
+        public static bool IsCompensated(LedgerRecord record, ICollection<string> undoneRequests)
+        {
+            return record.CompensatedBy != null && (undoneRequests == null || !undoneRequests.Contains(record.CompensatedBy));
+        }
+
         /// <summary>Why a record cannot be compensated (null when it can).</summary>
         public static string IrreversibleReason(LedgerRecord record)
         {
-            if (record.Compensated) return record.Label + " was already compensated";
             if (record.Key == "undo") return record.Label + " is itself a compensation";
             if (record.Key == "run_csharp") return record.Label + " ran C# code, which is never compensated automatically";
             List<string> keys = record.OpKeys.Count > 0 ? record.OpKeys : new List<string> { record.Key };
@@ -154,11 +160,11 @@ namespace RevitMcpNext.Addin.Undo
             }
         }
 
-        public static void MarkCompensated(IEnumerable<LedgerRecord> records)
+        public static void MarkCompensated(IEnumerable<LedgerRecord> records, string compensationRequestId)
         {
             lock (Gate)
             {
-                foreach (LedgerRecord record in records) record.Compensated = true;
+                foreach (LedgerRecord record in records) record.CompensatedBy = compensationRequestId ?? "compensated";
             }
         }
 

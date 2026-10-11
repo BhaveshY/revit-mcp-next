@@ -135,7 +135,8 @@ namespace RevitMcpNext.Addin.Undo
         {
             HashSet<string> undone = stack.UndoneRequests();
             return UndoLedger.For(ctx.Rid)
-                .Where(r => string.Equals(r.ClientKey, ctx.ClientKey, StringComparison.Ordinal) && r.Key != "undo" && !r.Compensated && !undone.Contains(r.RequestId))
+                .Where(r => string.Equals(r.ClientKey, ctx.ClientKey, StringComparison.Ordinal) && r.Key != "undo" &&
+                            !UndoLedger.IsCompensated(r, undone) && !undone.Contains(r.RequestId))
                 .Take(count)
                 .ToList();
         }
@@ -181,7 +182,7 @@ namespace RevitMcpNext.Addin.Undo
             if (gone > 0) ctx.Warn(WarningCodes.IdsGone, gone.ToString(CultureInfo.InvariantCulture) + " element(s) created by " + labels + " no longer exist");
             if (existing.Count == 0)
             {
-                if (!ctx.IsPreview) UndoLedger.MarkCompensated(targets);
+                if (!ctx.IsPreview) UndoLedger.MarkCompensated(targets, ctx.RequestId);
                 return OpResult.Success(new Dictionary<string, object> { ["compensated"] = targets.Select(t => (object)t.Label).ToList(), ["deleted"] = 0 },
                     "nothing left to compensate: the elements " + labels + " created are already gone");
             }
@@ -210,7 +211,7 @@ namespace RevitMcpNext.Addin.Undo
                 RawArgs = ctx.Request.Args ?? new Dictionary<string, object>()
             };
             OpResult result = ChangeEngine.Execute(ctx, new List<PlannedOp> { op }, Naming.Compensation(ctx.WriteTag), isChangeSet: false, setName: null);
-            if (result.Ok && result.NeedsConfirm == null && !ctx.IsPreview) UndoLedger.MarkCompensated(targets);
+            if (result.Ok && result.NeedsConfirm == null && !ctx.IsPreview) UndoLedger.MarkCompensated(targets, ctx.RequestId);
             return result;
         }
 
