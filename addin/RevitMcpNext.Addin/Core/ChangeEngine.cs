@@ -36,6 +36,8 @@ namespace RevitMcpNext.Addin
         public ElementId Primary { get; set; }
         public string PendingRule { get; set; }
         public object PendingPlan { get; set; }
+        /// <summary>Before-values of what the op changed (move/rotate/param:&lt;Name&gt;/...), for undo compensation.</summary>
+        public List<ModifiedDetail> Details { get; set; } = new List<ModifiedDetail>();
 
         internal static OpOutcome From(PlannedOp op, ChangeContext c)
         {
@@ -54,7 +56,8 @@ namespace RevitMcpNext.Addin
                 Data = c.DataValue,
                 Primary = c.PrimaryId,
                 PendingRule = c.PendingRule,
-                PendingPlan = c.PendingPlan
+                PendingPlan = c.PendingPlan,
+                Details = c.ModifiedDetails.ToList()
             };
         }
     }
@@ -168,6 +171,29 @@ namespace RevitMcpNext.Addin
             return new PlannedOp { Index = index, Key = key, Meta = meta, Binding = binding, RawArgs = args };
         }
 
+        /// <summary>
+        /// Raised on the UI thread after a write's group was assimilated (committed), with every op's outcome including
+        /// its <see cref="OpOutcome.Details"/>. Subscribers (the UndoLedger) must not throw; failures are logged.
+        /// </summary>
+        internal static event Action<RequestContext, IReadOnlyList<OpOutcome>> Committed;
+
+        private static void RaiseCommitted(RequestContext ctx, List<OpOutcome> outcomes)
+        {
+            Action<RequestContext, IReadOnlyList<OpOutcome>> handlers = Committed;
+            if (handlers == null) return;
+            foreach (Action<RequestContext, IReadOnlyList<OpOutcome>> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(ctx, outcomes);
+                }
+                catch (Exception ex)
+                {
+                    RevitMcpNext.Addin.Diagnostics.DiagnosticsLogger.Debug("engine", "A Committed subscriber failed: " + ex.Message);
+                }
+            }
+        }
+
         /// <summary>Runs the ops (in order, as one undo unit) and applies the blast/confirm/preview semantics.</summary>
         internal static OpResult Execute(RequestContext ctx, List<PlannedOp> ops, string groupName, bool isChangeSet, string setName)
         {
@@ -231,6 +257,7 @@ namespace RevitMcpNext.Addin
                         throw new OpException(ErrorCodes.RevitTransactionRolledBack, "Revit did not commit '" + groupName + "' (" + status + ").",
                             new Dictionary<string, object> { ["status"] = status.ToString() });
                     }
+                    RaiseCommitted(ctx, outcomes);
                     return Applied(ctx, outcomes, totals, isChangeSet, setName);
                 }
             }

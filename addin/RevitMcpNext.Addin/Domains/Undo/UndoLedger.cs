@@ -23,6 +23,8 @@ namespace RevitMcpNext.Addin.Undo
         public DateTime AtUtc { get; set; }
         /// <summary>Elements the write created and did not delete again (in creation order).</summary>
         public List<long> Created { get; } = new List<long>();
+        /// <summary>Before-values the write's ops recorded (ChangeEngine.Committed); input for future compensation of edits.</summary>
+        public List<ModifiedDetail> Details { get; } = new List<ModifiedDetail>();
         public int DeletedCount { get; set; }
         public int ModifiedCount { get; set; }
         /// <summary>The request id of the compensation write that deleted this write's elements (null when none).</summary>
@@ -37,7 +39,7 @@ namespace RevitMcpNext.Addin.Undo
     /// the request's op keys. Compensation is exact only where the inverse is known from these facts: writes whose ops
     /// all create new elements are undone by deleting what they created. Writes that changed or deleted existing
     /// elements (moves, parameters, types, deletes, purge, family loads, code) are irreversible by compensation, since
-    /// before-values are not recorded here (see the open request to pass ChangeContext.ModifiedDetails to the ledger).
+    /// their before-values (ChangeEngine.Committed fills LedgerRecord.Details) are recorded but not yet replayed.
     /// In memory per Revit session (Revit's undo stack is too).
     /// </summary>
     internal static class UndoLedger
@@ -75,6 +77,7 @@ namespace RevitMcpNext.Addin.Undo
                 if (ReferenceEquals(_attachedTo, registry)) return true;
                 if (_attachedTo != null) _attachedTo.DocumentChangeRecorded -= OnRecorded;
                 registry.DocumentChangeRecorded += OnRecorded;
+                if (_attachedTo == null) ChangeEngine.Committed += OnCommitted;
                 _attachedTo = registry;
                 Records.Clear();
             }
@@ -119,6 +122,22 @@ namespace RevitMcpNext.Addin.Undo
             lock (Gate)
             {
                 foreach (LedgerRecord record in records) record.CompensatedBy = compensationRequestId ?? "compensated";
+            }
+        }
+
+        /// <summary>Adds the ops' before-values to the record of the committed write (recorded by OnRecorded at commit).</summary>
+        private static void OnCommitted(RequestContext ctx, IReadOnlyList<OpOutcome> outcomes)
+        {
+            if (ctx == null || outcomes == null || string.IsNullOrEmpty(ctx.RequestId)) return;
+            lock (Gate)
+            {
+                if (!Records.TryGetValue(ctx.Rid, out List<LedgerRecord> list)) return;
+                LedgerRecord record = list.LastOrDefault(r => r.RequestId == ctx.RequestId);
+                if (record == null) return;
+                foreach (OpOutcome outcome in outcomes)
+                {
+                    if (outcome?.Details != null) record.Details.AddRange(outcome.Details);
+                }
             }
         }
 
