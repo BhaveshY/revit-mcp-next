@@ -1,5 +1,7 @@
-// Tool module for `list`. Works through the default handler for its op kinds (framework/defaults.ts).
-// The owning wave-2 lane adds prepare/handle/finish hooks here when the defaults are not enough.
+// Tool module for `list` (P-READ). The add-in handler does the work through the default read handler
+// (framework/defaults.ts: doc resolution, pages p#, handles r#, READ_STILL_RUNNING cache). The prepare hook only
+// records the first generation this session saw for the target doc, so get_changes {since:"session"} has a start.
 import type { ToolModule } from "../framework/types.js";
+import { noteTarget } from "./get_changes.js";
 
-export const module: ToolModule = { name: "list" };
+export const module: ToolModule = { name: "list", prepare: noteTarget };

@@ -28,7 +28,9 @@ namespace RevitMcpNext.Addin
             if (!ctx.Args.Has("view") && ctx.Args.Bool("hidden")) ctx.Warn(WarningCodes.ParamIgnored, "hidden applies only with view=");
 
             Document searchDoc = LinkDocOrHost(ctx, host);
-            List<long> selector = ReadKit.CombinedSelector(ctx, searchDoc);
+            // Handle pages carry the id slice in ids; the original from= (e.g. 'selection') must not narrow it again.
+            bool handlePage = ReadKit.IsHandlePage(ctx) && ctx.Args.Has("ids");
+            List<long> selector = handlePage ? ReadKit.SelectorIds(ctx, searchDoc, "ids") : ReadKit.CombinedSelector(ctx, searchDoc);
             PayloadReader filterArgs = selector == null ? ctx.Args : ReadKit.WithIds(ctx, selector);
             ElementQuery query = ElementQuery.Compile(host, filterArgs, ctx, ctx.UiDoc);
             var rowOptions = new RowOptions { Full = full, LinkTransform = query.IsLink ? query.LinkTransform : null };
@@ -36,7 +38,7 @@ namespace RevitMcpNext.Addin
             string what = What(query);
 
             // Page over a stored handle: rows for exactly this id slice, in handle order.
-            if (ReadKit.IsHandlePage(ctx) && selector != null)
+            if (handlePage && selector != null)
             {
                 List<Element> slice = ReadKit.Existing(ctx, query.Doc, selector);
                 int pageOffset = Math.Max(0, ctx.Args.IntOpt("page_offset") ?? 0);
