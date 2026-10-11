@@ -169,6 +169,12 @@
     "Site Tags": "OST_SiteTags"
   },
   "parameters": {
+    "Base Level": ["FAMILY_BASE_LEVEL_PARAM"],
+    "Top Level": ["FAMILY_TOP_LEVEL_PARAM"],
+    "Elevation from Level": ["INSTANCE_ELEVATION_PARAM"],
+    "Reference Level": ["INSTANCE_REFERENCE_LEVEL_PARAM", "RBS_START_LEVEL_PARAM"],
+    "Schedule Level": ["INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM"],
+    "Default Thickness": ["FLOOR_ATTR_DEFAULT_THICKNESS_PARAM", "ROOF_ATTR_DEFAULT_THICKNESS_PARAM"],
     "Mark": ["ALL_MODEL_MARK"],
     "Comments": ["ALL_MODEL_INSTANCE_COMMENTS"],
     "Type Mark": ["WINDOW_TYPE_ID", "ALL_MODEL_TYPE_MARK"],
@@ -227,10 +233,6 @@
     "Room Bounding": ["WALL_ATTR_ROOM_BOUNDING"],
     "Image": ["ALL_MODEL_IMAGE"],
     "Type Image": ["ALL_MODEL_TYPE_IMAGE"],
-    "Base Level": ["FAMILY_BASE_LEVEL_PARAM"],
-    "Top Level": ["FAMILY_TOP_LEVEL_PARAM"],
-    "Schedule Level": ["INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM"],
-    "Reference Level": ["INSTANCE_REFERENCE_LEVEL_PARAM", "RBS_START_LEVEL_PARAM"],
     "Start Level Offset": ["STRUCTURAL_BEAM_END0_ELEVATION"],
     "End Level Offset": ["STRUCTURAL_BEAM_END1_ELEVATION"],
     "Structural Usage": ["INSTANCE_STRUCT_USAGE_PARAM"],
@@ -238,7 +240,6 @@
     "Function": ["FUNCTION_PARAM"],
     "Rough Width": ["FAMILY_ROUGH_WIDTH_PARAM"],
     "Rough Height": ["FAMILY_ROUGH_HEIGHT_PARAM"],
-    "Elevation from Level": ["INSTANCE_ELEVATION_PARAM"],
     "Limit Offset": ["ROOM_UPPER_OFFSET"],
     "Upper Limit": ["ROOM_UPPER_LEVEL"],
     "Unbounded Height": ["ROOM_HEIGHT"],
@@ -275,7 +276,6 @@
     "Assembly Description": ["UNIFORMAT_DESCRIPTION"],
     "Moves With Nearby Elements": ["INSTANCE_MOVES_WITH_GRID_PARAM"],
     "Host": ["INSTANCE_FREE_HOST_PARAM"],
-    "Default Thickness": ["FLOOR_ATTR_DEFAULT_THICKNESS_PARAM", "ROOF_ATTR_DEFAULT_THICKNESS_PARAM"],
     "Edited by": ["EDITED_BY"],
     "Design Option": ["DESIGN_OPTION_ID"]
   }
