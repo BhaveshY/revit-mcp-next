@@ -503,6 +503,8 @@ export const ERROR_SPECS: ErrorSpec[] = [
     nothingChanged: true,
     details: "path? (suggested)",
     fix: [
+      // A family doc (edit_family save) is saved with edit_family save_as, a project with manage_document save_as.
+      { kind: "ask", when: eq("tool", "edit_family"), text: "tell me where to save the family (.rfa path), then I call edit_family save_as with that path" },
       { kind: "call", when: has("details.path"), tool: "manage_document", args: { op: "save_as", path: "${details.path}" } },
       { kind: "ask", text: "tell me where to save it, then I call manage_document save_as with that path" },
     ],
