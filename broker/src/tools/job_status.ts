@@ -30,6 +30,15 @@ function asOriginal(ctx: ToolContext, tool: string, args: Record<string, unknown
   return original.outcomeFrom(r);
 }
 
+/** A finished job's result like the original call, including the tool module's finish hook (e.g. model_delivery tokens). */
+async function jobResult(ctx: ToolContext, tool: string, args: Record<string, unknown>, key: string, response: BridgeResponse, instance: { instanceId: string; year: number; pid: number } | null): Promise<ToolOutcome> {
+  const original = ctx.forCall(tool, args);
+  const r: AddinResult = { ...response, job: null, key, instanceId: instance?.instanceId, year: instance?.year, pid: instance?.pid };
+  const outcome = original.outcomeFrom(r);
+  const finish = ctx.services.tools.module(tool)?.finish;
+  return finish ? finish(original, r, outcome) : outcome;
+}
+
 function toolOfKey(key: string | undefined, fallback: string): string {
   if (!key) return fallback;
   const tool = key.split(".")[0];
@@ -83,7 +92,7 @@ async function jobStatus(ctx: ToolContext, id: string): Promise<ToolOutcome> {
     const response = await ctx.services.results.wait(job.cacheKey, waitMs(ctx));
     if (response) {
       ctx.services.results.delete(job.cacheKey);
-      return asOriginal(ctx, job.tool, job.args, job.key, response, inst);
+      return jobResult(ctx, job.tool, job.args, job.key, response, inst);
     }
     const entry = ctx.services.results.get(job.cacheKey);
     if (!entry) return ctx.fail("JOB_UNKNOWN", `the result of ${id} (${job.what}) is gone (results are kept for 10 minutes); repeat the original read`);
@@ -109,7 +118,7 @@ async function jobStatus(ctx: ToolContext, id: string): Promise<ToolOutcome> {
     return ctx.failFrom(polled.failure);
   }
   if (polled.terminal) {
-    if (polled.result) return asOriginal(ctx, job.tool, job.args, job.key, polled.result, inst);
+    if (polled.result) return jobResult(ctx, job.tool, job.args, job.key, polled.result, inst);
     return stateOnly(ctx, id, job.what, polled.status?.state ?? "succeeded");
   }
   return {
@@ -123,7 +132,7 @@ async function jobStatus(ctx: ToolContext, id: string): Promise<ToolOutcome> {
 
 async function finishedOrInterrupted(ctx: ToolContext, id: string, instanceId: string, jobId: string, tool: string, args: Record<string, unknown>, key: string, what: string): Promise<ToolOutcome> {
   const record = await readJobRecord(ctx.services.home, instanceId, jobId);
-  if (record?.result) return asOriginal(ctx, tool, args, key, record.result, null);
+  if (record?.result) return jobResult(ctx, tool, args, key, record.result, null);
   if (record && record.state !== "queued" && record.state !== "running") return stateOnly(ctx, id, what, record.state);
   const live = (await ctx.instances()).some((i) => i.instanceId === instanceId);
   if (live) return ctx.fail("JOB_UNKNOWN", `Revit no longer knows job ${id} (${what}) and kept no record of it`);
