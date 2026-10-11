@@ -344,7 +344,7 @@ namespace RevitMcpNext.Addin
             else ids.AddRange(target.Instances);
             WorksharingGuard.EnsureEditable(doc, ids.Concat(target.Instances));
             ICollection<ElementId> deleted = c.Delete(ids);
-            c.Data(new Dictionary<string, object> { ["removed"] = target.Name, ["instances"] = target.Instances.Count, ["deleted"] = deleted.Count });
+            c.Data(new Dictionary<string, object> { ["removed"] = target.Name, ["instances"] = target.Instances.Count, ["deleted_total"] = deleted.Count });
             c.Summary("removed the link " + target.Name + " (" + target.Instances.Count.ToString(CultureInfo.InvariantCulture) + " instance(s))");
         }
 

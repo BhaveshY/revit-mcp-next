@@ -264,11 +264,11 @@ namespace RevitMcpNext.Addin
             return OpResult.Success(data, summary).WithDoc(before);
         }
 
-        /// <summary>Another open, saved document to activate before closing the active one (projects first).</summary>
+        /// <summary>Another open, saved local document to activate before closing the active one (projects first; cloud models are switched to in Revit only).</summary>
         private static Document PickOtherDocument(RequestContext ctx, Document target)
         {
             return DocFiles.OpenDocuments(ctx.RevitApp, target)
-                .Where(document => !string.IsNullOrWhiteSpace(DocFiles.SafePath(document)))
+                .Where(document => !string.IsNullOrWhiteSpace(DocFiles.SafePath(document)) && !SafeCloud(document))
                 .OrderBy(document => document.IsFamilyDocument ? 1 : 0)
                 .FirstOrDefault();
         }

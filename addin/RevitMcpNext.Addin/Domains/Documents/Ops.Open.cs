@@ -19,7 +19,7 @@ namespace RevitMcpNext.Addin
     /// <item>activate (default true): OpenAndActivateDocument (shown in the UI, re-pins); false: OpenDocumentFile (background).</item>
     /// <item>An already open file is returned (and activated when asked) instead of opened twice.</item>
     /// </list>
-    /// The broker runs it as a job (asJob) so a slow open (upgrade, large central) returns j# at the call budget.
+    /// The open is one blocking Revit call (job:auto); a slow open past the call budget returns WRITE_STILL_RUNNING w#.
     /// </summary>
     internal static class DocumentOpenOps
     {

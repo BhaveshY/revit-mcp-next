@@ -14,7 +14,7 @@ namespace RevitMcpNext.Addin
     /// %ProgramData%\Autodesk\RVT &lt;year&gt;\Templates\English\Default-Multi-Discipline_Metric.rte, else Revit's default
     /// project template); overwrite; activate (default true: OpenAndActivateDocument after SaveAs; the broker re-pins
     /// with TARGET_NOW). An existing file at path needs a confirmed plan (rule file_overwrite); preview returns the
-    /// static plan. The broker runs it as a job so a slow template load returns j# at the call budget.
+    /// static plan. The template load and save are blocking Revit calls (job:auto).
     /// </summary>
     internal static class ProjectFromTemplateOps
     {
