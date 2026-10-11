@@ -213,7 +213,7 @@ Warnings never fail a call: REVIT_WARNING, REVIT_DIALOG_ANSWERED, VALUE_CLAMPED,
 |---|---|
 | What is open, target, levels, busy/dialog | `status {}` |
 | Choose the document | `set_target {"doc":"#2"}` |
-| List levels, views, sheets, types, families, rooms, materials, links... | `list {"kind":"levels"}` (33 kinds) |
+| List levels, views, sheets, types, families, rooms, materials, links... | `list {"kind":"levels"}` (34 kinds) |
 | Find elements, count, group | `find_elements {"category":["Doors"],"level":"Level 1"}` |
 | Parameters, geometry, relations of elements | `describe_elements {"from":"r3"}` |
 | View settings (scale, template, crop, range) | `get_view {"view":"Level 1"}` |
