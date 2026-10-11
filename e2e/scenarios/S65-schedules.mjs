@@ -123,7 +123,7 @@ export default {
       await t.call("edit_schedules", { op: "set_options", schedule: "S65 Doors", itemize: false });
       const grouped = await t.call("read_schedule", { schedule: "S65 Doors" });
       t.assert(grouped.notices.some((n) => /not itemized/.test(n)), "not itemized named in the notice");
-      await t.call("edit_schedules", { op: "set_options", schedule: "S65 Doors", itemize: true, totals: true });
+      await t.call("edit_schedules", { op: "set_options", schedule: "S65 Doors", itemize: true });
     });
 
     await t.step("paging with limit 1 follows the more: token", async () => {
@@ -162,8 +162,11 @@ export default {
     });
 
     await t.step("set_options rename; duplicate", async () => {
-      const ren = await t.call("edit_schedules", { op: "set_options", schedule: "S65 Doors", name: "S65 Doors All" });
+      const ren = await t.call("edit_schedules", { op: "set_options", schedule: "S65 Doors", name: "S65 Doors All", totals: true });
       t.assertEq(ren.json.schedule.name, "S65 Doors All", "renamed");
+      t.assertEq(ren.json.schedule.totals, true, "grand totals on");
+      const read = await t.call("read_schedule", { schedule: "S65 Doors All" });
+      t.assert(tableOf(read.json.rows).cols[0] === "id", "the grand total row does not break the id column");
       const dup = await t.call("edit_schedules", { op: "duplicate", schedule: "S65 Doors All", name: "S65 Doors Copy" });
       t.assertEq(dup.json.created.length, 1, "duplicate created");
       t.assertEq(dup.json.schedule.fields.join(","), ren.json.schedule.fields.join(","), "same fields");

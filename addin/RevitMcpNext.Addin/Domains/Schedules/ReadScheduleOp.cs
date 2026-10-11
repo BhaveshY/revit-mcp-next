@@ -79,6 +79,14 @@ namespace RevitMcpNext.Addin
             int limit = args.IntClamped("limit", DefaultLimit, 1, MaxLimit, (code, text) => ctx.Warn(code, text));
             int offset = Math.Max(0, args.Int("offset", 0));
 
+            try
+            {
+                if (schedule.IsDataOutOfDate()) schedule.RefreshData();
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                // Refreshing is not possible here (e.g. outside a modifiable context); the cells are read as they are.
+            }
             TableSectionData body = schedule.GetTableData().GetSectionData(SectionType.Body);
             int rowCount = body?.NumberOfRows ?? 0;
             int columnCount = body?.NumberOfColumns ?? 0;
@@ -113,11 +121,17 @@ namespace RevitMcpNext.Addin
             // Ids: only through a unique, visible key field of an itemized schedule (C7).
             string reason;
             Dictionary<string, long> byKey = KeyMap(ctx, doc, schedule, visible, out int keyColumn, out reason, out List<ElementId> elementIds);
+            var summaryRows = new HashSet<int>();
+            for (int index = 0; index < rows.Count; index++)
+            {
+                if (IsSummaryRow(schedule.Definition, rows[index])) summaryRows.Add(index);
+            }
             if (byKey != null)
             {
-                foreach (List<object> row in rows)
+                for (int index = 0; index < rows.Count; index++)
                 {
-                    string key = Convert.ToString(row[keyColumn], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+                    if (summaryRows.Contains(index)) continue;
+                    string key = Convert.ToString(rows[index][keyColumn], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
                     if (key.Length == 0) continue;
                     if (!byKey.ContainsKey(key))
                     {
@@ -129,14 +143,15 @@ namespace RevitMcpNext.Addin
             }
 
             var table = new TableBuilder(byKey != null ? new[] { "id" }.Concat(headings) : headings) { Total = total };
-            foreach (List<object> row in rows)
+            for (int index = 0; index < rows.Count; index++)
             {
+                List<object> row = rows[index];
                 if (byKey == null)
                 {
                     table.AddRow(row);
                     continue;
                 }
-                string key = Convert.ToString(row[keyColumn], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+                string key = summaryRows.Contains(index) ? string.Empty : Convert.ToString(row[keyColumn], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
                 var withId = new List<object>(row.Count + 1) { key.Length > 0 && byKey.TryGetValue(key, out long id) ? (object)id : null };
                 withId.AddRange(row);
                 table.AddRow(withId);
@@ -212,6 +227,30 @@ namespace RevitMcpNext.Addin
             }
             reason = null;
             return map;
+        }
+
+        /// <summary>
+        /// Grand total rows and group header/footer rows (one filled cell when the schedule groups) carry no element; they
+        /// get no id and do not take part in the key check, so they never cause a wrong id.
+        /// </summary>
+        private static bool IsSummaryRow(ScheduleDefinition definition, List<object> row)
+        {
+            int filled = row.Count(cell => !string.IsNullOrWhiteSpace(Convert.ToString(cell, CultureInfo.InvariantCulture)));
+            try
+            {
+                if (definition.ShowGrandTotal)
+                {
+                    string first = Convert.ToString(row.FirstOrDefault(cell => !string.IsNullOrWhiteSpace(Convert.ToString(cell, CultureInfo.InvariantCulture))), CultureInfo.InvariantCulture) ?? string.Empty;
+                    string title = definition.GrandTotalTitle;
+                    if (!string.IsNullOrWhiteSpace(title) && first.Trim().StartsWith(title.Trim(), StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                bool grouped = definition.GetSortGroupFields().Any(s => s.ShowHeader || s.ShowFooter);
+                return grouped && filled <= 1;
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                return false;
+            }
         }
 
         private static string Cell(ViewSchedule schedule, int row, int column)
