@@ -445,16 +445,12 @@ namespace RevitMcpNext.Addin
                 case ViewType.SystemBrowser:
                 case ViewType.Internal:
                 case ViewType.Undefined:
-                case ViewType.Report:
-                case ViewType.CostReport:
-                case ViewType.LoadsReport:
-                case ViewType.PresureLossReport:
                 case ViewType.PanelSchedule:
                 case ViewType.ColumnSchedule:
-                case ViewType.SystemsAnalysisReport:
                     return false;
                 default:
-                    return true;
+                    // Report views (Report, CostReport, LoadsReport, pressure loss, systems analysis) differ per year.
+                    return !view.ViewType.ToString().EndsWith("Report", StringComparison.Ordinal);
             }
         }
 
