@@ -1,0 +1,1524 @@
+# Revit tool reference
+
+Generated from the revit-mcp-next catalog (`contracts/src/catalog`). The server is the source of truth: `help {"tool":"<tool>","op":"<op>"}` returns the same params plus working examples, live.
+
+How to read an op line: `tool.op: required; optional`.
+- In the required part `,` separates groups that are all needed, `|` means exactly one of, `+` means these go together. `ids|from|filter` = choose the elements one way.
+- Example: `create_elements.wall: level, points|start+end; type, height` = level is required, plus either points or start and end; type and height are optional.
+- `doc` (target doc), `preview` (dry run), `confirm` (token from NOT APPLIED) and `units` (default mm) are listed once per tool under "every op also takes".
+- Lengths mm, angles degrees, areas m2, volumes m3, pipe slope percent. Points `[x,y]` or `[x,y,z]` in mm.
+- Search this file for `## <tool>` or `<tool>.<op>`.
+
+# Session and target
+
+## status
+
+Start here. Lists running Revit versions and open docs (#1, #2...), the pinned target doc, active view, selection count, levels and busy/dialog state. include= adds sections; detail=full adds health. (read-only; core profile)
+
+Params:
+- `include` (string[]: views|selection|view_elements|readiness|context|warnings|writes): Extra sections for the target doc (writes = recent writes by any session).
+- `detail` (string: compact|full): full adds versions, paths, queue and pipe health.
+- `instance` (string): Only this Revit: year (2024) or process id.
+- every op also takes: `doc`
+
+Call:
+- `status`: (none); include, detail, instance
+  Served from control snapshots and health only; it never waits for Revit's UI thread, so it answers while Revit is busy or shows a dialog. include= adds sections from other reads (shared 10 s budget); a section that cannot run says unavailable: <CODE>.
+  e.g. `status {}`
+
+## set_target
+
+Pin the doc that every call uses this session: 'active', a # from status, a title or a path. 'follow' tracks the active tab; 'none' unpins. Family docs work too; links are read with find_elements link=. (writes; core profile)
+
+Params:
+- `doc` (string): 'active', 'follow', 'none', #, title or path.
+- `instance` (string): Revit year or process id when the same file is open twice.
+
+Call:
+- `set_target`: doc; instance
+  Pins the doc for this session (notice TARGET_NOW). Grammar: #n or n, 'active', 'follow', 'none', exact title (extension optional), unique title prefix, absolute path, title@2027, or @2027 (the active doc of Revit 2027).
+  e.g. `set_target {"doc":"#2"}`
+
+# Reads
+
+## list
+
+List items of one kind (levels, views, sheets, schedules, rooms, types, families, materials, worksets, phases, links, revisions, filters, templates...) as compact rows. name= filters; for_element= valid types. (read-only; core profile)
+
+Params:
+- `kind` (string: levels|grids|views|sheets|schedules|rooms|areas|spaces|types|families|materials|worksets|phases|phase_filters|design_options|links|revisions|view_templates|view_filters|view_types|viewport_types|title_blocks|text_types|dimension_types|tag_types|line_styles|line_patterns|fill_patterns|scope_boxes|groups|systems|system_types|project_info|units): What to list.
+- `name` (string): Name contains (case-insensitive, * wildcard).
+- `category` (string[]): Categories, e.g. ["Walls","Doors"] (a string is fine).
+- `level` (string): Level name or id (rooms, areas, spaces, views).
+- `view_type` (string): For views/view_types: FloorPlan, CeilingPlan, Section, Elevation, ThreeD, Drafting, Legend, AreaPlan, Sheet...
+- `family` (string): For types: family name.
+- `for_element` (string): For types: element id; returns only types it can switch to.
+- `placed` (boolean): Views: on a sheet or not. Rooms/areas: placed or not.
+- `graphical` (boolean): Views: only graphical views (no schedules or browser-only views).
+- `printable` (boolean): Views: only views that can be printed or exported.
+- `class` (string): Types: Revit API class, e.g. WallType, FloorType, FamilySymbol.
+- `where` (string[]): Conditions 'Param op value' like find_elements.
+- `ids` (string[]): Only these ids.
+- `fields` (string[]): Extra columns: location, bbox, host, room, workset, phase, or any parameter name.
+- `detail` (string: compact|full): Default compact.
+- `limit` (integer): Rows per page, 1-500. Default 50.
+- `page` (string): Page token from a 'more:' line, e.g. p2.
+- every op also takes: `doc`
+
+Optional for every kind: name, category, level, view_type, family, for_element, placed, graphical, printable, class, where, ids, fields, detail, limit, page
+
+Ops (`kind`):
+- `list.levels`: (none)
+  Sorted by elevation (mm). detail:"full" adds story (building story) and plan_views.
+  e.g. `list {"kind":"levels"}`
+- `list.grids`: (none)
+  Grid ends as [x,y] mm; detail:"full" adds curved and type.
+  e.g. `list {"kind":"grids"}`
+- `list.views`: (none)
+  No templates or sheets. sheet = numbers of the sheets the view is placed on. graphical drops schedules and browser views; printable = views that can be printed or exported; placed:false = not on a sheet.
+  e.g. `list {"kind":"views","view_type":"FloorPlan","placed":false}`
+- `list.sheets`: (none)
+  Sorted by number; views = placed views, revision = current revision.
+  e.g. `list {"kind":"sheets"}`
+- `list.schedules`: (none)
+  No templates or title-block revision schedules; category English; sheets = where placed.
+  e.g. `list {"kind":"schedules"}`
+- `list.rooms`: (none)
+  status: placed, unplaced (no location) or not_enclosed (placed with area 0). area m2; level= and placed= filter.
+  e.g. `list {"kind":"rooms","level":"Level 1"}`
+- `list.areas`: (none)
+  status like rooms; scheme = area scheme.
+  e.g. `list {"kind":"areas"}`
+- `list.spaces`: (none)
+  status like rooms; room = number of the room the space is in.
+  e.g. `list {"kind":"spaces","level":"Level 1"}`
+- `list.types`: (none)
+  ) filter; for_element lists only types the element can switch to and marks the current one. detail:"full" adds instance counts.
+  e.g. `list {"kind":"types","category":["Doors"]}`
+- `list.families`: (none)
+  types = number of family types; detail:"full" adds in_place, editable, placement.
+  e.g. `list {"kind":"families","category":["Furniture"]}`
+- `list.materials`: (none)
+  class = material class; detail:"full" adds color, transparency.
+  e.g. `list {"kind":"materials","name":"concrete"}`
+- `list.worksets`: (none)
+  User worksets only; empty when the doc is not workshared.
+  e.g. `list {"kind":"worksets"}`
+- `list.phases`: (none)
+  In project order (sequence 1 = earliest).
+  e.g. `list {"kind":"phases"}`
+- `list.phase_filters`: (none)
+  e.g. `list {"kind":"phase_filters"}`
+- `list.design_options`: (none)
+  set = option set; primary = the primary option of its set.
+  e.g. `list {"kind":"design_options"}`
+- `list.links`: (none)
+  Revit link instances; loaded=false means the link type is unloaded. detail:"full" adds path, pinned, attachment.
+  e.g. `list {"kind":"links"}`
+- `list.revisions`: (none)
+  In sequence order; issued revisions cannot be edited.
+  e.g. `list {"kind":"revisions"}`
+- `list.view_templates`: (none)
+  view_type filters by the template's view type.
+  e.g. `list {"kind":"view_templates"}`
+- `list.view_filters`: (none)
+  kind rule or selection; categories the rule filter applies to. category= keeps filters that apply to it.
+  e.g. `list {"kind":"view_filters"}`
+- `list.view_types`: (none)
+  ).
+  e.g. `list {"kind":"view_types","view_type":"Section"}`
+- `list.viewport_types`: (none)
+  e.g. `list {"kind":"viewport_types"}`
+- `list.title_blocks`: (none)
+  Title block family types for edit_sheets op=create.
+  e.g. `list {"kind":"title_blocks"}`
+- `list.text_types`: (none)
+  size = text size (mm on paper).
+  e.g. `list {"kind":"text_types"}`
+- `list.dimension_types`: (none)
+  e.g. `list {"kind":"dimension_types"}`
+- `list.tag_types`: (none)
+  g. ["Door Tags"].
+  e.g. `list {"kind":"tag_types","category":["Door Tags"]}`
+- `list.line_styles`: (none)
+  Subcategories of Lines; id = graphics style id (use as line_style=).
+  e.g. `list {"kind":"line_styles"}`
+- `list.line_patterns`: (none)
+  e.g. `list {"kind":"line_patterns"}`
+- `list.fill_patterns`: (none)
+  target drafting or model; solid marks the solid fill.
+  e.g. `list {"kind":"fill_patterns"}`
+- `list.scope_boxes`: (none)
+  e.g. `list {"kind":"scope_boxes"}`
+- `list.groups`: (none)
+  Group types with instance counts; kind model or detail.
+  e.g. `list {"kind":"groups"}`
+- `list.systems`: (none)
+  MEP systems (piping, duct, electrical) with their system type.
+  e.g. `list {"kind":"systems"}`
+- `list.system_types`: (none)
+  Piping and duct system types with classification.
+  e.g. `list {"kind":"system_types"}`
+- `list.project_info`: (none)
+  Project information as [param, value] rows, plus site location and shared parameters.
+  e.g. `list {"kind":"project_info"}`
+- `list.units`: (none)
+  Project units per spec: unit, rounding accuracy and symbol.
+  e.g. `list {"kind":"units"}`
+
+## find_elements
+
+Find elements by category, level, type, view, selection, parameter values, box or link. Returns the exact total, compact rows and a handle r# for from= in later calls. count_only/group_by for fast counts. (read-only; core profile)
+
+Params:
+- `category` (string[]): Categories, e.g. ["Walls","Doors"] (a string is fine).
+- `class` (string): Revit API class, e.g. Wall, FamilyInstance, Floor.
+- `level` (string[]): Level names or ids (a string is fine).
+- `type` (string): Type name, 'Family: Type' or id; * wildcard.
+- `family` (string): Family name; * wildcard.
+- `view` (string): Only elements visible in this view ('active' ok).
+- `from` (string): Restrict to 'selection' or an r# handle.
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `where` (string[]): Conditions 'Param op value', op: = != > >= < <= contains startswith empty notempty. Lengths mm.
+- `box` (number[] mm): Intersects box [x0,y0,x1,y1] (plan) or [x0,y0,z0,x1,y1,z1] mm.
+- `link` (string): Search inside this linked model (name or id); read-only, host coordinates.
+- `workset` (string[]): Workset names.
+- `phase` (string): Phase created name.
+- `design_option` (string[]): Design option names, or 'main'.
+- `hidden` (boolean): With view=: include elements hidden in the view.
+- `types` (boolean): Find element types instead of instances.
+- `fields` (string[]): Extra columns: location, bbox, host, room, workset, phase, or any parameter name.
+- `group_by` (string): Count per category, type, family, level, workset or a parameter name.
+- `count_only` (boolean): Only the total (and group counts).
+- `detail` (string: compact|full): Default compact.
+- `limit` (integer): Rows per page, 1-500. Default 50.
+- `page` (string): Page token from a 'more:' line, e.g. p2.
+- every op also takes: `doc`
+
+Call:
+- `find_elements`: (none); category, class, level, type, family, view, from, ids, where, box, link, workset, phase, design_option, hidden, types, fields, group_by, count_only, detail, limit, page
+  Exact totals; the handle r# keeps the full id list (up to 100,000) for from= in later calls. Pages re-query rows for id slices, so paging is stable.
+  e.g. `find_elements {"category":["Doors"],"level":"Level 1","where":["Width >= 900"]}`
+
+## describe_elements
+
+Details for up to 50 elements: parameters with values, units and writability, type parameters, geometry, host/hosted, room, joins, group, MEP connectors; dimensions show witness refs. Use before set_parameters. (read-only; core profile)
+
+Params:
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `params` (string: writable|all|names|none): Instance parameters: writable (default) values, all values, names only, none.
+- `include` (string[]: type|geometry|relations|connectors): Extra blocks. type = type parameters.
+- `match` (string): Only parameters whose name contains this.
+- `link` (string): Elements are inside this linked model.
+- `page` (string): Page token from a 'more:' line, e.g. p2.
+- every op also takes: `doc`
+
+Call:
+- `describe_elements`: ids|from; params, include, match, link, page
+  At most 50 elements per page. params: writable (default) = values you can set, all = every value plus read_only names, names = name: kind rw|ro. Values: lengths mm, areas m2, volumes m3, angles deg, Yes/No booleans, element params as ids.
+  e.g. `describe_elements {"ids":["304512"],"include":["type","relations"]}`
+
+## get_view
+
+One view or sheet: type, scale, detail level, template, crop, view range, phase, discipline; include= overrides, filters, hidden categories, viewports, revisions. Default: the active view. (read-only; core profile)
+
+Params:
+- `view` (string): View name, id, sheet number, or 'active' (default).
+- `include` (string[]: overrides|filters|categories|viewports|revisions): Extra blocks.
+- every op also takes: `doc`
+
+Call:
+- `get_view`: (none); view, include
+  template_controls lists the settings the view template locks (edit them on the template). view_range is in mm above the view level. include=overrides scans up to 5,000 elements of the view.
+  e.g. `get_view {}`
+
+## read_schedule
+
+Read a schedule as a table (paged) with its fields, filters and sorting. category= without schedule= lists the fields available for a new schedule of that category. (read-only)
+
+Params:
+- `schedule` (string): Schedule name or id.
+- `category` (string): Category for available fields before edit_schedules create.
+- `rows` (boolean): Include body rows. Default true.
+- `available` (boolean): Include fields that could be added. Default false.
+- `name` (string): available: field name contains.
+- `key` (string): Field unique per row that maps rows to element ids. Default Mark; no id column if not unique.
+- `limit` (integer): Rows per page, 1-1000. Default 100.
+- `page` (string): Page token from a 'more:' line, e.g. p2.
+- every op also takes: `doc`
+
+Call:
+- `read_schedule`: schedule|category; rows, available, name, key, limit, page
+  Rows come from the schedule cells (paged; continue with the more: page token). elementIds lists the elements and a notice says why. category= alone lists the fields a new schedule could use.
+  e.g. `read_schedule {"schedule":"Door Schedule","limit":200}`
+
+## read_family
+
+Family parameters (name, type/instance, group, data type, formula, shared), family types with per-type values, category and nested families. family= loaded family, path= an .rfa file, or doc= an open family doc. (read-only)
+
+Params:
+- `family` (string): Loaded family name or id (read without opening the UI).
+- `path` (string): Path to an .rfa file (opened hidden, read-only).
+- `types` (string[]): Only these family types' values. Default all (up to 30).
+- `detail` (string: compact|full): Default compact.
+- every op also takes: `doc`
+
+Call:
+- `read_family`: (none); family, path, types, detail [may become job j#]
+  rfa hidden and closes it; doc= reads an open family doc. Types show only values that differ between types; equal values are under same. detail:full adds built-ins, instance defaults, ids and use counts.
+  e.g. `read_family {"family":"Single-Flush"}`
+
+## check_model
+
+Model health: stats (counts by category/level), warnings (grouped, element ids), readiness for common tasks, purgeable (unused items), clashes (set a vs b, links ok). Default check=stats. (read-only)
+
+Params:
+- `check` (string: stats|warnings|readiness|purgeable|clashes): What to check. Default stats.
+- `a` (string[]): Clashes: categories or an r# handle.
+- `b` (string[]): Clashes: categories or an r# handle. Default = a.
+- `link` (string): Clashes: set b is inside this linked model.
+- `tolerance` (number mm): Clashes: ignore overlaps smaller than this, mm. Default 0.
+- `match` (string): Warnings: text contains.
+- `severity` (string: warning|error): Warnings: only this severity.
+- `ids` (string[]): Warnings involving these elements.
+- `group_by` (string): Stats: category, level, type, workset.
+- `scenarios` (string[]): Readiness: walls, floors, rooms, families, sheets, tags... Default common set.
+- `detail` (string: compact|full): Default compact.
+- `limit` (integer): Rows per page, 1-500. Default 50.
+- `page` (string): Page token from a 'more:' line, e.g. p2.
+- every op also takes: `doc`
+
+Ops (`check`):
+- `check_model.stats`: (none); group_by, detail, limit, page
+  Model element counts per category (or level, type, family, workset) plus totals: types, families, in-place families, views, sheets, rooms, groups, links, imports, warnings, file size.
+  e.g. `check_model {"check":"stats","group_by":"level"}`
+- `check_model.warnings`: (none); match, severity, ids, detail, limit, page
+  Revit warnings grouped by message (errors first) with up to 20 element ids each; detail:full lists every warning. ids= keeps warnings involving those elements.
+  e.g. `check_model {"check":"warnings"}`
+- `check_model.readiness`: (none); scenarios, detail
+  Per scenario: ready, missing prerequisites, counts and the next call. Scenarios: levels, grids, walls, floors, roofs, ceilings, rooms, families, doors, windows, views, sheets, tags, dimensions, text, schedules, mep, structure, worksharing, links, or all.
+  e.g. `check_model {"check":"readiness","scenarios":["walls","rooms","sheets"]}`
+- `check_model.purgeable`: (none); detail, limit, page [may become job j#]
+  One purge pass (unused families, types, materials, patterns, styles) that Revit allows to delete; purging can free further nested items. Nothing is deleted: manage_document op=purge does that.
+  e.g. `check_model {"check":"purgeable"}`
+- `check_model.clashes`: a; b, link, tolerance, detail, limit, page [may become job j#]
+  Exact element pairs whose solids intersect: depth = penetration (mm), volume m3, point = centre of the overlap. a/b take categories or an r# handle; b defaults to a (each pair once). link= puts set b inside a linked model (its ids are link ids).
+  e.g. `check_model {"check":"clashes","a":["Ducts"],"b":["Structural Framing"],"tolerance":10}`
+
+## get_quantities
+
+Quantity takeoff: count, length (m), area (m2), volume (m3) summed by material, type, level, category or family, for all or filtered elements. Default by=material. (read-only)
+
+Params:
+- `by` (string: material|type|level|category|family): Group rows by. Default material.
+- `category` (string[]): Categories, e.g. ["Walls","Doors"] (a string is fine).
+- `level` (string): Level name or id.
+- `view` (string): Only elements visible in this view.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `material` (string): Material name contains.
+- `paint` (boolean): Include painted areas. Default false.
+- `limit` (integer): Rows per page, 1-500. Default 50.
+- `page` (string): Page token from a 'more:' line, e.g. p2.
+- every op also takes: `doc`
+
+Call:
+- `get_quantities`: (none); by, category, level, view, from, material, paint, limit, page
+  by=material uses each element's material areas and volumes (paint:true adds painted areas); other groupings sum element length (m), area (m2) and volume (m3) per group. Without category all model elements count.
+  e.g. `get_quantities {"by":"type","category":["Walls","Floors"]}`
+
+## get_changes
+
+What changed since a point: added, modified and deleted elements (id, category) and transaction names, by you or the user. since='session' (default), 'last' (your last write) or a mark m#. (read-only)
+
+Params:
+- `since` (string): 'session', 'last', or a mark like m12 from an earlier result.
+- `limit` (integer): Rows per page, 1-500. Default 50.
+- every op also takes: `doc`
+
+Call:
+- `get_changes`: (none); since, limit
+  Net added/modified/deleted elements (id, change, category) and the transaction names with who made them (you, user, other MCP sessions). Every result returns a mark m# for the next call. incomplete:true means the history overflowed.
+  e.g. `get_changes {"since":"last"}`
+
+## read_many
+
+Run up to 8 read calls in one round trip, sharing one time budget (max 2 images): calls=[{tool:'list',args:{kind:'levels'}},{tool:'capture',args:{}}]. One failure does not stop the rest. (read-only; core profile)
+
+Params:
+- `calls` (object[]): Up to 8 {tool, args}; args as for that tool.
+  - `calls[].tool` (string: status|list|find_elements|describe_elements|get_view|read_schedule|read_family|check_model|get_quantities|get_changes|capture|help): A read tool.
+  - `calls[].args` (object): That tool's args.
+
+Call:
+- `read_many`: calls
+  Runs up to 8 reads with one shared time budget; sub-call i gets remaining/(n-i). At most 2 images (2 MB). levels"} or flattened args. Each sub-result keeps its own more: page token; long ones are shortened to fit and say so.
+  e.g. `read_many {"calls":[{"tool":"list","args":{"kind":"levels"}},{"tool":"capture","args":{"size":"small"}}]}`
+
+# Visual
+
+## capture
+
+See the model: returns an image of a view or sheet, or of elements (ids/from) in a temporary 3D box. region= zooms; size small|medium|large; compare= c# shows what changed. Nothing is kept in the model. (read-only; core profile)
+
+Params:
+- `view` (string): View name, id, sheet number, or 'active' (default).
+- `ids` (string[]): Focus these elements: temp 3D view boxed around them.
+- `from` (string): Focus an element set: r# handle, 'selection' or 'last'.
+- `region` (number[] mm): Zoom to [x0,y0,x1,y1] mm (model coords; sheet mm on sheets).
+- `orient` (string: iso_se|iso_sw|iso_ne|iso_nw|top|front|back|left|right): 3D direction. Default iso_se.
+- `style` (string: wireframe|hidden|shaded|consistent|realistic): Default: view's own; temp 3D shaded.
+- `size` (string: small|medium|large): Long edge at most 768, 1280 or 1568 px. Default medium.
+- `margin` (number mm): Space around focused elements, mm. Default 1000.
+- `highlight` (string[]): Tint these element ids red in the image.
+- `annotations` (boolean): Show annotations. Default true for views, false for focus.
+- `compare` (string): Earlier capture id (c#): marks changed pixels.
+- `format` (string: auto|png|jpg): Default auto (png drawings, jpg shaded).
+- every op also takes: `doc`
+
+Call:
+- `capture`: (none); view, ids, from, region, orient, style, size, margin, highlight, annotations, compare, format [may become job j#]
+  Temporary views and overrides are rolled back; nothing is kept in the model. 15 MP). region: plans use model x,y mm; sections/elevations use [along the view, elevation] mm; sheets use sheet mm; 3D views get a section box.
+  e.g. `capture {}`
+
+# Revit window (no model change)
+
+## ui
+
+Drive the Revit window without changing the model: select, zoom_to, temporary isolate/hide, reset, activate_view, activate_doc, list/close open views, list dialogs and press a dialog button. (writes; core profile)
+
+Params:
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `filter` (object): Select like find_elements: {category,level,type,family,view,where:["Mark = D1"]}.
+- `category` (string[]): Categories, e.g. ["Walls","Doors"] (a string is fine).
+- `view` (string): View name, id, sheet number, or 'active'.
+- `views` (string[]): close_views: names/ids, or ['all_but_active'].
+- `region` (number[] mm): [x0,y0,x1,y1] mm.
+- `fit` (boolean): zoom_to: zoom to fit the whole view.
+- `mode` (string: replace|add|remove): select: default replace.
+- `zoom` (boolean): select: also zoom to the selection.
+- `dialog` (string): Dialog id from op=dialogs. Default: the open one.
+- `button` (string): Button text or id. Cancel/Close apply at once; other buttons need the user's OK (confirm).
+- `instance` (string): dialogs/press: Revit year or process id. Default: every Revit.
+- `doc` (string): Doc title, path or # from status. Default: pinned target.
+- every op also takes: `confirm`
+
+Ops (`op`):
+- `ui.select`: ids|from|filter; mode, zoom [doc must be active in Revit]
+  Needs the target doc to be UI-active (NEEDS_ACTIVE_DOC otherwise); it never switches documents implicitly.
+  e.g. `ui {"op":"select","from":"r3","zoom":true}`
+- `ui.zoom_to`: ids|from|region|fit; view [doc must be active in Revit]
+  region is model x,y mm on plans (along-view/elevation mm on sections). view= first opens that view of the active doc.
+  e.g. `ui {"op":"zoom_to","ids":["304512"]}`
+- `ui.isolate`: ids|from|category; view
+  Temporary hide/isolate of the view (default: the active view); ui reset ends it. Undo is not needed.
+  e.g. `ui {"op":"isolate","category":["Walls"]}`
+- `ui.hide`: ids|from|category; view
+  Temporary hide; permanent hiding is view_graphics hide.
+  e.g. `ui {"op":"hide","ids":["304512"]}`
+- `ui.reset`: (none); view
+  e.g. `ui {"op":"reset"}`
+- `ui.activate_view`: view
+  Opens the view in Revit; when its doc is in the background the doc comes to the front first and is re-pinned.
+  e.g. `ui {"op":"activate_view","view":"Level 2"}`
+- `ui.activate_doc`: doc
+  Brings the doc to the front and re-pins it for this session (notice TARGET_NOW).
+  e.g. `ui {"op":"activate_doc","doc":"#2"}`
+- `ui.open_views`: (none) [doc must be active in Revit]
+  e.g. `ui {"op":"open_views"}`
+- `ui.close_views`: views [doc must be active in Revit]
+  Never closes the last open view of a doc (LAST_VIEW): Revit would close the document.
+  e.g. `ui {"op":"close_views","views":["all_but_active"]}`
+- `ui.dialogs`: (none); instance
+  e.g. `ui {"op":"dialogs"}`
+- `ui.press`: button; dialog, instance [NOT APPLIED buttons other than Cancel/Close]
+  Cancel and Close apply at once; any other button returns NOT APPLIED and needs confirm. Buttons that could discard work are never pressed.
+  e.g. `ui {"op":"press","button":"Cancel"}`
+
+# Writes
+
+## create_elements
+
+Create levels, grids, walls, floors, roofs, ceilings, rooms, areas, separators, openings, shafts, ref planes, model lines, stairs, railings, curtain grids, toposolids. mm; applies now, returns ids and undo. (writes; core profile)
+
+Params:
+- `level` (string): Base level name or id.
+- `top` (string): Top level (wall top constraint, shaft, stairs).
+- `elevation` (number mm): Level elevation mm.
+- `name` (string): Name.
+- `number` (string): Room/area number.
+- `department` (string): Room department.
+- `plans` (boolean): level: also create floor and ceiling plans. Default true.
+- `count` (integer): level/grid: how many to create. Default 1.
+- `spacing` (number mm): level/grid: distance between copies mm; curtain_grid: grid spacing.
+- `start` (number[] mm): Start point [x,y(,z)] mm.
+- `end` (number[] mm): End point [x,y(,z)] mm.
+- `through` (number[] mm): Point on the arc: makes an arc (single segment).
+- `points` (array[] mm): [[x,y],...] mm: wall path, outline, stair path; toposolid [x,y,z] (z above level if set, else absolute).
+- `profile` (array[] mm): roof_extrusion: profile [[s,z],...] mm; s along start->end, z above level.
+- `holes` (array[] mm): Inner loops [[[x,y],...],...].
+- `closed` (boolean): Close the loop back to the first point.
+- `from` (string): floor/ceiling: follow room boundaries: r# handle or 'selection' of rooms.
+- `type` (string): Type: 'Family: Type', type name, or id.
+- `height` (number mm): wall: unconnected height mm when no top (default 3000); opening: opening height mm.
+- `offset` (number mm): Height above level mm (wall opening: sill height). Default 0.
+- `top_offset` (number mm): Offset from top level mm.
+- `line` (string: center|core_center|finish_ext|finish_int|core_ext|core_int): wall location line. Default center.
+- `structural` (boolean): Structural wall/floor.
+- `flip` (boolean): wall: flip orientation.
+- `slope` (number deg): Degrees (floor, roof).
+- `slope_edges` (integer[]): roof: edge indexes that slope. Default all when slope set.
+- `overhang` (number mm): roof: overhang mm.
+- `depth` (number mm): roof_extrusion: extrusion length mm (left of start->end).
+- `at` (number[] mm): Point [x,y] or [x,y,z] mm.
+- `all` (boolean): room: place rooms in every enclosed area of the level.
+- `allow_duplicate` (boolean): room: allow a duplicate number.
+- `view` (string): Plan view (separators, areas, ref plane).
+- `host` (string): Host id: wall/floor/roof/ceiling (opening), stairs (railing), curtain wall (curtain_grid).
+- `width` (number mm): stairs: run width mm.
+- `risers` (integer): stairs: riser count. Default from height.
+- `direction` (string: vertical|horizontal): curtain_grid: direction of the new grid lines.
+- `positions` (number[] mm): curtain_grid: offsets mm from the wall start (vertical) or base (horizontal).
+- `mullion` (string): curtain_grid: mullion type to add on new lines.
+- `line_style` (string): Line style name.
+- `survey` (array[] mm): toposolid: extra [[x,y,z]] points inside the outline.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `create_elements.level`: elevation; name, plans, count, spacing [NOT APPLIED over 500 created]
+  elevation is measured from the project origin. count/spacing make a stack; names continue the last one (Level 2 -> Level 3). plans adds a floor and a ceiling plan per level.
+  e.g. `create_elements {"op":"level","elevation":3500,"count":4,"spacing":3500}`
+- `create_elements.grid`: start, end; through, name, count, spacing [NOT APPLIED over 500 created]
+  count/spacing copy the grid to the left of start->end and increment the names (1,2,3 or A,B,C). through makes an arc grid; its copies are concentric.
+  e.g. `create_elements {"op":"grid","start":[0,0],"end":[0,30000],"name":"1","count":6,"spacing":6000}`
+- `create_elements.wall`: level, points|start+end; type, height, top, offset, top_offset, line, structural, flip, closed, through [NOT APPLIED over 500 created]
+  One wall per segment of points (or start/end); closed adds the last segment. Height: top level + top_offset, else height (default 3000). line keeps the chosen location line on the given path.
+  e.g. `create_elements {"op":"wall","level":"Level 1","points":[[0,0],[12000,0],[12000,8000],[0,8000]],"closed":true,"type":"Generic - 200mm","top":"Level 2"}`
+- `create_elements.floor`: level, points|from; type, holes, offset, slope, structural [NOT APPLIED over 500 created]
+  points is the outer outline, holes the inner loops. from makes one floor per room (r# handle or 'selection') along its finish boundary. slope (degrees) rises along the first edge points[0]->points[1].
+  e.g. `create_elements {"op":"floor","level":"Level 1","points":[[0,0],[12000,0],[12000,8000],[0,8000]],"type":"Generic 300mm"}`
+- `create_elements.roof`: level, points; type, slope, slope_edges, overhang, offset [NOT APPLIED over 500 created]
+  Footprint roof. Edge i runs points[i]->points[i+1]. slope (degrees) applies to slope_edges, or to every edge when slope_edges is omitted; without slope the roof is flat. overhang offsets the footprint outward.
+  e.g. `create_elements {"op":"roof","level":"Level 2","points":[[0,0],[12000,0],[12000,8000],[0,8000]],"slope":30,"overhang":500}`
+- `create_elements.roof_extrusion`: level, start, end, profile, depth; type [NOT APPLIED over 500 created]
+  ]: s is the distance along start->end, z the height above level. The roof is extruded depth mm to the left of start->end; a reference plane along start->end is created as its work plane.
+  e.g. `create_elements {"op":"roof_extrusion","level":"Level 2","start":[0,0],"end":[12000,0],"profile":[[0,0],[6000,3000],[12000,0]],"depth":8000}`
+- `create_elements.ceiling`: level, points|from; type, holes, offset [NOT APPLIED over 500 created]
+  offset is the height above level (the type default when omitted). from makes one ceiling per room.
+  e.g. `create_elements {"op":"ceiling","level":"Level 1","points":[[0,0],[6000,0],[6000,4000],[0,4000]],"offset":2700}`
+- `create_elements.room`: level, at|all; name, number, department, allow_duplicate [NOT APPLIED over 500 created]
+  at must lie in an area enclosed by walls or separators; a room already there is an error. all fills every enclosed area that has no room. A used number gives NAME_TAKEN with the next free number unless allow_duplicate.
+  e.g. `create_elements {"op":"room","level":"Level 1","all":true}`
+- `create_elements.room_separator`: view, points; closed [NOT APPLIED over 500 created]
+  view is a floor or ceiling plan; the lines are drawn on its level.
+  e.g. `create_elements {"op":"room_separator","view":"Level 1","points":[[6000,0],[6000,8000]]}`
+- `create_elements.area`: view, at; name, number [NOT APPLIED over 500 created]
+  view must be an area plan; at must be enclosed by area boundary lines (op area_boundary).
+  e.g. `create_elements {"op":"area","view":"Area Plan 1","at":[3000,2000],"name":"Zone A"}`
+- `create_elements.area_boundary`: view, points; closed [NOT APPLIED over 500 created]
+  view must be an area plan; one boundary line per segment.
+  e.g. `create_elements {"op":"area_boundary","view":"Area Plan 1","points":[[0,0],[12000,0],[12000,8000],[0,8000]],"closed":true}`
+- `create_elements.opening`: host, points|start+end; offset, height [NOT APPLIED over 500 created]
+  Wall host: start/end are model XY points on the wall, offset is the sill height, height the opening height (default 2100). Floor/roof/ceiling host: points outline.
+  e.g. `create_elements {"op":"opening","host":"304601","start":[2000,0],"end":[3000,0],"offset":900,"height":1200}`
+- `create_elements.shaft`: level, top, points; offset, top_offset [NOT APPLIED over 500 created]
+  Vertical shaft opening from level + offset to top + top_offset; it cuts the floors, roofs and ceilings in between.
+  e.g. `create_elements {"op":"shaft","level":"Level 1","top":"Level 2","points":[[1000,1000],[2000,1000],[2000,2000],[1000,2000]]}`
+- `create_elements.ref_plane`: start, end; name, view [NOT APPLIED over 500 created]
+  In a plan the plane is vertical through start->end; in a section or elevation it is perpendicular to the view. view defaults to the active plan.
+  e.g. `create_elements {"op":"ref_plane","start":[0,-1000],"end":[0,9000],"name":"Axis A"}`
+- `create_elements.model_line`: points; level, line_style, closed, through [NOT APPLIED over 500 created]
+  Points with z (above level, else absolute) may slope: flat segments go on a horizontal plane, sloped ones on a vertical plane. through makes one arc from 2 points.
+  e.g. `create_elements {"op":"model_line","level":"Level 1","points":[[0,0],[5000,0],[5000,3000]]}`
+- `create_elements.stairs`: level, top, points; type, width, risers [NOT APPLIED over 500 created]
+  points is the walk line: one straight run per segment, landings at the corners. Risers (default from the type) are spread over the runs; a run is (risers - 1) x tread depth long. Railings are added when Revit adds none.
+  e.g. `create_elements {"op":"stairs","level":"Level 1","top":"Level 2","points":[[1000,1000],[1000,6000]],"width":1200}`
+- `create_elements.railing`: points|host; level, type [NOT APPLIED over 500 created]
+  host = stairs or ramp id (railings on its treads); points = a free railing path on level (default: the active plan's level).
+  e.g. `create_elements {"op":"railing","level":"Level 1","points":[[0,0],[5000,0]]}`
+- `create_elements.curtain_grid`: host, direction, positions|spacing; mullion [NOT APPLIED over 500 created]
+  Vertical lines sit at positions/spacing along the wall from its start; horizontal lines at heights above the wall base. Positions outside the wall are skipped with a warning.
+  e.g. `create_elements {"op":"curtain_grid","host":"305100","direction":"vertical","spacing":1500,"mullion":"Rectangular Mullion: 50 x 150mm"}`
+- `create_elements.toposolid`: points; type, level, survey [NOT APPLIED over 500 created]
+  z of each point is height above level when level is given, otherwise absolute. points is the outline; survey adds interior elevation points.
+  e.g. `create_elements {"op":"toposolid","points":[[-5000,-5000,0],[40000,-5000,0],[40000,30000,1500],[-5000,30000,1200]]}`
+
+## place_family
+
+Place instances of any loadable family (doors, windows, furniture, fixtures, equipment, generic, detail-free) at points, on hosts or along lines; load .rfa families. Hosts are found automatically when omitted. (writes; core profile)
+
+Params:
+- `type` (string): Family type: 'Family: Type', type name, or id.
+- `at` (number[] mm): Point [x,y] or [x,y,z] mm.
+- `points` (array[] mm): Several insertion points [[x,y(,z)],...]: one instance each.
+- `start` (number[] mm): Start point [x,y(,z)] mm.
+- `end` (number[] mm): End point [x,y(,z)] mm.
+- `level` (string): Level for z; z of points is height above it.
+- `host` (string): Host id (wall, floor, ceiling, roof, face). 'auto' (default) finds the nearest valid host.
+- `offset` (number mm): Height above level, mm. Default 0.
+- `rotation` (number deg): Degrees, counterclockwise. Default 0.
+- `flip_hand` (boolean): Flip hand.
+- `flip_facing` (boolean): Flip facing.
+- `allow_pinned` (boolean): Allow a pinned host.
+- `path` (string): load: .rfa path visible to Revit.
+- `symbols` (string[]): load: only these types. Default all.
+- `overwrite` (boolean): load: overwrite existing parameter values. Default false.
+- `categories` (string[]): load: refuse unless the family is one of these categories.
+- `sha256` (string): load: refuse unless the file hash matches.
+- `allow_network` (boolean): load: allow UNC/network paths.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `place_family.place`: type, at|points|start+end; level, host, offset, rotation, flip_hand, flip_facing, allow_pinned [NOT APPLIED over 500 created]
+  Hosts are found automatically when host is omitted (doors/windows: the nearest wall within 2 m; floor/ceiling/roof-hosted: the host over/under the point). points places one instance per point; z of a point is height above level.
+  e.g. `place_family {"op":"place","type":"Single-Flush: 0915 x 2134mm","at":[6000,0],"level":"Level 1"}`
+- `place_family.load`: path; symbols, overwrite, categories, sha256, allow_network
+  rfa path (UNC only with allow_network). An already loaded family is reloaded; overwrite also replaces the project's type parameter values. categories/sha256 refuse the file before anything stays loaded.
+  e.g. `place_family {"op":"load","path":"C:\\Families\\Door-Double.rfa"}`
+
+## modify_elements
+
+Edit existing elements chosen by ids, from= or filter=: move, copy, rotate, mirror, array, align, delete, pin, change_type, join/cut/attach, flip, split, reshape, group/ungroup. Deleting >20 asks to confirm. (writes, can delete; core profile)
+
+Params:
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `filter` (object): Select like find_elements: {category,level,type,family,view,where:["Mark = D1"]}.
+- `by` (number[] mm): Offset vector [dx,dy(,dz)] mm.
+- `to` (number[] mm): Move/copy so the element's location point lands here [x,y(,z)] mm.
+- `levels` (string[]): copy: copy to these levels, aligned (vertical offset only).
+- `count` (integer): copy/array: number of copies (array includes original).
+- `angle` (number deg): Degrees counterclockwise (rotate, radial array).
+- `center` (number[] mm): Rotation/radial center [x,y(,z)]. Default: element center.
+- `axis` (number[]): Rotation axis direction. Default [0,0,1].
+- `start` (number[] mm): mirror: axis start; reshape: new curve start.
+- `end` (number[] mm): mirror: axis end; reshape: new curve end.
+- `points` (array[] mm): reshape: new path for curve elements.
+- `through` (number[] mm): reshape: point on arc.
+- `keep` (boolean): mirror: keep original (mirror a copy). Default true.
+- `kind` (string: linear|radial): array: default linear.
+- `target` (string): align: grid, level, ref plane or element id to align to.
+- `lock` (boolean): align: lock the alignment.
+- `with` (string): join/cut/attach: the other element id or r# handle.
+- `side` (string: top|base|hand|facing|wall): attach/detach: top|base; flip: hand|facing|wall.
+- `at` (number[] mm): split: split point; place_group: insertion point.
+- `type` (string): Type: 'Family: Type', type name, or id.
+- `pinned` (boolean): pin: true pins (default), false unpins.
+- `allow_pinned` (boolean): Allow changing pinned elements.
+- `expect_count` (integer): delete: abort unless exactly this many elements (incl. dependents) would be deleted.
+- `expect_ids` (string[]): delete: abort unless the delete set (incl. dependents) is exactly these ids.
+- `name` (string): group/place_group: group name.
+- `level` (string): place_group: level.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `modify_elements.move`: ids|from|filter, by|to [NOT APPLIED over 200 modified]
+  by moves every element by the vector; to moves them so the first element's location point (curve start for walls/lines) lands there, z kept unless given. Pinned elements need allow_pinned:true.
+  e.g. `modify_elements {"op":"move","from":"selection","by":[0,500]}`
+- `modify_elements.copy`: ids|from|filter, by|to|levels; count [NOT APPLIED over 200 modified]
+  ; levels: copies aligned to each level (the lowest source level maps to the target) with base/top constraints re-associated.
+  e.g. `modify_elements {"op":"copy","ids":["304601"],"levels":["Level 2","Level 3"]}`
+- `modify_elements.rotate`: ids|from|filter, angle; center, axis [NOT APPLIED over 200 modified]
+  Counterclockwise in plan for the default axis [0,0,1]; center defaults to the center of the elements' bounding box.
+  e.g. `modify_elements {"op":"rotate","ids":["304601"],"angle":90}`
+- `modify_elements.mirror`: ids|from|filter, start, end; keep [NOT APPLIED over 200 modified]
+  Mirrors about the vertical plane through start→end. keep:true (default) mirrors a copy; keep:false mirrors the originals.
+  e.g. `modify_elements {"op":"mirror","from":"r7","start":[6000,0],"end":[6000,8000]}`
+- `modify_elements.array`: ids|from|filter, count, by|angle; center, kind [NOT APPLIED over 200 modified]
+  Unassociated copies; count includes the original. Linear: by is the spacing between members. Radial: angle between members about center (default: element center).
+  e.g. `modify_elements {"op":"array","ids":["306000"],"count":5,"by":[1200,0]}`
+- `modify_elements.align`: ids, target; lock
+  Moves each element so its location line/point lies on the target (grid, reference plane, straight wall/line: parallel move in plan; level: vertical move). lock:true adds a locked alignment where Revit offers a matching reference (family instances).
+  e.g. `modify_elements {"op":"align","ids":["304601"],"target":"A"}`
+- `modify_elements.delete`: ids|from|filter; allow_pinned, expect_count, expect_ids [NOT APPLIED over 20 deleted]
+  The delete set includes dependents; more than 20 returns NOT APPLIED with a confirm token. expect_ids aborts unless the delete set is exactly these ids.
+  e.g. `modify_elements {"op":"delete","filter":{"category":["Furniture"],"level":"Level 3"}}`
+- `modify_elements.pin`: ids|from|filter; pinned [NOT APPLIED over 200 modified]
+  pinned:false unpins. Elements already in the requested state are counted as unchanged.
+  e.g. `modify_elements {"op":"pin","from":"r3"}`
+- `modify_elements.change_type`: ids|from|filter, type [NOT APPLIED over 200 modified]
+  The type must fit the elements' category; elements it does not fit are skipped with a warning. NOT_FOUND lists the types that fit.
+  e.g. `modify_elements {"op":"change_type","ids":["304601"],"type":"Basic Wall: Generic - 300mm"}`
+- `modify_elements.join`: ids, with
+  Joins the geometry of each id with each element in with; pairs already joined count as unchanged.
+  e.g. `modify_elements {"op":"join","ids":["304601"],"with":"305010"}`
+- `modify_elements.unjoin`: ids, with
+  e.g. `modify_elements {"op":"unjoin","ids":["304601"],"with":"305010"}`
+- `modify_elements.switch_join`: ids, with
+  Both elements must already be joined.
+  e.g. `modify_elements {"op":"switch_join","ids":["304601"],"with":"305010"}`
+- `modify_elements.cut`: ids, with
+  with is the cutting element; ids are cut. A void family instance always cuts, whichever side it is given on.
+  e.g. `modify_elements {"op":"cut","ids":["305020"],"with":"304601"}`
+- `modify_elements.uncut`: ids, with
+  Removes void and solid cuts between the elements in either direction.
+  e.g. `modify_elements {"op":"uncut","ids":["305020"],"with":"304601"}`
+- `modify_elements.attach`: ids, with; side [Revit 2027+]
+  Walls attach top or base to roofs, floors, ceilings, toposolids or walls; structural columns attach to beams, floors and roofs. side defaults to top. Revit 2027 only.
+  e.g. `modify_elements {"op":"attach","ids":["304601"],"with":"305300","side":"top"}`
+- `modify_elements.detach`: ids; with, side [Revit 2027+]
+  Without with, removes every attachment on the side (both sides when side is omitted). Revit 2027 only.
+  e.g. `modify_elements {"op":"detach","ids":["304601"],"side":"top"}`
+- `modify_elements.flip`: ids|from|filter, side [NOT APPLIED over 200 modified]
+  Doors, windows and families flip hand or facing; walls flip their orientation with side wall.
+  e.g. `modify_elements {"op":"flip","ids":["306100"],"side":"hand"}`
+- `modify_elements.split`: ids, at
+  MEP pipes and ducts break at the point; walls, structural framing and lines are copied and trimmed, and each half keeps the doors/windows on its side. Inserts spanning the split point are refused.
+  e.g. `modify_elements {"op":"split","ids":["304601"],"at":[6000,0]}`
+- `modify_elements.reshape`: ids, start+end|points; through
+  One curve-based element (wall, beam, pipe, duct, line) at a time: start+end gives a line, through or 3 points an arc; z keeps the old ends unless given. Sketch-based floors/roofs cannot be reshaped.
+  e.g. `modify_elements {"op":"reshape","ids":["304601"],"start":[0,0],"end":[10000,0]}`
+- `modify_elements.group`: ids|from|filter; name
+  Elements already in a group are refused. The new group is output as group and its type as type.
+  e.g. `modify_elements {"op":"group","from":"r7","name":"Bathroom A"}`
+- `modify_elements.ungroup`: ids|from
+  A member id ungroups the group it belongs to.
+  e.g. `modify_elements {"op":"ungroup","ids":["307000"]}`
+- `modify_elements.place_group`: name, at; level [NOT APPLIED over 500 created]
+  Model groups only; with level, at's z is the height above that level.
+  e.g. `modify_elements {"op":"place_group","name":"Bathroom A","at":[20000,0],"level":"Level 2"}`
+
+## set_parameters
+
+Set parameter values on elements, their types, views, sheets or project info: values={Mark:'D1',Width:900} for every target or rows=[{id,values}] each. Lengths mm, areas m2, angles deg; '{Param}' copies values. (writes; core profile)
+
+Params:
+- `ids` (string[]): Element, type, view or sheet ids; ['project_info'] for project info.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `filter` (object): Select like find_elements: {category,level,type,family,view,where:["Mark = D1"]}.
+- `values` (object): {param name: value}. Text may use '{Other Param}' and '{n}' (1,2,3...).
+- `rows` (object[]): Per element: [{id, values:{...}}].
+- `on` (string: instance|type): type = set on the targets' types. Default instance.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Call:
+- `set_parameters`: ids+values|from+values|filter+values|rows; on [NOT APPLIED over 200 modified]
+  Bare numbers on lengths are mm (never feet), areas m2, angles deg. English and localized parameter names both resolve (also bip:NAME). '{Param}' copies values of the same element; '{n}' counts 1,2,3 in target order.
+  e.g. `set_parameters {"from":"r3","values":{"Fire Rating":"EI30"}}`
+
+## edit_types
+
+Types and materials: duplicate, rename or delete a type; set wall/floor/roof/ceiling layers; default type per category; create or edit materials (color, transparency, patterns); rename a family. (writes, can delete)
+
+Params:
+- `type` (string): Type: 'Family: Type', type name, or id.
+- `name` (string): New name.
+- `category` (string): set_default: category.
+- `family` (string): Family name.
+- `material` (string): Material name (material_create: copy from this one).
+- `layers` (object[]): [{function:structure|substrate|thermal|finish1|finish2|membrane, material, thickness}] exterior first.
+- `color` (string): Color: #RRGGBB, 'r,g,b' or a name like red.
+- `transparency` (integer pct): 0-100.
+- `surface_pattern` (string): Fill pattern name for surfaces.
+- `cut_pattern` (string): Fill pattern name for cut.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `edit_types.duplicate_type`: type, name
+  The copy stays in the same family; it is output as type for $refs in change_set. NAME_TAKEN suggests the next free name.
+  e.g. `edit_types {"op":"duplicate_type","type":"Generic - 200mm","name":"EBA Wall 240"}`
+- `edit_types.rename_type`: type, name
+  e.g. `edit_types {"op":"rename_type","type":"EBA Wall 240","name":"EBA Wall 250"}`
+- `edit_types.delete_type`: type [NOT APPLIED over 20 deleted]
+  Deletes the type and every instance of it; more than 20 deleted elements returns NOT APPLIED with a confirm token.
+  e.g. `edit_types {"op":"delete_type","type":"EBA Wall 250"}`
+- `edit_types.set_layers`: type, layers
+  Wall, floor, roof and ceiling types; layers exterior (top) first, thickness mm, membranes 0. The core is the span of structure layers. Every instance of the type follows.
+  e.g. `edit_types {"op":"set_layers","type":"EBA Wall 240","layers":[{"function":"finish1","material":"Plaster","thickness":15},{"function":"structure","material":"Concrete","thickness":210},{"function":"finish2","material":"Plaster","thickness":15}]}`
+- `edit_types.set_default`: category, type
+  ) set the element type default; loadable categories set the family type default.
+  e.g. `edit_types {"op":"set_default","category":"Walls","type":"Generic - 200mm"}`
+- `edit_types.material_create`: name; color, transparency, surface_pattern, cut_pattern, material
+  material copies an existing material (appearance included) first. color is the shading color; patterns are fill pattern names or none.
+  e.g. `edit_types {"op":"material_create","name":"EBA Brick","color":"#B5523B"}`
+- `edit_types.material_edit`: material; name, color, transparency, surface_pattern, cut_pattern
+  e.g. `edit_types {"op":"material_edit","material":"EBA Brick","transparency":20}`
+- `edit_types.rename_family`: family, name
+  Loadable families only (system families have no family element).
+  e.g. `edit_types {"op":"rename_family","family":"Single-Flush","name":"EBA Door Single"}`
+
+## edit_views
+
+Create views (floor, ceiling, structural, area plan, section, elevation, 3D, callout, drafting, legend copy), duplicate, rename, delete, templates; set scale, detail, crop, view range, phase, 3D orientation, section box. (writes, can delete)
+
+Params:
+- `kind` (string: floor_plan|ceiling_plan|structural_plan|area_plan|section|elevation|3d|callout|drafting|legend): create: view kind.
+- `view` (string): View name or id (callout/legend: the parent/source view).
+- `views` (string[]): View/sheet names or ids.
+- `level` (string): Level name or id.
+- `name` (string): Name.
+- `view_type` (string): View family type name. Default: first of the kind.
+- `template` (string): View template name; 'none' removes it.
+- `scale` (integer): Scale denominator: 100 = 1:100.
+- `detail_level` (string: coarse|medium|fine): Detail level.
+- `style` (string: wireframe|hidden|shaded|consistent|realistic): Visual style.
+- `discipline` (string: architectural|structural|mechanical|electrical|plumbing|coordination): View discipline.
+- `phase` (string): Phase name.
+- `phase_filter` (string): Phase filter name.
+- `crop` (boolean): Crop view on/off.
+- `crop_box` (number[] mm): Crop [x0,y0,x1,y1] mm (plan) or [x0,y0,z0,x1,y1,z1].
+- `crop_visible` (boolean): Show crop region.
+- `view_range` (object mm): Plans: {top,cut,bottom,depth} mm above the view level; or {cut:1200}.
+- `far_clip` (number mm): Sections/elevations: far clip depth mm.
+- `scope_box` (string): Scope box name; 'none' removes.
+- `orient` (string: iso_se|iso_sw|iso_ne|iso_nw|top|front|back|left|right): 3D direction.
+- `section_box` (number[] mm): 3D: [x0,y0,z0,x1,y1,z1] mm; [] turns it off.
+- `ids` (string[]): create 3d/section: fit the box around these elements.
+- `from` (string): Like ids: r# handle or 'selection'.
+- `start` (number[] mm): section: cut line start [x,y].
+- `end` (number[] mm): section: cut line end [x,y] (looks left of start->end).
+- `depth` (number mm): section: view depth mm. Default 3000.
+- `height` (number mm): section: height mm above level. Default level-to-level.
+- `at` (number[] mm): elevation: marker point [x,y]; duplicate: viewport center on sheet.
+- `direction` (string: north|south|east|west): elevation: looking direction.
+- `region` (number[] mm): callout: [x0,y0,x1,y1] mm in the parent view.
+- `area_scheme` (string): area_plan: area scheme name.
+- `perspective` (boolean): 3d: perspective camera. Default false (isometric).
+- `mode` (string: copy|detailing|dependent): duplicate: default copy.
+- `sheet` (string): duplicate: also place the copy on this sheet.
+- `underlay` (string): Underlay level name; 'none'.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `edit_views.create`: kind; level, name, view_type, template, scale, start, end, depth, height, at, direction, orient, section_box, ids, from, region, view, area_scheme, perspective
+  section: looks to the left of start->end, cut plane on the line, depth = far clip; with ids/from and no start/end it fits around the elements looking north. elevation: marker at at=[x,y] in a plan of level= (or view=), looking direction=.
+  e.g. `edit_views {"op":"create","kind":"section","start":[0,4000],"end":[12000,4000],"depth":5000,"name":"Section A"}`
+- `edit_views.duplicate`: view; mode, name, sheet, at
+  at = viewport center in sheet mm (default: sheet center).
+  e.g. `edit_views {"op":"duplicate","view":"Level 1","mode":"dependent","name":"Level 1 - Part A"}`
+- `edit_views.rename`: view, name
+  e.g. `edit_views {"op":"rename","view":"Level 1","name":"EG Grundriss"}`
+- `edit_views.set`: view|views; scale, detail_level, style, discipline, phase, phase_filter, template, crop, crop_box, crop_visible, view_range, far_clip, scope_box, orient, section_box, underlay
+  Settings a view template controls give TEMPLATE_CONTROLLED (get_view lists template_controls); set them on the template or pass template:'none'. crop_box turns crop on. section_box [] turns it off.
+  e.g. `edit_views {"op":"set","view":"Level 1","scale":50,"detail_level":"fine","view_range":{"cut":1100}}`
+- `edit_views.create_template`: view, name
+  e.g. `edit_views {"op":"create_template","view":"Level 1","name":"EBA Plan 1:50"}`
+- `edit_views.delete`: views [NOT APPLIED over 20 deleted]
+  Deleting views also deletes their viewports, dependent views and view-specific annotation; more than the confirm limit needs the user's OK. The active view cannot be deleted.
+  e.g. `edit_views {"op":"delete","views":["Section A"]}`
+
+## view_graphics
+
+Change how a view shows things: override color, lines, pattern, transparency, halftone for elements, categories or filters; permanent hide/unhide; view filters with rules; color by parameter; reset. (writes)
+
+Params:
+- `view` (string): View name/id or 'active'; a template name also works.
+- `views` (string[]): View/sheet names or ids.
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `filter` (object): Select like find_elements: {category,level,type,family,view,where:["Mark = D1"]}.
+- `category` (string[]): Categories, e.g. ["Walls","Doors"] (a string is fine).
+- `view_filter` (string): Revit view filter name.
+- `categories` (string[]): filter_create/edit: categories the filter applies to.
+- `rules` (string[]): Filter rules 'Param op value' (ANDed), op: = != > >= < <= contains startswith.
+- `param` (string): color_by: parameter whose values get distinct colors.
+- `color` (string): Color: #RRGGBB, 'r,g,b' or a name like red.
+- `fill` (boolean): Solid surface fill in color. Default true for elements, false for filters.
+- `line_weight` (integer): 1-16.
+- `fill_pattern` (string): Fill pattern name. Default Solid fill.
+- `transparency` (integer pct): 0-100.
+- `halftone` (boolean): Halftone.
+- `visible` (boolean): filter_apply: filtered elements visible. Default true.
+- every op also takes: `doc`, `preview`, `confirm`
+
+Ops (`op`):
+- `view_graphics.override`: view, ids|from|filter|category|view_filter; color, fill, line_weight, fill_pattern, transparency, halftone [NOT APPLIED over 200 modified]
+  Only the given attributes change; others keep their current override. color sets lines (and the surface fill when fill is true, the default for elements and categories).
+  e.g. `view_graphics {"op":"override","view":"Level 1","from":"r3","color":"#FF0000","fill":true}`
+- `view_graphics.reset`: view; ids/from/category/view_filter [NOT APPLIED over 200 modified]
+  Without a target it clears every element, category and filter override of the view (template-controlled ones are kept with a warning).
+  e.g. `view_graphics {"op":"reset","view":"Level 1","from":"r3"}`
+- `view_graphics.hide`: view, ids|from|category [NOT APPLIED over 200 modified]
+  Permanent hide in the view; ui hide is the temporary one.
+  e.g. `view_graphics {"op":"hide","view":"Level 1","category":["Furniture"]}`
+- `view_graphics.unhide`: view, ids|from|category [NOT APPLIED over 200 modified]
+  e.g. `view_graphics {"op":"unhide","view":"Level 1","category":["Furniture"]}`
+- `view_graphics.color_by`: view, category, param [NOT APPLIED over 200 modified]
+  legend [[value, color, count]]. Rooms/areas/spaces show their Interior Fill.
+  e.g. `view_graphics {"op":"color_by","view":"Level 1","category":["Rooms"],"param":"Department"}`
+- `view_graphics.filter_create`: view_filter, categories, rules; view, visible, color, fill, transparency, halftone [NOT APPLIED over 200 modified]
+  = > >= < <= contains startswith empty notempty; lengths in mm. The parameter must be filterable for every category.
+  e.g. `view_graphics {"op":"filter_create","view_filter":"Fire rated doors","categories":["Doors"],"rules":["Fire Rating notempty"],"view":"Level 1","color":"red"}`
+- `view_graphics.filter_edit`: view_filter; categories, rules [NOT APPLIED over 200 modified]
+  e.g. `view_graphics {"op":"filter_edit","view_filter":"Fire rated doors","rules":["Fire Rating = EI30"]}`
+- `view_graphics.filter_apply`: view_filter, view|views; visible, color, fill, line_weight, fill_pattern, transparency, halftone [NOT APPLIED over 200 modified]
+  e.g. `view_graphics {"op":"filter_apply","view_filter":"Fire rated doors","views":["Level 1","Level 2"],"color":"#FF8800"}`
+- `view_graphics.filter_remove`: view_filter, view|views [NOT APPLIED over 200 modified]
+  e.g. `view_graphics {"op":"filter_remove","view_filter":"Fire rated doors","view":"Level 2"}`
+
+## edit_sheets
+
+Sheets: create (one or many), duplicate, renumber/rename, set titleblock; place, move or remove views, schedules and legends; viewport type; revisions create/edit and add/remove on sheets. Sheet mm from origin. (writes, can delete)
+
+Params:
+- `sheet` (string): Sheet number, name or id.
+- `sheets` (string[]): Several sheets (numbers/ids).
+- `number` (string): Sheet number (duplicate/rename: the new number).
+- `name` (string): Name.
+- `items` (object[]): create many: [{number,name}].
+- `titleblock` (string): Titleblock type. Default: first loaded.
+- `mode` (string: empty|with_views|with_detailing): duplicate: default with_views.
+- `prefix` (string): duplicate: prefix for copied view names.
+- `view` (string): View, schedule or legend name/id (placed or to place).
+- `at` (number[] mm): Viewport center [x,y] mm on the sheet. Default: sheet center.
+- `by` (number[] mm): move_viewport: shift [dx,dy] mm.
+- `type` (string): Viewport type name.
+- `revision` (string): Revision description, number or id.
+- `description` (string): Revision description.
+- `date` (string): Revision date text.
+- `issued_by` (string): Issued by.
+- `issued_to` (string): Issued to.
+- `issued` (boolean): Mark revision issued.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `edit_sheets.create`: number|items; name, titleblock [NOT APPLIED over 500 created]
+  One sheet (number) or several (items [{number,name}]). titleblock defaults to the document default or the first loaded one; with none loaded the sheet has no titleblock. A used number gives NAME_TAKEN with the next free number.
+  e.g. `edit_sheets {"op":"create","items":[{"number":"A101","name":"Ground floor"},{"number":"A102","name":"First floor"}]}`
+- `edit_sheets.duplicate`: sheet, number; name, mode, prefix
+  mode empty copies the sheet and titleblock; with_views duplicates the placed views too (prefix renames the copies); with_detailing also copies their detailing. Viewports keep position and type; sheet parameters are copied.
+  e.g. `edit_sheets {"op":"duplicate","sheet":"A101","number":"A103","mode":"with_views"}`
+- `edit_sheets.rename`: sheet; number, name
+  Changes the number and/or name; a used number gives NAME_TAKEN with the next free number.
+  e.g. `edit_sheets {"op":"rename","sheet":"A101","name":"Ground floor plan"}`
+- `edit_sheets.set_titleblock`: sheet|sheets, titleblock
+  Changes the titleblock type on each sheet, or places it at the sheet origin when the sheet has none.
+  e.g. `edit_sheets {"op":"set_titleblock","sheets":["A101","A102"],"titleblock":"A1 metric"}`
+- `edit_sheets.place`: sheet, view; at, type
+  Views and legends become viewports centred at 'at' (default: titleblock centre); schedules are placed with their top-left at 'at'. A view already on another sheet gives UNSUPPORTED_OP (duplicate it with edit_views).
+  e.g. `edit_sheets {"op":"place","sheet":"A101","view":"Level 1"}`
+- `edit_sheets.move_viewport`: sheet, view, at|by
+  at = new centre [x,y] mm on the sheet, by = shift [dx,dy] mm. view is the placed view, schedule or legend (or the viewport id).
+  e.g. `edit_sheets {"op":"move_viewport","sheet":"A101","view":"Level 1","by":[50,0]}`
+- `edit_sheets.remove_viewport`: sheet, view
+  Removes the viewport or schedule instance from the sheet; the view itself is kept.
+  e.g. `edit_sheets {"op":"remove_viewport","sheet":"A101","view":"Level 1"}`
+- `edit_sheets.set_viewport_type`: sheet, view, type
+  type is a viewport type name valid for this viewport (list kind viewport_types). Schedules have no viewport type.
+  e.g. `edit_sheets {"op":"set_viewport_type","sheet":"A101","view":"Level 1","type":"Title w Line"}`
+- `edit_sheets.revision_create`: description; date, issued_by, issued_to
+  Creates the next revision in sequence; refer to it later by description, number, 'Seq. n' or id.
+  e.g. `edit_sheets {"op":"revision_create","description":"Issue 2","date":"2026-10-02","issued_by":"EBA"}`
+- `edit_sheets.revision_edit`: revision; description, date, issued_by, issued_to, issued
+  An issued revision is locked: pass issued:false to edit it (issued:true locks it again after the edits).
+  e.g. `edit_sheets {"op":"revision_edit","revision":"Issue 2","issued":true}`
+- `edit_sheets.revision_add`: revision, sheet|sheets
+  Adds the revision to the sheets' revision lists (additional revisions).
+  e.g. `edit_sheets {"op":"revision_add","revision":"Issue 2","sheets":["A101","A102"]}`
+- `edit_sheets.revision_remove`: revision, sheet|sheets
+  Removes the revision from the sheets' additional revisions; it stays shown (warn PARTIAL_RESULT) where revision clouds on the sheet or its views use it.
+  e.g. `edit_sheets {"op":"revision_remove","revision":"Issue 2","sheet":"A102"}`
+
+## annotate
+
+Annotation in a view: tag elements or tag_all by category, text notes, dimensions (refs, grids, walls), spot elevations/coordinates, detail lines, filled regions, detail items/symbols, revision clouds, copy to views. (writes)
+
+Params:
+- `view` (string): View name/id or 'active'.
+- `views` (string[]): copy_to_views: target views.
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `filter` (object): Select like find_elements: {category,level,type,family,view,where:["Mark = D1"]}.
+- `category` (string[]): Categories, e.g. ["Walls","Doors"] (a string is fine).
+- `type` (string): Tag/text/dimension/region/detail type. Default: category default.
+- `at` (number[] mm): Point [x,y] or [x,y,z] mm.
+- `start` (number[] mm): Dimension line start / line-based item start.
+- `end` (number[] mm): Dimension line end / line-based item end.
+- `through` (number[] mm): Point on arc.
+- `points` (array[] mm): Line/loop points [[x,y],...] mm.
+- `holes` (array[] mm): filled_region inner loops.
+- `text` (string): Text note content.
+- `width` (number mm): Text wrap width mm (paper).
+- `rotation` (number deg): Degrees, counterclockwise. Default 0.
+- `leader` (boolean): Add a leader.
+- `orientation` (string: horizontal|vertical|model): Tag orientation.
+- `untagged_only` (boolean): tag_all: skip elements already tagged. Default true.
+- `offset` (number[] mm): tag_all: tag head offset [dx,dy] mm from element center.
+- `refs` (string[]): dimension: stable reference strings from describe_elements.
+- `mode` (string: centers|faces|exterior|core): dimension with ids: which references. Default centers.
+- `overrides` (object[]): Dimension text: [{segment,value,prefix,suffix,above,below}].
+- `by` (number[] mm): Offset vector [dx,dy(,dz)] mm.
+- `kind` (string: elevation|coordinate|slope): spot kind.
+- `host` (string): spot: element id whose face is picked at 'at'.
+- `revision` (string): Revision description or number.
+- `line_style` (string): Line style name.
+- `closed` (boolean): Close the loop.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `annotate.tag`: view, ids|from|filter; type, at, leader, orientation
+  Tags each element at its centre (at: one element only). type is a tag type; default: the category's default tag. Rooms, areas and spaces get room/area/space tags (plan views). Elements not visible in the view are skipped with a warning.
+  e.g. `annotate {"op":"tag","view":"Level 1","ids":["306100"],"leader":true}`
+- `annotate.tag_all`: view, category; type, untagged_only, leader, offset [NOT APPLIED over 500 created]
+  Tags every element of the categories visible in the view, skipping already tagged ones (untagged_only, default true). offset moves the tag heads [dx,dy] mm from the element centres.
+  e.g. `annotate {"op":"tag_all","view":"Level 1","category":["Doors","Windows"]}`
+- `annotate.text`: view, at, text; type, width, rotation, leader
+  at is a model point (plans, sections) or sheet mm (sheets, drafting views). width is the paper wrap width in mm (clamped to the type's limits); a line break starts a new paragraph.
+  e.g. `annotate {"op":"text","view":"Level 1","at":[500,9000],"text":"Existing stair to remain"}`
+- `annotate.dimension`: view, refs|ids, start, end; type, mode, overrides
+  A linear dimension along start-end through the references: refs (stable strings from describe_elements) or ids (grids, levels, reference planes; walls and family instances by mode centers|faces|exterior|core).
+  e.g. `annotate {"op":"dimension","view":"Level 1","ids":["301001","301002","301003"],"start":[0,-2000],"end":[12000,-2000]}`
+- `annotate.dimension_edit`: ids; type, by, overrides, refs, start, end
+  type, by (move the dimension line) and overrides edit in place. refs or start+end recreate the dimension with the new references/line (new id; the old one is deleted).
+  e.g. `annotate {"op":"dimension_edit","ids":["308000"],"by":[0,500]}`
+- `annotate.spot`: view, kind, host, at; type, leader
+  Spot elevation or coordinate on the host face under 'at' (plans: the top face; sections: the face toward the viewer). Spot slopes cannot be created through the API (UNSUPPORTED_OP).
+  e.g. `annotate {"op":"spot","view":"Level 1","kind":"elevation","host":"305000","at":[3000,2000]}`
+- `annotate.detail_line`: view, points; line_style, closed, through
+  A chain of detail lines through points (closed joins the ends); 2 points + through make an arc.
+  e.g. `annotate {"op":"detail_line","view":"Level 1","points":[[0,-1000],[12000,-1000]],"line_style":"Thin Lines"}`
+- `annotate.filled_region`: view, points; type, holes, line_style
+  Outline points (closed automatically) with optional holes; type defaults to the document's default filled region type.
+  e.g. `annotate {"op":"filled_region","view":"Level 1","points":[[0,0],[2000,0],[2000,2000],[0,2000]]}`
+- `annotate.detail_item`: view, type, at|start+end; rotation
+  Detail components and annotation symbols: point-based types take at (+ rotation), line-based ones start+end.
+  e.g. `annotate {"op":"detail_item","view":"Detail 1","type":"Break Line: Break Line","start":[0,0],"end":[2000,0]}`
+- `annotate.revision_cloud`: view, points, revision
+  A closed cloud through the points for a revision that is not issued; the revision then shows on sheets showing this view.
+  e.g. `annotate {"op":"revision_cloud","view":"Level 1","points":[[0,0],[3000,0],[3000,2000],[0,2000]],"revision":"Issue 2"}`
+- `annotate.copy_to_views`: view, views, ids|from
+  Copies view-specific elements (tags, text, dimensions, detailing) of 'view' into each target view at the same position.
+  e.g. `annotate {"op":"copy_to_views","view":"Level 1","views":["Level 2"],"from":"r9"}`
+
+## edit_schedules
+
+Create schedules (regular, material takeoff, key) with fields, filters, sorting; add, remove, order, rename or hide fields; set filters, sort/group, itemize, totals; duplicate. Read rows with read_schedule. (writes)
+
+Params:
+- `schedule` (string): Schedule name or id.
+- `category` (string): create: category, e.g. Doors.
+- `name` (string): Name.
+- `kind` (string: regular|material_takeoff|key): create: default regular.
+- `fields` (string[]): Field names, e.g. ['Mark','Type','Width'].
+- `field` (string): One field name.
+- `heading` (string): Column heading.
+- `hidden` (boolean): Hide the column.
+- `filters` (string[]): ['Level = Level 1', 'Width > 900'] (max 8, ANDed); [] clears.
+- `sort` (string[]): Sort/group fields in order; prefix '-' for descending.
+- `headers` (boolean): set_sort: group headers. Default false.
+- `itemize` (boolean): Itemize every instance. Default true.
+- `totals` (boolean): Grand totals (set_field: column total).
+- every op also takes: `doc`, `preview`, `confirm`
+
+Ops (`op`):
+- `edit_schedules.create`: category; name, kind, fields, filters, sort, itemize, totals
+  Fields resolve by name, heading or English label (read_schedule {category, available:true} lists them). Without fields a regular schedule gets Family and Type + Count. category 'Multi-Category' makes a multi-category schedule.
+  e.g. `edit_schedules {"op":"create","category":"Doors","name":"Door Schedule","fields":["Mark","Type","Width","Height","Level"],"sort":["Level","Mark"]}`
+- `edit_schedules.add_fields`: schedule, fields
+  Appends fields; fields already in the schedule are skipped with a warning.
+  e.g. `edit_schedules {"op":"add_fields","schedule":"Door Schedule","fields":["Fire Rating"]}`
+- `edit_schedules.remove_fields`: schedule, fields
+  Removes fields; filters and sorting that use them are removed too (warned).
+  e.g. `edit_schedules {"op":"remove_fields","schedule":"Door Schedule","fields":["Fire Rating"]}`
+- `edit_schedules.set_field`: schedule, field; heading, hidden, totals
+  Column heading, hidden, and totals (column total; numeric fields only).
+  e.g. `edit_schedules {"op":"set_field","schedule":"Door Schedule","field":"Mark","heading":"Door No."}`
+- `edit_schedules.order_fields`: schedule, fields
+  The named fields come first in this order; the others follow in their current order.
+  e.g. `edit_schedules {"op":"order_fields","schedule":"Door Schedule","fields":["Level","Mark","Type","Width","Height"]}`
+- `edit_schedules.set_filters`: schedule, filters
+  Replaces all filters (ANDed, max 8; [] clears). = > >= < <= contains, not contains, begins with, ends with, has value, has no value. Lengths in mm; Level and other element fields by name. Fields not in the schedule are added hidden.
+  e.g. `edit_schedules {"op":"set_filters","schedule":"Door Schedule","filters":["Level = Level 1"]}`
+- `edit_schedules.set_sort`: schedule, sort; headers, totals
+  Replaces the sort/group fields in order ('-' = descending; [] clears). headers adds group headers; totals adds group footers and grand totals.
+  e.g. `edit_schedules {"op":"set_sort","schedule":"Door Schedule","sort":["Level","-Mark"],"headers":true}`
+- `edit_schedules.set_options`: schedule; name, itemize, totals
+  Rename (NAME_TAKEN when used), itemize every instance, grand totals.
+  e.g. `edit_schedules {"op":"set_options","schedule":"Door Schedule","itemize":true,"totals":true}`
+- `edit_schedules.duplicate`: schedule, name
+  Copies the schedule definition under a new name.
+  e.g. `edit_schedules {"op":"duplicate","schedule":"Door Schedule","name":"Door Schedule - Level 2"}`
+
+## edit_family
+
+Edit a family's parameters and types: add/remove/rename params, formulas, values per type, add/rename/delete types. family= a loaded family (edited, then reloaded) or doc= an open .rfa; save/save_as. (writes, can delete)
+
+Params:
+- `family` (string): Loaded family: edited in the background and reloaded. open: keep it open as doc #n.
+- `name` (string): Parameter name (type ops: the type name).
+- `new_name` (string): New name.
+- `kind` (string: type|instance): Default type.
+- `data` (string): Data type: text, length, area, volume, angle, number, integer, yesno, material, url, image, or family_type:<Category>.
+- `group` (string): Properties group, e.g. Dimensions, Identity Data, Constraints. Default Other.
+- `shared` (string): Shared parameter name or GUID (from the shared parameter file).
+- `reporting` (boolean): Reporting parameter.
+- `formula` (string): Formula, e.g. 'Width / 2'; '' clears.
+- `value` (string): Value (lengths mm; '900' ok).
+- `values` (object): add_type: {param: value}.
+- `types` (string[]): set_values: family types to change; ['*'] = all. Required when >1 type.
+- `rows` (object[]): set_values: [{type, values:{param: value}}].
+- `copy_from` (string): add_type: copy values from this type.
+- `category` (string): set_category: family category.
+- `reload` (boolean): With family=: reload into the project after the edit. Default true.
+- `overwrite` (boolean): On reload: overwrite project type parameter values. Default: only if this call changed type values.
+- `into` (string[]): load_into: open projects to load into. Default: the pinned project only; more than one asks to confirm.
+- `path` (string): save_as: .rfa path.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `edit_family.open`: family [may become job j#; not in change_set]
+  Opens a background copy of the loaded family as its own doc #n (not shown in Revit's window) and re-pins to it (notice TARGET_NOW). Then edit with doc=#n; load_into reloads it; save_as keeps a file.
+  e.g. `edit_family {"op":"open","family":"Single-Flush"}`
+- `edit_family.add_param`: name; kind, data, group, shared, formula, value, reporting
+  With family= the family is edited in the background and reloaded; project type values are kept unless value= is given (then the family's values overwrite them). shared= takes the shared parameter's own name and data type. value= is set on every type.
+  e.g. `edit_family {"op":"add_param","family":"Single-Flush","name":"Kick Plate","data":"yesno","kind":"instance","group":"Construction"}`
+- `edit_family.remove_param`: name
+  Refused with PARAM_IN_USE while a formula, dimension label or element parameter uses it (Revit would silently drop those formulas). Built-in parameters cannot be removed.
+  e.g. `edit_family {"op":"remove_param","family":"Single-Flush","name":"Kick Plate"}`
+- `edit_family.rename_param`: name, new_name
+  Formulas follow the new name. Shared and built-in parameters cannot be renamed.
+  e.g. `edit_family {"op":"rename_param","family":"Single-Flush","name":"Kick Plate","new_name":"Kick Plate Fitted"}`
+- `edit_family.set_param`: name; kind, group, reporting
+  Changes kind (type|instance), properties group and/or reporting of a family or shared parameter.
+  e.g. `edit_family {"op":"set_param","family":"Single-Flush","name":"Kick Plate","kind":"type"}`
+- `edit_family.set_formula`: name, formula
+  formula '' clears the formula. Names in formulas are case-sensitive; lengths in formulas carry units ('900 mm').
+  e.g. `edit_family {"op":"set_formula","family":"Single-Flush","name":"Leaf Width","formula":"Width - 2 * Frame Width"}`
+- `edit_family.set_values`: name+value|rows; types
+  5 m'), areas m2, angles deg, yes/no true|false, materials and nested types by name. With several types, types= is required (['*'] = all). With family= the reload overwrites the project's values of the family types; the result lists types_changed.
+  e.g. `edit_family {"op":"set_values","family":"Single-Flush","name":"Width","value":"1000","types":["0915 x 2134mm"]}`
+- `edit_family.add_type`: name; copy_from, values
+  Copies the values of copy_from (default: the family's current type), then sets values. With family= the new type appears in the project after the reload.
+  e.g. `edit_family {"op":"add_type","family":"Single-Flush","name":"1010 x 2250mm","values":{"Width":1010,"Height":2250}}`
+- `edit_family.rename_type`: name, new_name
+  With family= the project's type is renamed too, so placed instances keep their type.
+  e.g. `edit_family {"op":"rename_type","family":"Single-Flush","name":"1010 x 2250mm","new_name":"1010 x 2300mm"}`
+- `edit_family.delete_type`: name
+  A family keeps at least one type. With family= an unused project copy of the type is deleted after the reload; a type still placed stays in the project (warning).
+  e.g. `edit_family {"op":"delete_type","family":"Single-Flush","name":"1010 x 2300mm"}`
+- `edit_family.set_category`: category
+  Changes the category of a family doc (best on an open family doc, doc=). Revit may refuse to reload a family into a project under another category.
+  e.g. `edit_family {"op":"set_category","doc":"#3","category":"Furniture"}`
+- `edit_family.load_into`: (none); into, overwrite [NOT APPLIED if several docs; not in change_set; family doc]
+  Defaults to the session's project pin only; other projects must be named in into (#n or exact title, same Revit). More than one doc returns NOT APPLIED. overwrite (default false) replaces the projects' type parameter values with the family's.
+  e.g. `edit_family {"op":"load_into","doc":"#3"}`
+- `edit_family.save`: (none) [not in change_set; family doc]
+  rfa to its file. A family opened from a project has no file yet: use save_as.
+  e.g. `edit_family {"op":"save","doc":"#3"}`
+- `edit_family.save_as`: path [NOT APPLIED if a file exists; not in change_set; family doc]
+  rfa path (folders are created). An existing file returns NOT APPLIED (file_overwrite) first.
+  e.g. `edit_family {"op":"save_as","doc":"#3","path":"C:\\Families\\EBA Desk.rfa"}`
+
+## mep
+
+MEP: pipes, ducts, conduits, cable trays and flex runs along points with automatic elbows; connect elements; create/edit piping, duct and electrical systems, circuits; insulation; spaces and zones. (writes)
+
+Params:
+- `points` (array[] mm): Run path [[x,y],...] or [[x,y,z],...] (z above level).
+- `level` (string): Level name or id.
+- `offset` (number mm): Run centerline height above level mm. Default 2700.
+- `type` (string): Pipe/duct/conduit/tray/insulation type name.
+- `system` (string): System type (e.g. Domestic Cold Water, Supply Air) or system name.
+- `size` (number mm): Diameter mm.
+- `width` (number mm): Duct/tray width mm.
+- `height` (number mm): Duct/tray height mm.
+- `slope` (number pct): Pipes: slope in percent. Default 0.
+- `fittings` (boolean): Add elbows/tees at bends. Default true.
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `kind` (string: piping|duct|electrical): system_create kind.
+- `name` (string): Name.
+- `number` (string): Space number.
+- `at` (number[] mm): Point [x,y] or [x,y,z] mm.
+- `all` (boolean): space: in every enclosed area of the level.
+- `thickness` (number mm): insulate: mm.
+- `panel` (string): circuit: panel name or id.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `mep.pipe`: points, level; type, system, size, offset, slope, fittings [NOT APPLIED over 500 created]
+  One segment per pair of points, elbows at bends (fittings, default true); a refused fitting gives warn FITTING_FAILED and the segments stay. Points without z sit at level + offset (default 2700); slope (percent) falls along the run.
+  e.g. `mep {"op":"pipe","level":"Level 1","points":[[0,0],[5000,0],[5000,3000]],"system":"Domestic Cold Water","size":25,"offset":2800}`
+- `mep.duct`: points, level; type, system, size/width+height, offset, fittings [NOT APPLIED over 500 created]
+  size makes a round duct, width + height a rectangular one; without type the first duct type of that shape is used. Elbows at bends as for pipes.
+  e.g. `mep {"op":"duct","level":"Level 1","points":[[0,1000],[10000,1000]],"system":"Supply Air","width":400,"height":250}`
+- `mep.conduit`: points, level; type, size, offset, fittings [NOT APPLIED over 500 created]
+  One conduit per segment with elbows at bends; size is the diameter.
+  e.g. `mep {"op":"conduit","level":"Level 1","points":[[0,2000],[8000,2000]],"size":25}`
+- `mep.cable_tray`: points, level; type, width, height, offset, fittings [NOT APPLIED over 500 created]
+  One tray per segment with elbows at bends.
+  e.g. `mep {"op":"cable_tray","level":"Level 1","points":[[0,3000],[8000,3000]],"width":300,"height":100}`
+- `mep.flex_pipe`: points, level; type, system, size, offset [NOT APPLIED over 500 created]
+  One flexible pipe through all points (at least 2).
+  e.g. `mep {"op":"flex_pipe","level":"Level 1","points":[[0,0],[500,300],[1000,300]],"size":20}`
+- `mep.flex_duct`: points, level; type, system, size, offset [NOT APPLIED over 500 created]
+  One flexible round duct through all points (at least 2).
+  e.g. `mep {"op":"flex_duct","level":"Level 1","points":[[0,1000],[600,1400],[1200,1400]],"size":200}`
+- `mep.connect`: ids [NOT APPLIED over 500 created]
+  Connects consecutive ids at their closest free connectors: touching connectors are joined, two runs apart get an elbow/transition; equipment must touch the run end.
+  e.g. `mep {"op":"connect","ids":["309001","309002"]}`
+- `mep.system_create`: ids, kind; name, type [NOT APPLIED over 500 created]
+  ids are equipment, fixtures or terminals; their free connectors of the kind join the new system (runs join through their connections). type is the system type (default supply air / domestic cold water). kind electrical makes a circuit.
+  e.g. `mep {"op":"system_create","ids":["309100","309101"],"kind":"duct","name":"SA-01"}`
+- `mep.system_add`: system, ids [NOT APPLIED over 500 created]
+  system is a system name or id; for circuits the elements are added to the circuit.
+  e.g. `mep {"op":"system_add","system":"SA-01","ids":["309102"]}`
+- `mep.system_remove`: system, ids [NOT APPLIED over 500 created]
+  Removes the elements' connectors from the system (or the elements from the circuit).
+  e.g. `mep {"op":"system_remove","system":"SA-01","ids":["309102"]}`
+- `mep.circuit`: ids; panel [NOT APPLIED over 500 created]
+  A power circuit of elements with electrical connectors; panel (name or id) is selected when given.
+  e.g. `mep {"op":"circuit","ids":["309200","309201"],"panel":"LP-1"}`
+- `mep.insulate`: ids|from, type, thickness [NOT APPLIED over 500 created]
+  Pipes, ducts and their fittings/accessories; existing insulation gets the new thickness. type is a pipe or duct insulation type name.
+  e.g. `mep {"op":"insulate","from":"r12","type":"Fibreglass","thickness":25}`
+- `mep.space`: level, at|all; name, number [NOT APPLIED over 500 created]
+  at must lie in an enclosed area without a space; all fills every enclosed area on the level (needs a floor plan of the level).
+  e.g. `mep {"op":"space","level":"Level 1","all":true}`
+- `mep.zone`: name, ids; level [NOT APPLIED over 500 created]
+  ids are spaces. On Revit 2027 the zone is a space-based system-zone and all spaces must be on one level.
+  e.g. `mep {"op":"zone","name":"Zone 1","ids":["309300","309301"]}`
+
+## structure
+
+Structure: columns at points or grid intersections, beams along lines or between columns, braces, beam systems, isolated/wall/slab foundations. type='Family: Type'; lengths mm. (writes)
+
+Params:
+- `type` (string): Type: 'Family: Type', type name, or id.
+- `level` (string): Base or reference level.
+- `top` (string): column: top level. Default next level up.
+- `at` (number[] mm): Point [x,y] or [x,y,z] mm.
+- `points` (array[] mm): Several points (columns) or a chain (beams, beam_system outline).
+- `grids` (string[]): column: at intersections of these grids; ['*'] = all.
+- `between` (string[]): beam: column ids to connect in order.
+- `start` (number[] mm): Beam/brace or slanted column start [x,y,z].
+- `end` (number[] mm): Beam/brace or slanted column end [x,y,z].
+- `offset` (number mm): Offset from level mm (beam z, column base).
+- `top_offset` (number mm): column: top offset mm.
+- `rotation` (number deg): Degrees, counterclockwise. Default 0.
+- `spacing` (number mm): beam_system: spacing mm.
+- `direction` (number deg): beam_system: beam direction degrees. Default 0 (x axis).
+- `kind` (string: isolated|wall|slab): foundation kind.
+- `ids` (string[]): foundation: columns (isolated) or walls (wall).
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Ops (`op`):
+- `structure.column`: type, level, at|points|grids; top, offset, top_offset, rotation, start, end [NOT APPLIED over 500 created]
+  One column per point or grid intersection (grids ['*'] = all) from level to top (default the next level up); points that already have a column on that level are skipped. A slanted column takes start + end (z above level).
+  e.g. `structure {"op":"column","type":"Concrete-Rectangular-Column: 300 x 450mm","level":"Level 1","grids":["*"]}`
+- `structure.beam`: type, level, start+end|points|between; offset [NOT APPLIED over 500 created]
+  start/end, a chain of points (one beam per segment) or between = column ids connected in order. z of points is height above level; else level + offset.
+  e.g. `structure {"op":"beam","type":"W-Wide Flange: W310X38.7","level":"Level 2","start":[0,0],"end":[6000,0]}`
+- `structure.brace`: type, level, start, end [NOT APPLIED over 500 created]
+  start and end are [x,y,z] with z above level.
+  e.g. `structure {"op":"brace","type":"HSS-Hollow Structural Section: HSS152X152X9.5","level":"Level 1","start":[0,0,0],"end":[6000,0,3500]}`
+- `structure.beam_system`: type, level, points; spacing, direction [NOT APPLIED over 500 created]
+  points is the outline on level; beams run along direction (degrees from the x axis) at a fixed spacing (else the type's layout rule).
+  e.g. `structure {"op":"beam_system","type":"W-Wide Flange: W310X38.7","level":"Level 2","points":[[0,0],[6000,0],[6000,8000],[0,8000]],"spacing":1500}`
+- `structure.foundation`: kind, type; ids/from, points, level [NOT APPLIED over 500 created]
+  isolated: footings under the columns in ids/from (or at points on level); wall: a wall foundation under each wall (walls that have one are skipped); slab: a foundation slab from the points outline on level.
+  e.g. `structure {"op":"foundation","kind":"isolated","type":"Footing-Rectangular: 1800 x 1200 x 450mm","from":"r14"}`
+
+## manage_document
+
+Files: open (rvt/rfa; detach, audit, worksets), activate, save, save_as, close, new project from template, new family from .rft, purge unused, project units, base/survey point. Risky ones ask to confirm. (writes, can delete)
+
+Params:
+- `path` (string): File path (.rvt, .rfa).
+- `template` (string): Template .rte/.rft path or name. new_project default: settings template.
+- `activate` (boolean): open/new_project: show it in the UI. Default true.
+- `local` (string): open (central model): path of the new local copy. Default Documents\<name>_<user>.rvt.
+- `central` (boolean): open: open the central file itself instead of a local copy (asks to confirm).
+- `detach` (string: no|preserve|discard): open: detach from central. Default no.
+- `audit` (boolean): open: audit.
+- `worksets` (string: all|none|last|editable): open: worksets to open. Default last.
+- `overwrite` (boolean): Replace an existing file.
+- `as_central` (boolean): save_as: save as central model.
+- `compact` (boolean): Compact the file.
+- `save` (boolean): close: save first. Default false (unsaved changes ask to confirm).
+- `passes` (integer): purge: repeat passes 1-3. Default 3.
+- `unit` (string: mm|cm|m|in|ft): set_units: project length unit.
+- `accuracy` (number): set_units: rounding, e.g. 1 or 0.1.
+- `base_point` (number[] mm): coordinates: project base point [x,y,z] mm.
+- `survey_point` (number[] mm): coordinates: survey point [x,y,z] mm.
+- `true_north` (number deg): coordinates: true north angle degrees.
+- `doc` (string): Doc title, path or # from status. Default: pinned target.
+- every op also takes: `preview`, `confirm`
+
+Ops (`op`):
+- `manage_document.open`: path; activate, detach, audit, worksets, local, central [NOT APPLIED central:true; may become job j#; not in change_set]
+  rvt; an existing local of the same central is reused) unless central:true, which needs confirm. An already open file is shown instead of opened twice. Re-pins (TARGET_NOW).
+  e.g. `manage_document {"op":"open","path":"C:\\Projects\\Site.rvt","activate":false}`
+- `manage_document.activate`: doc
+  Shows the open doc in Revit and re-pins (TARGET_NOW). A never-saved doc cannot be switched to through the API.
+  e.g. `manage_document {"op":"activate","doc":"#2"}`
+- `manage_document.save`: (none); compact [may become job j#; not in change_set]
+  Saves the doc to its file. Workshared: saves the local file only; worksharing sync sends the changes to central.
+  e.g. `manage_document {"op":"save"}`
+- `manage_document.save_as`: path; overwrite, as_central, compact [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  rte. A workshared doc saves under a new name only as a new central (as_central:true). Replacing an existing file needs confirm.
+  e.g. `manage_document {"op":"save_as","path":"C:\\Temp\\Tower_A_copy.rvt"}`
+- `manage_document.close`: doc; save [NOT APPLIED if unsaved; may become job j#; not in change_set]
+  Never closes the UI-active doc directly: another open saved doc is activated first and the close runs in the next step (job). The only open doc gives CANNOT_CLOSE_ACTIVE. Unsaved changes with save:false need confirm. Clears the pin when it was the target.
+  e.g. `manage_document {"op":"close","doc":"#2","save":true}`
+- `manage_document.new_project`: path; template, overwrite, activate [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  Creates and saves a project from the template (path or name; default from settings or the English metric template); activate defaults to true and re-pins. An existing file needs confirm.
+  e.g. `manage_document {"op":"new_project","path":"C:\\Temp\\e2e.rvt","template":"C:\\ProgramData\\Autodesk\\RVT 2024\\Templates\\English\\Default-Multi-Discipline_Metric.rte"}`
+- `manage_document.new_family`: template, path [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  rft path or a name under the family template folder. The family is saved to path, shown in Revit and pinned; edit it with edit_family.
+  e.g. `manage_document {"op":"new_family","template":"Metric Generic Model.rft","path":"C:\\Temp\\EBA Generic.rfa"}`
+- `manage_document.purge`: (none); passes [NOT APPLIED over 20 deleted; may become job j#]
+  Deletes unused families, types, materials and patterns in up to 3 passes (one undo step). deleteOver it asks to confirm with counts by category; preview:true shows them first.
+  e.g. `manage_document {"op":"purge"}`
+- `manage_document.set_units`: unit; accuracy
+  Project length display unit and rounding. Tool inputs stay in mm regardless.
+  e.g. `manage_document {"op":"set_units","unit":"mm","accuracy":1}`
+- `manage_document.coordinates`: base_point|survey_point|true_north [NOT APPLIED always]
+  base_point and survey_point are the shared values [E/W, N/S, Elev] in mm shown in Revit's properties; true_north is the angle to true north in degrees. Always asks to confirm.
+  e.g. `manage_document {"op":"coordinates","true_north":12.5}`
+
+## worksharing
+
+Workshared models: sync with central (comment, relinquish), reload latest, relinquish all, create/rename worksets, set active workset, move elements to a workset, borrow elements, enable worksharing. (writes, can delete)
+
+Params:
+- `comment` (string): sync: comment.
+- `relinquish` (boolean): sync: relinquish everything after. Default true.
+- `compact` (boolean): sync: compact central.
+- `workset` (string): Workset name.
+- `name` (string): New workset name (enable: name for the default workset).
+- `ids` (string[]): Element ids (numbers ok) or UniqueIds.
+- `from` (string): Element set: r# handle from find_elements, 'selection', or 'last' (your last write).
+- `filter` (object): Select like find_elements: {category,level,type,family,view,where:["Mark = D1"]}.
+- every op also takes: `doc`, `preview`, `confirm`
+
+Ops (`op`):
+- `worksharing.sync`: (none); comment, relinquish, compact [NOT APPLIED always; runs as job j#; not in change_set]
+  Always asks to confirm. Runs as a job; relinquish defaults to true. Revit clears its undo history on sync.
+  e.g. `worksharing {"op":"sync","comment":"Doors renumbered"}`
+- `worksharing.reload_latest`: (none) [runs as job j#; not in change_set]
+  Loads other users' synchronized changes into the local file (job). Revit clears its undo history.
+  e.g. `worksharing {"op":"reload_latest"}`
+- `worksharing.relinquish`: (none) [may become job j#; not in change_set]
+  Gives back every borrowed element and workset; elements changed since the last sync stay borrowed until sync.
+  e.g. `worksharing {"op":"relinquish"}`
+- `worksharing.workset_create`: name
+  Creates a user workset; output workset = its id.
+  e.g. `worksharing {"op":"workset_create","name":"Facade"}`
+- `worksharing.workset_rename`: workset, name
+  e.g. `worksharing {"op":"workset_rename","workset":"Facade","name":"Facade North"}`
+- `worksharing.set_active`: workset
+  New elements go to the active workset. The workset must be open.
+  e.g. `worksharing {"op":"set_active","workset":"Facade North"}`
+- `worksharing.move_to`: workset, ids|from|filter [NOT APPLIED over 200 modified]
+  Hosted elements follow their host; types, views and system elements keep their workset (reported as refused). Elements borrowed by others give NOT_EDITABLE.
+  e.g. `worksharing {"op":"move_to","workset":"Facade North","from":"r3"}`
+- `worksharing.borrow`: ids|from|filter [may become job j#; not in change_set]
+  Borrows elements now so later edits cannot be blocked; elements owned by others are listed as refused.
+  e.g. `worksharing {"op":"borrow","ids":["304601"]}`
+- `worksharing.enable`: (none); name [NOT APPLIED always; may become job j#; not in change_set]
+  Creates the worksets 'Shared Levels and Grids' and name (default Workset1) and saves the file as the central model. Always asks to confirm.
+  e.g. `worksharing {"op":"enable","name":"Workset1"}`
+
+## links
+
+Linked models and CAD: link RVT/IFC/DWG (origin, center or shared coordinates), import CAD, reload, reload from a new path, unload, remove, acquire coordinates. Read link contents via find_elements link=. (writes, can delete)
+
+Params:
+- `path` (string): File path.
+- `link` (string): Link name or id.
+- `position` (string: origin|center|shared|base_point): Placement. Default origin.
+- `view` (string): CAD: view to place in. Default active.
+- `cad_units` (string: auto|mm|cm|m|in|ft): CAD import units. Default auto.
+- `this_view_only` (boolean): CAD: current view only.
+- every op also takes: `doc`, `preview`, `confirm`
+
+Ops (`op`):
+- `links.link_rvt`: path; position
+  position: origin (internal origins), center, shared (the models must share coordinates) or base_point (project base points). Output link = the instance id.
+  e.g. `links {"op":"link_rvt","path":"C:\\Projects\\Structure.rvt","position":"shared"}`
+- `links.link_ifc`: path; position
+  RVT next to it (reused while newer than the IFC). Call it on its own, not inside change_set.
+  e.g. `links {"op":"link_ifc","path":"C:\\Projects\\Structure.ifc"}`
+- `links.link_cad`: path; position, view, cad_units, this_view_only
+  dwg, dxf, dgn, sat, skp, 3dm, obj, stl. Placed in view (default active); this_view_only keeps it out of other views.
+  e.g. `links {"op":"link_cad","path":"C:\\Projects\\Survey.dwg","view":"Level 1","cad_units":"mm"}`
+- `links.import_cad`: path; position, view, cad_units, this_view_only
+  Embeds the CAD file (no link to the file afterwards). Same formats and placement as link_cad.
+  e.g. `links {"op":"import_cad","path":"C:\\Projects\\Detail.dwg","view":"Detail 1","this_view_only":true}`
+- `links.reload`: link [may become job j#; not in change_set]
+  Reloads an RVT or CAD link from its saved path.
+  e.g. `links {"op":"reload","link":"Structure.rvt"}`
+- `links.reload_from`: link, path [may become job j#; not in change_set]
+  e.g. `links {"op":"reload_from","link":"Structure.rvt","path":"C:\\Projects\\Structure_v2.rvt"}`
+- `links.unload`: link [not in change_set]
+  RVT links only; the link stays in the model and reload brings it back. Positions are never saved back to the linked file.
+  e.g. `links {"op":"unload","link":"Structure.rvt"}`
+- `links.remove`: link [NOT APPLIED always]
+  Deletes the link with all its instances (one undo step). Always asks to confirm.
+  e.g. `links {"op":"remove","link":"Structure.rvt"}`
+- `links.acquire_coordinates`: link [NOT APPLIED always]
+  Takes over the shared coordinates (survey point, true north) of a loaded RVT link; name the instance when the link is placed several times. Always asks to confirm.
+  e.g. `links {"op":"acquire_coordinates","link":"Site.rvt"}`
+
+## export
+
+Export pdf (sheets/views, combined or not), dwg, dxf, ifc, nwc, image (hi-res), csv (schedules), fbx, gbxml to a folder (default <home>/exports/<doc>). Long exports continue as a job. (writes)
+
+Params:
+- `format` (string: pdf|dwg|dxf|ifc|nwc|image|csv|fbx|gbxml): File format.
+- `views` (string[]): Views/sheets (names, numbers, ids), or ['all_sheets'], ['set:<sheet set>']. Default active view.
+- `folder` (string): Output folder. Default <home>/exports/<doc>.
+- `name` (string): File name pattern, e.g. '{number} - {name}'.
+- `combine` (boolean): pdf: one combined file. Default false.
+- `setup` (string): dwg/dxf/ifc: export setup name.
+- `size` (integer px): image: long edge px. Default 3000.
+- `color` (string: color|gray|bw): pdf/image: default color.
+- `overwrite` (boolean): Replace existing files. Default false.
+- every op also takes: `doc`, `confirm`
+
+Ops (`format`):
+- `export.pdf`: (none); views, folder, name, combine, color, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  One PDF per view/sheet (combine:true: one file). name tokens {number} {name} {doc} {type} {date} {n}; default '{number} - {name}' for sheets, '{name}' for views. Default folder <home>/exports/<doc>.
+  e.g. `export {"format":"pdf","views":["all_sheets"],"combine":true}`
+- `export.dwg`: (none); views, folder, name, setup, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  One DWG per view/sheet with its views merged in; setup = a DWG export setup of the model (default: the active setup).
+  e.g. `export {"format":"dwg","views":["A101","A102"]}`
+- `export.dxf`: (none); views, folder, name, setup, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  e.g. `export {"format":"dxf","views":["Level 1"]}`
+- `export.ifc`: (none); views, folder, name, setup, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  One IFC of the model; views[0] limits it to the elements visible in that view. 0 (default), IFC2x3 Basic FM, IFC4 Reference View, IFC4 Design Transfer View or IFC4x3.
+  e.g. `export {"format":"ifc","setup":"IFC4 Reference View"}`
+- `export.nwc`: (none); views, folder, name, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  3D views only; without views the active 3D view, else the whole model. Needs the Navisworks exporter.
+  e.g. `export {"format":"nwc","views":["{3D}"]}`
+- `export.image`: (none); views, folder, name, size, color, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  PNG per view/sheet, long edge size px (default 3000). For a quick look use capture instead.
+  e.g. `export {"format":"image","views":["Level 1"],"size":4000}`
+- `export.csv`: (none); views, folder, name, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  Schedules only: one comma-separated file per schedule with one header row.
+  e.g. `export {"format":"csv","views":["Door Schedule"]}`
+- `export.fbx`: (none); views, folder, name, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  3D views only.
+  e.g. `export {"format":"fbx","views":["{3D}"]}`
+- `export.gbxml`: (none); folder, name, overwrite [NOT APPLIED if a file exists; may become job j#; not in change_set]
+  xml); placed rooms or spaces give the best result.
+  e.g. `export {"format":"gbxml"}`
+
+## model_delivery
+
+Delivery packages of standalone RVTs (links, cleanup, exports, QA) from a saved recipe: inspect sources, preview (gives confirm), execute (job), save/get/list recipes, test fixture. Recipe shape: help topic=recipe. (writes, can delete)
+
+Params:
+- `sources` (string[]): inspect: source .rvt paths.
+- `project` (string): Project id (recipe library key).
+- `recipe` (object): Delivery recipe; shape in help {topic:'recipe'}.
+- `expected_sha` (string): save_recipe: only overwrite this version.
+- `template` (string): fixture: .rte template path.
+- `folder` (string): fixture: new empty folder.
+- `id` (string): fixture: fixture id.
+- `limit` (integer): list_recipes: default 100.
+- `confirm` (string): Token from a NOT APPLIED or preview result; applies exactly that plan.
+
+Ops (`op`):
+- `model_delivery.inspect`: sources; project, recipe [runs as job j#]
+  Opens isolated copies of the sources and reports links, views and the decisions still needed; project compares with the saved recipe of that project.
+  e.g. `model_delivery {"op":"inspect","sources":["\\\\srv\\proj\\A.rvt","\\\\srv\\proj\\S.rvt"],"project":"P2026-017"}`
+- `model_delivery.preview`: recipe [runs as job j#]
+  Checks the recipe against the sources (closed in Revit) and plans every model; ready plans give a confirm token for execute, blockers say what to fix.
+  e.g. see `help {"tool":"model_delivery","op":"preview"}` (long example)
+- `model_delivery.execute`: confirm [NOT APPLIED always; runs as job j#; not in change_set]
+  Takes only the confirm token from preview and starts job j#: copies, links, cleanup, exports and QA in staging, then publishes the package atomically. Sources never change.
+  e.g. `model_delivery {"op":"execute","confirm":"K7QM2X"}`
+- `model_delivery.save_recipe`: recipe; expected_sha
+  e.g. see `help {"tool":"model_delivery","op":"save_recipe"}` (long example)
+- `model_delivery.get_recipe`: project
+  e.g. `model_delivery {"op":"get_recipe","project":"P2026-017"}`
+- `model_delivery.list_recipes`: (none); limit
+  e.g. `model_delivery {"op":"list_recipes"}`
+- `model_delivery.fixture`: template, folder, id [NOT APPLIED always; runs as job j#; not in change_set]
+  Test only: creates two linked central models and a matching recipe in a new folder.
+  e.g. `model_delivery {"op":"fixture","template":"C:\\ProgramData\\Autodesk\\RVT 2024\\Templates\\English\\Default-Multi-Discipline_Metric.rte","folder":"C:\\Temp\\delivery-fixture","id":"fx1"}`
+
+# Batch, undo, jobs, help
+
+## change_set
+
+Run up to 100 write ops in one undo step, all or nothing; later ops use earlier results: '$0' (first id), '$0.ids', '$1.type'. ops=[{tool:'create_elements',op:'level',...}]. Not for open/save/sync/close. (writes, can delete; core profile)
+
+Params:
+- `ops` (object[]): [{tool, op, ...that op's params}].
+  - `ops[].tool` (string: create_elements|place_family|modify_elements|set_parameters|edit_types|edit_views|view_graphics|edit_sheets|annotate|edit_schedules|edit_family|mep|structure|manage_document|worksharing|links): Write tool.
+  - `ops[].op` (string): That tool's op.
+- `name` (string): Undo history name. Default 'change_set'.
+- every op also takes: `doc`, `preview`, `confirm`, `units`
+
+Call:
+- `change_set`: ops; name [NOT APPLIED over 20 deleted, over 200 modified, over 500 created]
+  One undo step, all or nothing. type' a named output, '$prev' the previous op, '$$' a literal $. Units and doc apply to the whole set.
+  e.g. `change_set {"ops":[{"tool":"edit_sheets","op":"create","number":"A201","name":"Sections"},{"tool":"edit_views","op":"create","kind":"section","start":[0,4000],"end":[12000,4000]},{"tool":"edit_sheets","op":"place","sheet":"$0.sheet","view":"$1.view"}]}`
+
+## undo
+
+Undo your last write(s) in the target doc while they are still Revit's newest changes (steps 1-10, default 1); redo=true redoes. If the user edited since, explains how to revert instead. (writes, can delete; core profile)
+
+Params:
+- `steps` (integer): 1-10. Default 1.
+- `redo` (boolean): Redo instead.
+- `mode` (string: auto|compensate): auto (default): Revit undo; compensate: apply the inverse change as a new write.
+- every op also takes: `doc`
+
+Call:
+- `undo`: (none); steps, redo, mode [doc must be active in Revit; not in change_set]
+  Only your own newest writes; the doc must be UI-active (ui activate_doc). Temporary view changes (ui isolate/hide) on top are undone along.
+  e.g. `undo {}`
+
+## job_status
+
+State, progress and result of a job (j#: export, sync, open, delivery, long scan) or of a write whose outcome was unclear (w#). wait= seconds to wait, 0-45, default 20. No id: your recent jobs. (read-only; core profile)
+
+Params:
+- `id` (string): Job id j# or write id w#.
+- `wait` (integer s): Seconds to wait for completion, 0-45. Default 20.
+
+Call:
+- `job_status`: (none); id, wait
+  Waits up to wait seconds (default 20, max 45). A finished job returns the original call's result. w# ids report write outcomes from the add-in ledger, also after Revit exited. Never repeat a write that is still running: ask job_status again.
+  e.g. `job_status {"id":"j2","wait":30}`
+
+## cancel_job
+
+Cancel a queued or running job or queued request. A running Revit step finishes or rolls back safely; partial exports and delivery staging are removed. (writes)
+
+Params:
+- `id` (string): Job id j# or request id w#.
+- `reason` (string): Why (logged).
+
+Call:
+- `cancel_job`: id; reason
+  Cancels between job steps or before a queued request runs. A write that already runs finishes or rolls back; check it with job_status.
+  e.g. `cancel_job {"id":"j2"}`
+
+## help
+
+Params and a working example for a tool or op: help {tool:'create_elements',op:'wall'}. topic= units, targeting, selectors, confirm, errors, recipe, run_csharp, workflow:<audit|sheets|family|rooms|visual>, error codes. (read-only; core profile)
+
+Params:
+- `tool` (string): Tool name.
+- `op` (string): Op name.
+- `topic` (string): Topic, or an error code.
+
+Call:
+- `help`: (none); tool, op, topic
+  help {} lists tools and topics; help {tool} lists ops; help {tool,op} gives params and a working example; help {topic:'<CODE>'} explains an error code.
+  e.g. `help {"tool":"create_elements","op":"wall"}`
+
+# Opt-in (listed only when the user enabled it)
+
+## run_csharp
+
+Run C# on the Revit API when no tool fits. Off unless the user enabled it locally. read and dry_run (default) always roll back; dry_run reports changes and a token; commit needs that token and the user's OK. (writes, can delete)
+
+Params:
+- `code` (string): C# method body with doc, uidoc, app, args (IDictionary), log(object); return a value.
+- `args` (object): Values passed as args.
+- `mode` (string: read|dry_run|commit): Default dry_run.
+- `timeout` (integer s): Seconds 1-45. Default 30.
+- every op also takes: `doc`, `confirm`
+
+Call:
+- `run_csharp`: code; args, mode, timeout [NOT APPLIED commit; may become job j#]
+  json. code is a method body over doc, uidoc, app, args, log; return a value (Element -> {id,category,name}, XYZ -> mm). ToDouble).
+  e.g. `run_csharp {"code":"return new FilteredElementCollector(doc).OfClass(typeof(Wall)).GetElementCount();","mode":"read"}`
