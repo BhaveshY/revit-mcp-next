@@ -1,0 +1,4 @@
+interface:
+  display_name: "Revit"
+  short_description: "Model, document, check and export Revit projects through the revit MCP tools"
+  default_prompt: "Use $revit: call status first, follow every next:/fix: line exactly, do the Revit task with as few revit tool calls as possible and verify the result (find_elements or capture)."

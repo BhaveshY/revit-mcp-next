@@ -1,0 +1,20 @@
+{
+  "name": "revit-mcp-next",
+  "description": "revit-mcp-next skills for Claude Code (the revit MCP server is registered by the installer).",
+  "owner": {
+    "name": "BhaveshY"
+  },
+  "plugins": [
+    {
+      "name": "revit-mcp-next",
+      "source": "./claude/revit-mcp-next",
+      "description": "Skills for driving Autodesk Revit 2024/2027 through the revit MCP server.",
+      "version": "0.4.0",
+      "author": {
+        "name": "BhaveshY"
+      },
+      "category": "Productivity",
+      "tags": ["revit", "bim", "mcp", "autodesk", "windows"]
+    }
+  ]
+}

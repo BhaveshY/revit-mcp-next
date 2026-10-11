@@ -1,0 +1,4 @@
+interface:
+  display_name: "Revit setup"
+  short_description: "Install, check and repair revit-mcp-next (doctor, installer, missing revit tools)"
+  default_prompt: "Use $revit-setup: run the revit-mcp-next doctor, explain each failing line and the exact fix, and ask before changing anything."

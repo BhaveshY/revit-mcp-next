@@ -1,0 +1,29 @@
+{
+  "name": "revit-mcp-next",
+  "version": "0.4.0",
+  "description": "Skills for driving Autodesk Revit 2024/2027 through the revit MCP server. The server itself is registered by the revit-mcp-next installer as [mcp_servers.revit], so this plugin ships skills only.",
+  "author": {
+    "name": "BhaveshY",
+    "url": "https://github.com/BhaveshY"
+  },
+  "homepage": "https://github.com/BhaveshY/revit-mcp-next",
+  "repository": "https://github.com/BhaveshY/revit-mcp-next",
+  "license": "MIT",
+  "keywords": ["revit", "bim", "mcp", "autodesk", "architecture", "windows"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Revit",
+    "shortDescription": "Model, document, check and export Revit projects through the revit MCP tools",
+    "longDescription": "Teaches Codex the 37 revit MCP tools: status first, document targeting and project switching, connection recovery for every error code, one-call modelling of levels, grids, walls, floors, roofs, doors, windows and rooms, views, sheets, schedules, tags and dimensions, family parameter editing, MEP and structure, exports, visual checks with capture, undo, and setup/doctor steps for a new PC. The MCP server is registered by the installer as [mcp_servers.revit].",
+    "developerName": "BhaveshY",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/BhaveshY/revit-mcp-next",
+    "defaultPrompt": [
+      "Check the Revit connection and summarize the open model.",
+      "Create a ground-floor plan view and a sheet with it in the active Revit model.",
+      "List all doors on Level 1 with their type and fire rating."
+    ],
+    "brandColor": "#0696D7"
+  }
+}

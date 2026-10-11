@@ -1,0 +1,21 @@
+{
+  "name": "revit-mcp-next",
+  "interface": {
+    "displayName": "Revit MCP Next"
+  },
+  "plugins": [
+    {
+      "name": "revit-mcp-next",
+      "version": "0.4.0",
+      "source": {
+        "source": "local",
+        "path": "./codex/revit-mcp-next"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
