@@ -1,238 +1,178 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Text;
 using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Architecture;
-using Autodesk.Revit.DB.Structure;
-using Autodesk.Revit.UI;
-using RevitMcpNext.Addin.Diagnostics;
-using RevitMcpNext.Contracts;
 
-namespace RevitMcpNext.Addin.Revit
+namespace RevitMcpNext.Addin
 {
-    internal sealed partial class RevitExternalEventHandler
+    /// <summary>
+    /// place_family.load (D1 §4B, D3 §3.8): loads an .rfa (all types or only <c>symbols</c>) with guards — absolute local
+    /// path (UNC/network only with allow_network), .rfa only, ≤ 100 MB, optional SHA-256 and category allow-list. The
+    /// category check runs after the load inside the op transaction, so a refused family leaves nothing behind.
+    /// </summary>
+    internal static class LoadFamilyOps
     {
-        private static Dictionary<string, object> PreviewLoadFamily(Document document, Dictionary<string, object> operation, int index)
+        private const long MaxFamilyBytes = 100L * 1024 * 1024;
+
+        [Op("place_family.load")]
+        public static void Load(ChangeContext c)
         {
-            if (!TryBuildFamilyLoadRequest(operation, out FamilyLoadRequest request, out string error))
-            {
-                return BlockedChange(operation, index, error);
-            }
-
-            Family existingFamily = FindFamilyByName(document, request.FamilyName);
-            return Change(operation, index, "ready",
-                target: new Dictionary<string, object>
-                {
-                    ["document"] = document.Title,
-                    ["familyPath"] = request.FullPath,
-                    ["fileName"] = request.FileName,
-                    ["familyName"] = request.FamilyName,
-                    ["expectedSha256"] = request.ExpectedSha256,
-                    ["existingFamilyId"] = existingFamily == null ? null : ToElementIdString(existingFamily.Id)
-                },
-                before: existingFamily == null ? null : FamilyLoadSnapshot(document, existingFamily, existing: true),
-                after: new Dictionary<string, object>
-                {
-                    ["familyPath"] = request.FullPath,
-                    ["fileName"] = request.FileName,
-                    ["fileSizeBytes"] = request.FileSizeBytes,
-                    ["fileSha256"] = request.FileSha256,
-                    ["familyName"] = request.FamilyName,
-                    ["allowedCategories"] = request.AllowedCategories.ToArray(),
-                    ["overwriteParameterValues"] = request.OverwriteParameterValues,
-                    ["allowNetworkPath"] = request.AllowNetworkPath
-                });
-        }
-
-        private static Dictionary<string, object> ApplyLoadFamily(Document document, Dictionary<string, object> operation, int index)
-        {
-            Dictionary<string, object> preview = PreviewLoadFamily(document, operation, index);
-            if (!string.Equals(GetString(preview, "status"), "ready", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(GetString(preview, "message") ?? "load_family preview failed.");
-            }
-
-            if (!TryBuildFamilyLoadRequest(operation, out FamilyLoadRequest request, out string error))
-            {
-                throw new InvalidOperationException(error);
-            }
-
-            Family before = FindFamilyByName(document, request.FamilyName);
-            Family loadedFamily = null;
-            bool loadReturned = document.LoadFamily(
-                request.FullPath,
-                new ControlledFamilyLoadOptions(request.OverwriteParameterValues),
-                out loadedFamily);
-
-            Family family = loadedFamily ?? FindFamilyByName(document, request.FamilyName) ?? before;
-            if (family == null)
-            {
-                throw new InvalidOperationException("Revit did not report a loaded family for " + request.FileName + ".");
-            }
-
-            FamilySymbol[] symbols = GetFamilySymbols(document, family).ToArray();
-            if (request.AllowedCategories.Count > 0 && !MatchesAllowedFamilyCategories(family, symbols, request.AllowedCategories))
-            {
-                throw new InvalidOperationException(
-                    "Loaded family '" + SafeElementName(family) + "' did not match allowedCategories: " +
-                    string.Join(", ", request.AllowedCategories));
-            }
-
-            Dictionary<string, object> after = FamilyLoadSnapshot(document, family, existing: false);
-            after["familyPath"] = request.FullPath;
-            after["fileName"] = request.FileName;
-            after["fileSizeBytes"] = request.FileSizeBytes;
-            after["fileSha256"] = request.FileSha256;
-            after["loadReturned"] = loadReturned;
-            after["allowedCategories"] = request.AllowedCategories.ToArray();
-            after["overwriteParameterValues"] = request.OverwriteParameterValues;
-
-            return Change(operation, index, "applied",
-                target: ElementTarget(family, null),
-                before: before == null ? null : FamilyLoadSnapshot(document, before, existing: true),
-                after: after);
-        }
-
-        private static bool TryBuildFamilyLoadRequest(Dictionary<string, object> operation, out FamilyLoadRequest request, out string error)
-        {
-            request = null;
-            error = null;
-
-            string familyPath = GetString(operation, "familyPath");
-            if (string.IsNullOrWhiteSpace(familyPath))
-            {
-                error = "load_family requires familyPath.";
-                return false;
-            }
-
+            Document doc = c.Doc;
+            string pathField = c.Args.Field("path");
+            string text = c.Str("path") ?? throw OpException.InvalidArgs(pathField, "is required (an .rfa path visible to Revit)");
             string fullPath;
             try
             {
-                fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(familyPath.Trim()));
+                fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(text.Trim().Trim('"')));
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is PathTooLongException || ex is System.Security.SecurityException)
             {
-                error = "familyPath is not a valid local path: " + ex.Message;
-                return false;
+                throw OpException.InvalidArgs(pathField, "is not a valid path: " + ex.Message);
             }
-
-            if (!Path.IsPathRooted(fullPath))
+            if (!Path.IsPathRooted(text.Trim().Trim('"')) && !Path.IsPathRooted(Environment.ExpandEnvironmentVariables(text.Trim().Trim('"'))))
             {
-                error = "load_family requires an absolute familyPath.";
-                return false;
+                throw OpException.InvalidArgs(pathField, "must be an absolute path (e.g. C:\\Families\\Door.rfa)");
             }
-
-            bool allowNetworkPath = GetBool(operation, "allowNetworkPath", false);
-            if (!allowNetworkPath && IsNetworkPath(fullPath))
-            {
-                error = "load_family does not allow UNC/network paths unless allowNetworkPath is true.";
-                return false;
-            }
-
             if (!string.Equals(Path.GetExtension(fullPath), ".rfa", StringComparison.OrdinalIgnoreCase))
             {
-                error = "load_family only accepts Revit .rfa family files.";
-                return false;
+                throw OpException.InvalidArgs(pathField, "must be a Revit family file (.rfa); got '" + Path.GetFileName(fullPath) + "'");
+            }
+            bool allowNetwork = c.Bool("allow_network");
+            if (!allowNetwork && IsNetworkPath(fullPath))
+            {
+                var example = new Dictionary<string, object>(StringComparer.Ordinal) { ["op"] = "load", ["path"] = text, ["allow_network"] = true };
+                throw OpException.InvalidArgs(c.Args.Field("allow_network"), "'" + fullPath + "' is on a network share; pass allow_network:true to load from it", example);
+            }
+            var file = new FileInfo(fullPath);
+            if (!file.Exists) throw OpException.NotFound(pathField, "file", fullPath, SiblingFamilies(file));
+            if (file.Length <= 0) throw OpException.InvalidArgs(pathField, "'" + file.Name + "' is empty");
+            if (file.Length > MaxFamilyBytes) throw OpException.InvalidArgs(pathField, "'" + file.Name + "' is larger than 100 MB");
+
+            string expected = NormalizeSha256(c.Str("sha256"), c.Args.Field("sha256"));
+            string actual = null;
+            if (expected != null)
+            {
+                actual = Sha256(file.FullName);
+                if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new OpException(ErrorCodes.InvalidArgs, "The SHA-256 of '" + file.Name + "' is " + actual + ", not the expected " + expected + "; nothing was loaded.",
+                        new Dictionary<string, object> { ["param"] = c.Args.Field("sha256"), ["reason"] = "hash mismatch", ["actual"] = actual });
+                }
             }
 
-            FileInfo file = new FileInfo(fullPath);
-            if (!file.Exists)
-            {
-                error = "Family file was not found: " + fullPath;
-                return false;
-            }
+            bool overwrite = c.Bool("overwrite");
+            List<string> wantedSymbols = c.Args.Strs("symbols").Select(s => s.Trim()).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            string familyName = Path.GetFileNameWithoutExtension(file.Name);
+            Family before = FindFamily(doc, familyName);
+            var beforeSymbols = new HashSet<long>(before == null ? Enumerable.Empty<long>() : before.GetFamilySymbolIds().Select(id => id.Value));
+            var options = new LoadOptions(overwrite);
 
-            if (file.Length <= 0)
+            Family family = null;
+            bool loaded;
+            var missingSymbols = new List<string>();
+            if (wantedSymbols.Count == 0)
             {
-                error = "Family file is empty: " + fullPath;
-                return false;
+                loaded = doc.LoadFamily(file.FullName, options, out family);
             }
+            else
+            {
+                loaded = false;
+                foreach (string name in wantedSymbols)
+                {
+                    bool one = doc.LoadFamilySymbol(file.FullName, name, options, out FamilySymbol symbol);
+                    if (symbol != null)
+                    {
+                        family = family ?? symbol.Family;
+                        loaded |= one;
+                    }
+                    else if (!one && !(before != null && SymbolNames(doc, before).Contains(name)))
+                    {
+                        missingSymbols.Add(name);
+                    }
+                }
+                if (missingSymbols.Count == wantedSymbols.Count && family == null && before == null)
+                {
+                    throw OpException.InvalidArgs(c.Args.Field("symbols"), "none of the types " + string.Join(", ", missingSymbols) + " exist in '" + file.Name + "' (type names are case-sensitive)");
+                }
+            }
+            family = family ?? FindFamily(doc, familyName) ?? before;
+            if (family == null) throw new OpException(ErrorCodes.RevitRefused, "Revit did not load a family from '" + file.Name + "'.", new Dictionary<string, object> { ["apiMessage"] = "LoadFamily returned no family" });
 
-            if (file.Length > MaxFamilyLoadBytes)
-            {
-                error = "Family file exceeds the 100 MB load_family limit: " + fullPath;
-                return false;
-            }
+            CheckCategories(c, family);
 
-            string fileSha256;
-            try
-            {
-                fileSha256 = ComputeFileSha256(file.FullName);
-            }
-            catch (Exception ex)
-            {
-                error = "Could not hash family file: " + ex.Message;
-                return false;
-            }
+            List<FamilySymbol> symbols = family.GetFamilySymbolIds().Select(id => doc.GetElement(id)).OfType<FamilySymbol>()
+                .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            List<FamilySymbol> added = symbols.Where(s => !beforeSymbols.Contains(s.Id.Value)).ToList();
+            if (before == null) c.Created(family);
+            else if (loaded) c.Modified(family, "family reloaded");
+            foreach (FamilySymbol symbol in added) c.Created(symbol);
+            if (missingSymbols.Count > 0) c.Warn(WarningCodes.PartialResult, "types not found in '" + file.Name + "': " + string.Join(", ", missingSymbols));
 
-            string expectedSha256;
-            try
+            FamilySymbol first = added.FirstOrDefault() ?? symbols.FirstOrDefault();
+            c.Output("family", family.Id);
+            if (first != null) c.Output("type", first.Id);
+            string category = Rows.CategoryLabel(family.FamilyCategory);
+            var table = new TableBuilder(new[] { "id", "type", "new" });
+            foreach (FamilySymbol symbol in symbols.Take(100)) table.Add(symbol.Id.Value, Resolve.FullTypeName(symbol), !beforeSymbols.Contains(symbol.Id.Value));
+            table.Total = symbols.Count;
+            c.Data(new Dictionary<string, object>
             {
-                expectedSha256 = NormalizeSha256(GetString(operation, "expectedSha256"));
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return false;
-            }
-            if (!string.IsNullOrWhiteSpace(expectedSha256) &&
-                !string.Equals(expectedSha256, fileSha256, StringComparison.OrdinalIgnoreCase))
-            {
-                error = "Family file SHA-256 did not match expectedSha256.";
-                return false;
-            }
+                ["family"] = family.Name,
+                ["family_id"] = family.Id.Value,
+                ["category"] = category,
+                ["placement"] = family.FamilyPlacementType.ToString(),
+                ["types"] = table.ToWire(),
+                ["sha256"] = actual
+            });
+            string state = before == null ? "loaded" : (loaded ? "reloaded" : "already loaded (unchanged)");
+            c.Summary(state + " family '" + family.Name + "' (" + (category ?? "no category") + ") with " + ModelKit.Count(symbols.Count, "type") +
+                      (added.Count > 0 && before != null ? ", " + added.Count.ToString(CultureInfo.InvariantCulture) + " new" : string.Empty));
+        }
 
-            List<string> allowedCategories = GetStringList(operation, "allowedCategories")
-                .Select(value => (value ?? string.Empty).Trim())
-                .Where(value => value.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(16)
-                .ToList();
-
-            request = new FamilyLoadRequest(
-                file.FullName,
-                file.Name,
-                Path.GetFileNameWithoutExtension(file.Name),
-                file.Length,
-                "sha256:" + fileSha256,
-                string.IsNullOrWhiteSpace(expectedSha256) ? null : "sha256:" + expectedSha256,
-                allowedCategories,
-                GetBool(operation, "overwriteParameterValues", false),
-                allowNetworkPath);
-            return true;
+        private static void CheckCategories(ChangeContext c, Family family)
+        {
+            List<string> allowed = c.Args.Strs("categories").Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+            if (allowed.Count == 0) return;
+            Category category = family.FamilyCategory;
+            BuiltInCategory actual = Resolve.SafeBuiltIn(category);
+            foreach (string token in allowed)
+            {
+                if (Resolve.TryCategory(c.Doc, token, out BuiltInCategory wanted) && wanted == actual && actual != BuiltInCategory.INVALID) return;
+                if (category != null && (Resolve.Eq(category.Name, token) || Resolve.Eq(Rows.CategoryLabel(category), token))) return;
+            }
+            throw new OpException(ErrorCodes.InvalidArgs,
+                "Family '" + family.Name + "' is in category " + (Rows.CategoryLabel(category) ?? "(none)") + ", not one of " + string.Join(", ", allowed) + "; nothing was loaded.",
+                new Dictionary<string, object> { ["param"] = c.Args.Field("categories"), ["reason"] = "category not allowed", ["category"] = Rows.CategoryLabel(category) });
         }
 
         private static bool IsNetworkPath(string fullPath)
         {
-            return fullPath.StartsWith(@"\\", StringComparison.Ordinal) ||
-                   fullPath.StartsWith("//", StringComparison.Ordinal);
+            if (fullPath.StartsWith(@"\\", StringComparison.Ordinal) || fullPath.StartsWith("//", StringComparison.Ordinal)) return true;
+            try
+            {
+                string root = Path.GetPathRoot(fullPath);
+                return !string.IsNullOrEmpty(root) && new DriveInfo(root).DriveType == DriveType.Network;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        private static string NormalizeSha256(string value)
+        private static string NormalizeSha256(string value, string field)
         {
-            string normalized = (value ?? string.Empty).Trim();
-            if (normalized.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-            {
-                normalized = normalized.Substring("sha256:".Length);
-            }
-
-            if (string.IsNullOrWhiteSpace(normalized)) return null;
-            normalized = normalized.ToLowerInvariant();
-            if (normalized.Length != 64 || normalized.Any(ch => !Uri.IsHexDigit(ch)))
-            {
-                throw new ArgumentException("expectedSha256 must be a 64-character hex SHA-256 digest.");
-            }
-
-            return normalized;
+            string text = (value ?? string.Empty).Trim();
+            if (text.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) text = text.Substring(7);
+            if (text.Length == 0) return null;
+            text = text.ToLowerInvariant();
+            if (text.Length != 64 || text.Any(ch => !Uri.IsHexDigit(ch))) throw OpException.InvalidArgs(field, "must be a 64-character hex SHA-256");
+            return text;
         }
 
-        private static string ComputeFileSha256(string path)
+        private static string Sha256(string path)
         {
             using (SHA256 sha = SHA256.Create())
             using (FileStream stream = File.OpenRead(path))
@@ -241,159 +181,53 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static Family FindFamilyByName(Document document, string familyName)
+        private static Family FindFamily(Document doc, string name)
         {
-            if (string.IsNullOrWhiteSpace(familyName)) return null;
-            return new FilteredElementCollector(document)
-                .OfClass(typeof(Family))
-                .Cast<Family>()
-                .FirstOrDefault(family => string.Equals(SafeElementName(family), familyName, StringComparison.OrdinalIgnoreCase));
+            return new FilteredElementCollector(doc).OfClass(typeof(Family)).Cast<Family>()
+                .FirstOrDefault(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
         }
 
-        private static IEnumerable<FamilySymbol> GetFamilySymbols(Document document, Family family)
+        private static HashSet<string> SymbolNames(Document doc, Family family)
         {
-            if (family == null) return Enumerable.Empty<FamilySymbol>();
-            return family.GetFamilySymbolIds()
-                .Select(id => document.GetElement(id) as FamilySymbol)
-                .Where(symbol => symbol != null);
+            return new HashSet<string>(family.GetFamilySymbolIds().Select(id => doc.GetElement(id)?.Name).Where(n => n != null), StringComparer.OrdinalIgnoreCase);
         }
 
-        private static Dictionary<string, object> FamilyLoadSnapshot(Document document, Family family, bool existing)
+        /// <summary>Other .rfa files in the same folder (closest names first) for the NOT_FOUND candidates.</summary>
+        private static IEnumerable<string> SiblingFamilies(FileInfo file)
         {
-            FamilySymbol[] symbols = GetFamilySymbols(document, family).ToArray();
-            var snapshot = new Dictionary<string, object>
+            try
             {
-                ["familyId"] = ToElementIdString(family.Id),
-                ["familyName"] = SafeElementName(family),
-                ["existing"] = existing,
-                ["symbolCount"] = symbols.Length,
-                ["symbols"] = symbols
-                    .Take(50)
-                    .Select(symbol => FamilySymbolLoadSnapshot(symbol))
-                    .ToArray()
-            };
-
-            if (family.Category != null) snapshot["category"] = family.Category.Name;
-            if (family.FamilyCategory != null) snapshot["familyCategory"] = family.FamilyCategory.Name;
-            return snapshot;
-        }
-
-        private static Dictionary<string, object> FamilySymbolLoadSnapshot(FamilySymbol symbol)
-        {
-            var snapshot = new Dictionary<string, object>
-            {
-                ["id"] = ToElementIdString(symbol.Id),
-                ["uniqueId"] = symbol.UniqueId,
-                ["class"] = symbol.GetType().Name,
-                ["name"] = SafeElementName(symbol),
-                ["familyName"] = GetFamilyName(symbol),
-                ["isActive"] = symbol.IsActive
-            };
-
-            string builtInCategory = GetBuiltInCategoryName(symbol);
-            if (!string.IsNullOrWhiteSpace(builtInCategory)) snapshot["builtInCategory"] = builtInCategory;
-            if (symbol.Category != null) snapshot["category"] = symbol.Category.Name;
-            string placementType = GetPlacementType(symbol);
-            if (!string.IsNullOrWhiteSpace(placementType)) snapshot["placementType"] = placementType;
-            return snapshot;
-        }
-
-        private static bool MatchesAllowedFamilyCategories(Family family, IEnumerable<FamilySymbol> symbols, IReadOnlyList<string> allowedCategories)
-        {
-            if (allowedCategories == null || allowedCategories.Count == 0) return true;
-            HashSet<string> allowed = new HashSet<string>(allowedCategories, StringComparer.OrdinalIgnoreCase);
-            foreach (string token in FamilyCategoryTokens(family, symbols))
-            {
-                if (allowed.Contains(token)) return true;
+                DirectoryInfo folder = file.Directory;
+                if (folder == null || !folder.Exists) return new string[0];
+                List<string> names = folder.EnumerateFiles("*.rfa").Take(500).Select(f => f.FullName).ToList();
+                return Resolve.Closest(file.FullName, names, 5);
             }
-
-            return false;
-        }
-
-        private static IEnumerable<string> FamilyCategoryTokens(Family family, IEnumerable<FamilySymbol> symbols)
-        {
-            if (family?.Category != null) yield return family.Category.Name;
-            if (family?.FamilyCategory != null)
+            catch
             {
-                yield return family.FamilyCategory.Name;
-                string builtInFamilyCategory = string.Empty;
-                try
-                {
-                    builtInFamilyCategory = ((BuiltInCategory)GetElementIdValue(family.FamilyCategory.Id)).ToString();
-                }
-                catch
-                {
-                    // Some custom family categories cannot be mapped to BuiltInCategory.
-                }
-                if (!string.IsNullOrWhiteSpace(builtInFamilyCategory)) yield return builtInFamilyCategory;
-            }
-
-            foreach (FamilySymbol symbol in symbols ?? Enumerable.Empty<FamilySymbol>())
-            {
-                string builtInCategory = GetBuiltInCategoryName(symbol);
-                if (!string.IsNullOrWhiteSpace(builtInCategory)) yield return builtInCategory;
-                if (symbol.Category != null) yield return symbol.Category.Name;
+                return new string[0];
             }
         }
 
-        private sealed class FamilyLoadRequest
+        /// <summary>Reloads an existing family; <c>overwrite</c> decides whether project parameter values are replaced.</summary>
+        private sealed class LoadOptions : IFamilyLoadOptions
         {
-            public FamilyLoadRequest(
-                string fullPath,
-                string fileName,
-                string familyName,
-                long fileSizeBytes,
-                string fileSha256,
-                string expectedSha256,
-                IReadOnlyList<string> allowedCategories,
-                bool overwriteParameterValues,
-                bool allowNetworkPath)
+            private readonly bool _overwrite;
+
+            public LoadOptions(bool overwrite)
             {
-                FullPath = fullPath;
-                FileName = fileName;
-                FamilyName = familyName;
-                FileSizeBytes = fileSizeBytes;
-                FileSha256 = fileSha256;
-                ExpectedSha256 = expectedSha256;
-                AllowedCategories = allowedCategories ?? Array.Empty<string>();
-                OverwriteParameterValues = overwriteParameterValues;
-                AllowNetworkPath = allowNetworkPath;
-            }
-
-            public string FullPath { get; }
-            public string FileName { get; }
-            public string FamilyName { get; }
-            public long FileSizeBytes { get; }
-            public string FileSha256 { get; }
-            public string ExpectedSha256 { get; }
-            public IReadOnlyList<string> AllowedCategories { get; }
-            public bool OverwriteParameterValues { get; }
-            public bool AllowNetworkPath { get; }
-        }
-
-        private sealed class ControlledFamilyLoadOptions : IFamilyLoadOptions
-        {
-            private readonly bool _overwriteParameterValues;
-
-            public ControlledFamilyLoadOptions(bool overwriteParameterValues)
-            {
-                _overwriteParameterValues = overwriteParameterValues;
+                _overwrite = overwrite;
             }
 
             public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues)
             {
-                overwriteParameterValues = _overwriteParameterValues;
+                overwriteParameterValues = _overwrite;
                 return true;
             }
 
-            public bool OnSharedFamilyFound(
-                Family sharedFamily,
-                bool familyInUse,
-                out FamilySource source,
-                out bool overwriteParameterValues)
+            public bool OnSharedFamilyFound(Family sharedFamily, bool familyInUse, out FamilySource source, out bool overwriteParameterValues)
             {
                 source = FamilySource.Family;
-                overwriteParameterValues = _overwriteParameterValues;
+                overwriteParameterValues = _overwrite;
                 return true;
             }
         }
