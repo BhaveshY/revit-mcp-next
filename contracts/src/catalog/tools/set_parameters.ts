@@ -23,6 +23,10 @@ export const tool: ToolSpec = {
     ...WRITE_TAIL,
   },
   ops: {
-    "": op("ids+values/from+values/filter+values/rows", "on,doc,preview,confirm,units", M, [{"from":"r3","values":{"Fire Rating":"EI30"}}, {"filter":{"category":["Doors"],"level":"Level 1"},"values":{"Mark":"{Level}-D{n}"}}, {"ids":["project_info"],"values":{"Project Number":"2026-017"}}, {"ids":["304512"],"on":"type","values":{"Width":1000}}, {"rows":[{"id":"304512","values":{"Mark":"D1"}},{"id":"304513","values":{"Mark":"D2"}}]}], { help: "Bare numbers on lengths are mm (never feet). English and localized parameter names both resolve. '{Param}' copies values; '{n}' counts 1,2,3." }),
+    "": op("ids+values/from+values/filter+values/rows", "on,doc,preview,confirm,units", M, [{"from":"r3","values":{"Fire Rating":"EI30"}}, {"filter":{"category":["Doors"],"level":"Level 1"},"values":{"Mark":"{Level}-D{n}"}}, {"ids":["project_info"],"values":{"Project Number":"2026-017"}}, {"ids":["304512"],"on":"type","values":{"Width":1000}}, {"rows":[{"id":"304512","values":{"Mark":"D1"}},{"id":"304513","values":{"Mark":"D2"}}]}, {"filter":{"category":["Walls"]},"values":{"Comments":"{Base Constraint} wall {n}"}}], {
+      help: "Bare numbers on lengths are mm (never feet), areas m2, angles deg. English and localized parameter names both resolve (also bip:NAME). '{Param}' copies values of the same element; '{n}' counts 1,2,3 in target order. on:\"type\" writes the targets' types once each. A name no target has fails the call; targets lacking it are skipped with a warning.",
+      api: "Parameter.Set (ParamValues)",
+      errors: ["NOT_FOUND", "INVALID_ARGS", "TEMPLATE_CONTROLLED", "REVIT_REFUSED"],
+    }),
   },
 };
