@@ -9,11 +9,12 @@ using Autodesk.Revit.UI;
 namespace RevitMcpNext.Addin
 {
     /// <summary>
-    /// manage_document.new_project (W1 adapter of the old create_project_from_template; P-DOCS owns this file in wave 2).
+    /// manage_document.new_project (the old create_project_from_template; SPEC §5.9 C31).
     /// Args: path (.rvt, required); template (path or name; default settings.defaultTemplate[year], else
     /// %ProgramData%\Autodesk\RVT &lt;year&gt;\Templates\English\Default-Multi-Discipline_Metric.rte, else Revit's default
-    /// project template); overwrite; activate (default true: OpenAndActivateDocument after SaveAs).
-    /// An existing file at path needs a confirmed plan (rule file_overwrite).
+    /// project template); overwrite; activate (default true: OpenAndActivateDocument after SaveAs; the broker re-pins
+    /// with TARGET_NOW). An existing file at path needs a confirmed plan (rule file_overwrite); preview returns the
+    /// static plan. The broker runs it as a job so a slow template load returns j# at the call budget.
     /// </summary>
     internal static class ProjectFromTemplateOps
     {
@@ -21,7 +22,7 @@ namespace RevitMcpNext.Addin
         public static OpResult NewProject(RequestContext ctx)
         {
             PayloadReader args = ctx.Args;
-            string outputPath = FullPath(args.ReqStr("path"), "path");
+            string outputPath = DocFiles.FullPath(args.ReqStr("path"), "path");
             if (!string.Equals(Path.GetExtension(outputPath), ".rvt", StringComparison.OrdinalIgnoreCase))
             {
                 throw OpException.InvalidArgs("path", "must be a Revit project file (.rvt), got " + outputPath,
@@ -33,6 +34,12 @@ namespace RevitMcpNext.Addin
             string templatePath = ResolveTemplate(ctx, args.Str("template"));
             bool activate = args.Bool("activate", true);
             bool exists = File.Exists(outputPath);
+            Document openAtPath = DocFiles.FindOpen(ctx.RevitApp, outputPath);
+            if (openAtPath != null)
+            {
+                throw OpException.InvalidArgs("path", outputPath + " is open in Revit as '" + DocFiles.SafeTitle(openAtPath) + "'; close it first or choose another path",
+                    new Dictionary<string, object> { ["op"] = "close", ["doc"] = DocFiles.SafeTitle(openAtPath) });
+            }
             if (exists)
             {
                 OpResult plan = ctx.ConfirmOrPlan("file_overwrite",
@@ -40,9 +47,22 @@ namespace RevitMcpNext.Addin
                     "new_project would overwrite the existing file " + Path.GetFileName(outputPath));
                 if (plan != null) return plan;
             }
+            if (ctx.IsPreview)
+            {
+                return DocFiles.StaticPlan("create project " + outputPath + " from " + Path.GetFileName(templatePath) + (exists ? ", replacing the existing file" : string.Empty) + (activate ? " and show it" : " in the background"),
+                    new Dictionary<string, object> { ["path"] = outputPath, ["template"] = templatePath, ["overwrite"] = exists, ["activate"] = activate });
+            }
 
             Directory.CreateDirectory(outputDirectory);
-            Document created = ctx.RevitApp.NewProjectDocument(templatePath);
+            Document created;
+            try
+            {
+                created = DocFiles.Native(ctx, "opening", null, () => ctx.RevitApp.NewProjectDocument(templatePath));
+            }
+            catch (Exception ex)
+            {
+                throw DocFiles.MapFileException(ex, templatePath, "Creating a project from " + Path.GetFileName(templatePath));
+            }
             if (created == null)
             {
                 throw new OpException(ErrorCodes.RevitRefused, "Revit did not create a project from " + templatePath + ".",
@@ -55,10 +75,10 @@ namespace RevitMcpNext.Addin
                 created.SaveAs(outputPath, new SaveAsOptions { OverwriteExistingFile = exists });
                 result = activate ? Activate(ctx.App, created, outputPath) : created;
             }
-            catch
+            catch (Exception ex)
             {
                 CloseQuietly(created);
-                throw;
+                throw DocFiles.MapFileException(ex, outputPath, "Saving the new project as " + Path.GetFileName(outputPath));
             }
 
             DocumentRegistry registry = ctx.Registry;
