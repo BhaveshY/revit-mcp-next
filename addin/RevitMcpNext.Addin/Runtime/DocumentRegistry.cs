@@ -504,6 +504,34 @@ namespace RevitMcpNext.Addin
             return query;
         }
 
+        private void RecordTempStep(Document document, ICollection<string> names, UndoOperation operation)
+        {
+            DocumentChangeRecord record;
+            lock (_gate)
+            {
+                DocState state = EnsureStateUnsafe(document);
+                var entry = new JournalEntry
+                {
+                    Generation = state.Generation,
+                    Names = names.ToList(),
+                    Operation = OperationName(operation),
+                    Class = NameClass.Temp,
+                    AtUtc = DateTime.UtcNow
+                };
+                state.Journal.Add(entry);
+                if (state.Journal.Count > JournalCapacity) state.Journal.RemoveRange(0, state.Journal.Count - JournalCapacity);
+                record = new DocumentChangeRecord { Rid = state.Rid, DocKey = state.Key, Generation = state.Generation, Entry = entry };
+            }
+            try
+            {
+                DocumentChangeRecorded?.Invoke(record);
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("registry", "A DocumentChanged subscriber failed.", ex);
+            }
+        }
+
         /// <summary>
         /// Records that Revit cleared the document's undo history (SynchronizeWithCentral, ReloadLatest: V11). Undo then
         /// sees an empty stack instead of steps Revit no longer has; the UndoLedger drops the doc's records. UI thread.
@@ -1161,7 +1189,13 @@ namespace RevitMcpNext.Addin
                 {
                     DiagnosticsLogger.Error("registry", "A raw DocumentChanged subscriber failed.", ex);
                 }
-                if (temp) return;
+                if (temp)
+                {
+                    // An "MCP temp" transaction committed outside a TempScope (capture fallback B) sits on Revit's undo
+                    // stack: journal it (no generation, no stamps) so undo can step over it instead of mistaking it.
+                    if (!TempScope.IsActive && names.Count > 0) RecordTempStep(document, names, args.Operation);
+                    return;
+                }
 
                 ICollection<ElementId> added = args.GetAddedElementIds() ?? new List<ElementId>();
                 ICollection<ElementId> modified = args.GetModifiedElementIds() ?? new List<ElementId>();

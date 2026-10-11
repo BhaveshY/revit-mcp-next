@@ -22,7 +22,11 @@ namespace RevitMcpNext.Addin.Undo
         public IReadOnlyList<string> Names => First.Names ?? new List<string>();
         public NameClass Class => First.Class;
         public OursInfo Ours => Entries.Select(e => e.Ours).FirstOrDefault(o => o != null);
-        public bool IsUi => Class == NameClass.Ui;
+        /// <summary>
+        /// A transparent step: "MCP ui" view modes, or a committed "MCP temp" step (capture fallback B creates and deletes
+        /// a temporary view). Undo posts Undo for them on the way to the user's write and never counts them.
+        /// </summary>
+        public bool IsUi => Class == NameClass.Ui || Class == NameClass.Temp;
 
         /// <summary>A write of the given broker session (clientKey).</summary>
         public bool IsWriteOf(string clientKey)
