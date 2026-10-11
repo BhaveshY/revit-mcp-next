@@ -1,21 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using Autodesk.Revit.DB;
 using RevitMcpNext.Addin.Diagnostics;
 using RevitMcpNext.Contracts;
-
-#if !NET5_0_OR_GREATER
-namespace System.Runtime.CompilerServices
-{
-    /// <summary>Lets C# 9 module initializers compile on net48 (the attribute ships with .NET 5+).</summary>
-    [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
-    internal sealed class ModuleInitializerAttribute : Attribute
-    {
-    }
-}
-#endif
 
 namespace RevitMcpNext.Addin.Undo
 {
@@ -55,7 +43,6 @@ namespace RevitMcpNext.Addin.Undo
     internal static class UndoLedger
     {
         public const int MaxRecordsPerDoc = 200;
-        private static readonly TimeSpan AttachTimeout = TimeSpan.FromMinutes(5);
 
         /// <summary>Ops whose only effect is creating new elements (their compensation deletes them).</summary>
         private static readonly HashSet<string> CreationKeys = new HashSet<string>(StringComparer.Ordinal)
@@ -75,46 +62,11 @@ namespace RevitMcpNext.Addin.Undo
         private static readonly object Gate = new object();
         private static readonly Dictionary<long, List<LedgerRecord>> Records = new Dictionary<long, List<LedgerRecord>>();
         private static DocumentRegistry _attachedTo;
-        private static Timer _attachTimer;
-        private static DateTime _attachStartedUtc;
 
         /// <summary>
-        /// Attaches as soon as the add-in created its DocumentRegistry (polled from module load, so writes made before the
-        /// first undo call are recorded too; RevitMcpApplication has no domain startup hook).
+        /// Subscribes to the registry once (idempotent). RevitMcpApplication calls it right after the DocumentRegistry
+        /// attaches, so writes made before the first undo call are recorded; undo calls it again as a safety net.
         /// </summary>
-#pragma warning disable CA2255 // The add-in is the application here: this only starts a timer that waits for the registry.
-        [System.Runtime.CompilerServices.ModuleInitializer]
-        internal static void InitializeModule()
-#pragma warning restore CA2255
-        {
-            try
-            {
-                _attachStartedUtc = DateTime.UtcNow;
-                _attachTimer = new Timer(_ => TryAttachFromTimer(), null, 250, 250);
-            }
-            catch
-            {
-                // Attach() from the first undo call still works.
-            }
-        }
-
-        private static void TryAttachFromTimer()
-        {
-            try
-            {
-                if (Attach(McpRuntime.Registry) || DateTime.UtcNow - _attachStartedUtc > AttachTimeout)
-                {
-                    Timer timer = Interlocked.Exchange(ref _attachTimer, null);
-                    timer?.Dispose();
-                }
-            }
-            catch
-            {
-                // Retry on the next tick.
-            }
-        }
-
-        /// <summary>Subscribes to the registry once (idempotent; also called from undo). Returns true when attached.</summary>
         public static bool Attach(DocumentRegistry registry)
         {
             if (registry == null) return false;

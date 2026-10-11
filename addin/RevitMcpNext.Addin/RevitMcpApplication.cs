@@ -68,6 +68,7 @@ namespace RevitMcpNext.Addin
                 _registry = new DocumentRegistry(identity);
                 McpRuntime.Registry = _registry;
                 _registry.Attach(application);
+                RevitMcpNext.Addin.Undo.UndoLedger.Attach(_registry);
                 _registry.SetCodeExecution(_settings.Current.EnableCodeExecution, false, _settings.FileMtimeUtc);
                 _settings.Changed += settings => _registry.SetCodeExecution(settings.EnableCodeExecution, _registry.CodeExecution.Consented, _settings.FileMtimeUtc);
 
