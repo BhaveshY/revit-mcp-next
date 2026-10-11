@@ -29,6 +29,10 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "view,ids,from,region,orient,style,size,margin,highlight,annotations,compare,format,doc", M, [{}, {"view":"A101","size":"large"}, {"from":"last","orient":"iso_se"}, {"view":"Level 1","region":[0,0,12000,8000],"highlight":["304601"]}, {"view":"Level 1","compare":"c4"}], { help: "Temporary views and overrides are rolled back; nothing is kept in the model. size small|medium|large caps the long edge at 768/1280/1568 px." }),
+    "": op("", "view,ids,from,region,orient,style,size,margin,highlight,annotations,compare,format,doc", M, [{}, {"view":"A101","size":"large"}, {"from":"last","orient":"iso_se"}, {"view":"Level 1","region":[0,0,12000,8000],"highlight":["304601"]}, {"view":"Level 1","compare":"c4"}, {"view":"A101","region":[20,20,420,297]}, {"ids":["304512","304513"],"margin":500,"style":"hidden","size":"small"}, {"view":"Level 1","annotations":false,"format":"png"}], {
+      help: "Temporary views and overrides are rolled back; nothing is kept in the model. size small|medium|large caps the long edge at 768/1280/1568 px (and 0.40/1.00/1.15 MP). region: plans use model x,y mm; sections/elevations use [along the view, elevation] mm; sheets use sheet mm; 3D views get a section box. Cropped plans and sheets report bounds and mm_per_px to map pixels back to mm. compare= c# needs the same view, size and region and returns the changed pixels in magenta with changed{pixels,bbox_px,bbox_model}. Schedules: use read_schedule.",
+      api: "ImageExportOptions (SetOfViews, FitToPage, PixelSize) inside a rolled-back TransactionGroup; View3D.CreateIsometric + SetSectionBox for ids/from",
+      errors: ["CAPTURE_NOT_EXPORTABLE", "CAPTURE_GPU_UNAVAILABLE", "CAPTURE_GONE", "NEEDS_ACTIVE_DOC", "NOT_FOUND", "INVALID_ARGS", "READ_STILL_RUNNING"],
+    }),
   },
 };

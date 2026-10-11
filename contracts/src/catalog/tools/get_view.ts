@@ -19,6 +19,9 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "view,include,doc", M, [{}, {"view":"A101","include":["viewports"]}]),
+    "": op("", "view,include,doc", M, [{}, {"view":"A101","include":["viewports"]}, {"view":"Level 1","include":["overrides","filters","categories"]}, {"view":"A101","include":["revisions"]}], {
+      help: "template_controls lists the settings the view template locks (edit them on the template). view_range is in mm above the view level. include=overrides scans up to 5,000 elements of the view.",
+      errors: ["NOT_FOUND", "AMBIGUOUS_NAME"],
+    }),
   },
 };
