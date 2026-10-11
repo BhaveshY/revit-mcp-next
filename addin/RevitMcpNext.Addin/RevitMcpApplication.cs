@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
@@ -84,6 +85,9 @@ namespace RevitMcpNext.Addin
                 _pump.Attach(_externalEvent);
                 _pump.HasWork = () => _queue.HasPending || _queue.Deferred != null || _jobs.HasActiveJobs;
                 _pump.IsExecuting = () => _handler.InExecute;
+                _pump.MainWindow = () => _uiMonitor?.MainWindow ?? IntPtr.Zero;
+                _pump.OnTick = () => _uiMonitor?.Nudge();
+                RevitMcpInProcessBridge.SetUiThread(Thread.CurrentThread.ManagedThreadId);
 
                 _dialogs = new DialogPolicy(() => _settings.Current.DialogPolicy);
                 McpRuntime.Dialogs = _dialogs;
@@ -173,6 +177,12 @@ namespace RevitMcpNext.Addin
             _externalEvent = null;
         }
 
+        /// <summary>
+        /// Idling stays subscribed for the whole session (SPEC §8.2, D2 §5): it records lastIdlingAtUtc, recreates a broken
+        /// ExternalEvent and runs e2e test dialogs. Without queued work it returns at once. While work is pending it asks
+        /// Revit for prompt Idling (SetRaiseWithoutDelay) and, when the oldest item has waited wake.idlingFallbackAfterMs
+        /// without the ExternalEvent picking it up, executes one idle-safe item (meta idle:true) itself.
+        /// </summary>
         private void OnIdling(object sender, IdlingEventArgs args)
         {
             try
@@ -183,10 +193,38 @@ namespace RevitMcpNext.Addin
                 if (_pump != null && _pump.NeedsRecreate && _handler != null)
                 {
                     // Idling is API context, so the ExternalEvent can be recreated here.
-                    _externalEvent = ExternalEvent.Create(_handler);
-                    _pump.Recreate(_externalEvent);
+                    ExternalEvent replacement = ExternalEvent.Create(_handler);
+                    _externalEvent = replacement;
+                    _pump.Recreate(replacement);
                     _pump.Raise();
                 }
+
+                if (TestOps.HasIdleActions && McpRuntime.TestOpsEnabled && (_handler == null || !_handler.InExecute))
+                {
+                    TestOps.RunIdleActions(app);
+                }
+
+                if (_pump == null || _handler == null || !_pump.HasWorkNow) return;
+                WakeSettings wake = _settings?.Current.Wake ?? new WakeSettings();
+                if (!wake.IdlingFallback) return;
+                args.SetRaiseWithoutDelay();
+                if (_handler.InExecute) return;
+                RevitRequestQueue queue = _queue;
+                bool waited = queue != null && queue.OldestPendingAgeMs >= Math.Max(0, wake.IdlingFallbackAfterMs);
+                bool deferredDone = queue?.Deferred?.DeferredTask != null && (queue.Deferred.DeferredTask.IsCompleted || DateTime.UtcNow >= queue.Deferred.DeferredDeadlineUtc);
+                if (!waited && !deferredDone) return;
+
+                long before = _pump.ExecuteStarts;
+                _pump.CurrentVia = "idling";
+                try
+                {
+                    _handler.ExecuteBatch(app, "idling", 1, 100, meta => meta != null && meta.Idle);
+                }
+                finally
+                {
+                    _pump.CurrentVia = null;
+                }
+                if (_pump.ExecuteStarts > before) _pump.CountIdlingExecution();
             }
             catch (Exception ex)
             {
@@ -201,7 +239,14 @@ namespace RevitMcpNext.Addin
 
         private static void OnFailuresProcessing(object sender, FailuresProcessingEventArgs args)
         {
-            FailureCapture.OnFailuresProcessing(sender, args);
+            try
+            {
+                FailureCapture.OnFailuresProcessing(sender, args);
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("failures", "The FailuresProcessing safety net failed.", ex);
+            }
         }
 
         private static bool _crashGuardsInstalled;
