@@ -18,6 +18,9 @@ export const tool: ToolSpec = {
     wait: sec(I("Seconds to wait for completion, 0-45. Default 20.")),
   },
   ops: {
-    "": op("", "id,wait", M, [{"id":"j2","wait":30}, {}], { help: "Waits up to wait seconds (default 20). w# ids report write outcomes from the add-in ledger." }),
+    "": op("", "id,wait", M, [{"id":"j2","wait":30}, {}, {"id":"w17"}, {"id":"j4","wait":0}], {
+      help: "Waits up to wait seconds (default 20, max 45). A finished job returns the original call's result. w# ids report write outcomes from the add-in ledger, also after Revit exited. Never repeat a write that is still running: ask job_status again.",
+      errors: ["JOB_UNKNOWN", "REVIT_EXITED", "WRITE_OUTCOME_UNKNOWN"],
+    }),
   },
 };

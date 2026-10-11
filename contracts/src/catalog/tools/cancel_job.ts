@@ -19,6 +19,9 @@ export const tool: ToolSpec = {
   },
   required: ["id"],
   ops: {
-    "": op("id", "reason", M, [{"id":"j2"}]),
+    "": op("id", "reason", M, [{"id":"j2"}, {"id":"w5","reason":"the user changed the request"}], {
+      help: "Cancels between job steps or before a queued request runs. A write that already runs finishes or rolls back; check it with job_status.",
+      errors: ["JOB_UNKNOWN", "INVALID_ARGS"],
+    }),
   },
 };

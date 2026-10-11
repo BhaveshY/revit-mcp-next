@@ -20,6 +20,9 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "include,detail,instance,doc", M, [{}, {"include":["selection","warnings"]}, {"detail":"full"}], { help: "Served from control snapshots and health only; it never waits for Revit's UI thread. include= adds sections from other reads (shared 10 s budget)." }),
+    "": op("", "include,detail,instance,doc", M, [{}, {"include":["selection","warnings"]}, {"detail":"full"}, {"instance":"2027"}, {"include":["writes"]}], {
+      help: "Served from control snapshots and health only; it never waits for Revit's UI thread, so it answers while Revit is busy or shows a dialog. include= adds sections from other reads (shared 10 s budget); a section that cannot run says unavailable: <CODE>. detail=full adds versions, paths, auth, queue/pipe health, this broker's transport counters and problems[]. No Revit running is not an error.",
+      errors: ["NO_REVIT_RUNNING", "REVIT_STARTING", "ADDIN_OUTDATED", "AUTH_MISMATCH"],
+    }),
   },
 };
