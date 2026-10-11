@@ -25,6 +25,6 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("schedule/category", "rows,available,name,key,limit,page,doc", M, [{"schedule":"Door Schedule","limit":200}, {"category":"Doors","available":true,"rows":false}], { help: "Rows come from the schedule cells. An id column appears only when the key field (default Mark) maps rows 1:1 onto elements." }),
+    "": op("schedule/category", "rows,available,name,key,limit,page,doc", M, [{"schedule":"Door Schedule","limit":200}, {"category":"Doors","available":true,"rows":false}, {"schedule":"Door Schedule","key":"Mark","limit":50}], { help: "Rows come from the schedule cells (paged; continue with the more: page token). An id column appears only when the key field (default Mark) is visible, the schedule is itemized and its values map rows 1:1 onto elements; otherwise data.elementIds lists the elements and a notice says why. category= alone lists the fields a new schedule could use.", api: "TableView.GetCellText; ScheduleDefinition.GetSchedulableFields", errors: ["NOT_FOUND", "INVALID_ARGS"] }),
   },
 };
