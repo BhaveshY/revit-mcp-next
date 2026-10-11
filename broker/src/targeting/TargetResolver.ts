@@ -1,6 +1,7 @@
 // Targeting (SPEC §7, D2 §9.4, §10): pin model, auto-resolve, rebind by rid/key/alias, re-pin rules, TARGET_CHANGED
 // gates, exact-only doc matching for writes, set_target and projectPin. Resolution reads snapshots only; it never
-// waits for Revit's UI thread. Basic-complete implementation; P-REL-BROKER owns hardening.
+// waits for Revit's UI thread. Notices: AUTO_PINNED, REBOUND, SAVED_AS, PIN_MOVED, TARGET_NOW, ACTIVE_DIFFERS (once per
+// change of the active doc), FAMILY_EDITING. Errors name the Revit that exited (NO_REVIT_RUNNING, DOC_NOT_OPEN).
 
 import type { Kind, Scope } from "@revit-mcp-next/contracts/catalog";
 import type { ResponseDoc, SnapshotDoc } from "@revit-mcp-next/contracts/protocol";
@@ -48,11 +49,32 @@ const isGated = (kind: Kind) => kind === "write" || kind === "lifecycle" || kind
 const exactOnly = (kind: Kind) => kind !== "read" && kind !== "control";
 
 export class TargetResolver {
+  /** Per session and pinned doc: the active doc last reported by ACTIVE_DIFFERS (once per change of the active doc). */
+  private readonly activeSeen = new WeakMap<Session, Map<string, string>>();
+
   constructor(
     private readonly registry: InstanceRegistry,
     private readonly channels: ChannelPool,
     private readonly log: BrokerLog
   ) {}
+
+  /** True when the active doc next to `pinnedKey` changed since the last call (records it). */
+  private activeChanged(session: Session, pinnedKey: string, activeKey: string): boolean {
+    let seen = this.activeSeen.get(session);
+    if (!seen) {
+      seen = new Map();
+      this.activeSeen.set(session, seen);
+    }
+    const before = seen.get(pinnedKey);
+    seen.set(pinnedKey, activeKey);
+    return activeKey !== pinnedKey && before !== activeKey;
+  }
+
+  /** " (Revit 2024, pid 19356, exited at 10:32)" for an instance that went away while this broker watched. */
+  private exitText(instanceId: string): string {
+    const e = this.registry.exitOf(instanceId);
+    return e ? `Revit ${e.year} (pid ${e.pid}) exited at ${new Date(e.at).toLocaleTimeString("en-GB")}` : "";
+  }
 
   // ------------------------------------------------------------------------------------------------ world
 
@@ -243,12 +265,14 @@ export class TargetResolver {
           };
         }
       }
-      if (activeCandidate && session.once(`ACTIVE_DIFFERS:${candidate.key}:${activeDoc.key}`)) {
+      if (activeCandidate && this.activeChanged(session, candidate.key, activeDoc.key)) {
         if (activeCandidate.kind === "family" && activeDoc.familySourceRid === candidate.rid)
           notices.push(`FAMILY_EDITING the user is editing family ${stripExt(activeCandidate.title)} (#${activeCandidate.n}) in Revit ${activeCandidate.year}`);
         else notices.push(`ACTIVE_DIFFERS Revit's active doc is ${docLabel(activeCandidate)}; still working on ${docLabel(candidate)}. set_target {"doc":"active"} switches`);
       }
     }
+
+    if (o.checkActiveSwitch && pin && pin.key === candidate.key && (!activeDoc || activeDoc.key === candidate.key)) this.activeChanged(session, candidate.key, candidate.key);
 
     if (exactOnly(req.kind) && isGated(req.kind) && candidate.readOnly) {
       const editable = world.candidates.find((c) => c.key === candidate.key && !c.readOnly);
@@ -350,8 +374,12 @@ export class TargetResolver {
     const instanceAlive = world.usable.some((i) => i.instanceId === pin.instanceId);
     const options = world.candidates.map(optionOf);
     if (instanceAlive)
-      return { kind: "closed", error: failure("", "TARGET_CLOSED", `the pinned doc ${docLabel({ n: session.peekDocNumber(pin.key) ?? 0, title: pin.title, year: pin.year })} was closed`, { title: stripExt(pin.title), path: pin.path || undefined, options }) };
-    return { kind: "not_open", error: failure("", "DOC_NOT_OPEN", `the pinned doc ${stripExt(pin.title)} is not open (Revit ${pin.year} restarted or exited)`, { title: stripExt(pin.title), path: pin.path || undefined, options }) };
+      return { kind: "closed", error: failure("", "TARGET_CLOSED", `the pinned doc ${docLabel({ n: session.peekDocNumber(pin.key) ?? 0, title: pin.title, year: pin.year })} was closed in Revit ${pin.year} (pid ${pin.pid})`, { title: stripExt(pin.title), path: pin.path || undefined, year: pin.year, options }) };
+    const exited = this.exitText(pin.instanceId);
+    const restarted = world.usable.some((i) => i.year === pin.year);
+    const why = exited ? `${exited}${restarted ? `; the Revit ${pin.year} running now has not opened it` : ""}` : `Revit ${pin.year} (pid ${pin.pid}) restarted or exited`;
+    if (exited) this.log.info("rebind", { change: "pin_lost", pin: pin.key, exited: pin.instanceId });
+    return { kind: "not_open", error: failure("", "DOC_NOT_OPEN", `the pinned doc ${stripExt(pin.title)} is not open: ${why}`, { title: stripExt(pin.title), path: pin.path || undefined, year: pin.year, options }) };
   }
 
   private autoResolve(session: Session, world: World, req: ResolveRequest, notices: string[]): { ok: true; candidate?: DocCandidate } | { ok: false; error: BridgeResponse; notices: string[] } {
@@ -429,8 +457,11 @@ export class TargetResolver {
       });
     }
     if (world.starting.length > 0) return failure("", "REVIT_STARTING", `Revit ${world.starting[0]!.year} is still starting`, { year: world.starting[0]!.year });
-    const last = this.registry.lastExited();
-    const lastExited = last ? { year: last.year, pid: last.pid, doc: last.docs[0], at: new Date(last.at).toISOString() } : undefined;
+    // Name the Revit of this session's pin when it is the one that went away, else the most recent exit.
+    const pin = req.session.pin;
+    const pinnedExit = pin ? this.registry.exitOf(pin.instanceId) : null;
+    const last = pinnedExit ? { ...pinnedExit, docs: [stripExt(pin!.title), ...pinnedExit.docs.filter((d) => stripExt(d) !== stripExt(pin!.title))] } : this.registry.lastExited();
+    const lastExited = last ? { year: last.year, pid: last.pid, doc: last.docs[0] ? stripExt(last.docs[0]) : undefined, at: new Date(last.at).toISOString() } : undefined;
     return failure(
       "",
       "NO_REVIT_RUNNING",
