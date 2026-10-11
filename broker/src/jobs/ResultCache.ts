@@ -1,6 +1,7 @@
 // READ_STILL_RUNNING cache (SPEC §6.8): a read that could not finish within the budget keeps running; the broker
 // keeps waiting in the background and caches the result for 10 min keyed by (key, canonical args, docKey).
-// job_status j# or a repeat of the identical call returns it. Basic implementation; P-REL-BROKER hardens it.
+// job_status j# or a repeat of the identical call returns it. Settled entries live 10 min after settling; at most 64
+// entries (oldest first out); a detached exchange gives up after 10 min, so nothing waits forever.
 
 import type { BridgeResponse } from "@revit-mcp-next/contracts/protocol";
 
@@ -19,9 +20,17 @@ export interface CachedRead {
 export class ResultCache {
   private readonly entries = new Map<string, CachedRead>();
 
-  /** Track a detached read. */
+  /** Entries held (status detail:full). */
+  get size(): number {
+    return this.entries.size;
+  }
+
+  /** Track a detached read. A repeat of a read that is still running keeps the first one. */
   put(key: string, promise: Promise<BridgeResponse>): CachedRead {
     this.prune();
+    const existing = this.entries.get(key);
+    if (existing && existing.settledAt === null) return existing;
+    this.entries.delete(key);
     const entry: CachedRead = { key, promise, response: null, error: null, startedAt: Date.now(), settledAt: null };
     promise.then(
       (response) => {

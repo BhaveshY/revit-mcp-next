@@ -129,6 +129,11 @@ export class InstanceChannel {
     return this.info.instanceId;
   }
 
+  /** The runtime home (ledger and job records of this instance live under it). */
+  get home(): string {
+    return this.deps.home;
+  }
+
   get isRetired(): boolean {
     return this.retired;
   }
