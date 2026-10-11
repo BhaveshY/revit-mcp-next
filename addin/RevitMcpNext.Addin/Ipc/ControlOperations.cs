@@ -8,9 +8,9 @@ namespace RevitMcpNext.Addin.Ipc
 {
     /// <summary>
     /// Control-pipe operations (SPEC §4.6.4), served on pipe threads; they never touch the Revit UI thread and never
-    /// call the Revit API. dialogs/press return UNSUPPORTED_OP until P-REL-ADDIN implements them.
+    /// call the Revit API. dialogs/press follow SPEC §8.5 (ControlOperations.Dialogs.cs).
     /// </summary>
-    internal sealed class ControlOperations
+    internal sealed partial class ControlOperations
     {
         private readonly Func<ListenerHealth> _listeners;
         private readonly Func<long> _admissionRejections;
@@ -37,12 +37,8 @@ namespace RevitMcpNext.Addin.Ipc
                     case ControlOps.RecentWrites: response = RecentWrites(request); break;
                     case ControlOps.JobStatus: response = JobStatus(request); break;
                     case ControlOps.JobCancel: response = JobCancel(request); break;
-                    case ControlOps.Dialogs:
-                    case ControlOps.Press:
-                        response = BridgeResponse.Failure(request.RequestId, ErrorCodes.UnsupportedOp,
-                            "The control op '" + request.Op + "' is not available in this add-in build.",
-                            new Dictionary<string, object> { ["op"] = request.Op });
-                        break;
+                    case ControlOps.Dialogs: response = Dialogs(request); break;
+                    case ControlOps.Press: response = Press(request); break;
                     default:
                         response = BridgeResponse.Failure(request.RequestId, ErrorCodes.UnknownOp,
                             "Unknown control op '" + request.Op + "'.",
