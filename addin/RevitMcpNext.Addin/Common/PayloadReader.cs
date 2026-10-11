@@ -13,8 +13,8 @@ namespace RevitMcpNext.Addin
     /// unit strings ("3.5 m", "12'6\"", "45°", "2%"), yes/no booleans, scalars where arrays are expected, comma-separated
     /// id strings, camelCase keys for snake_case params. Every problem throws INVALID_ARGS naming the field.
     /// Lengths: Mm() returns internal feet, MmRaw() millimetres. Angles: Deg() returns radians, DegRaw() degrees.
-    /// A per-call "units" arg (mm|cm|m|in|ft) scales bare length numbers only when the reader is created without an
-    /// explicit factor (in-process callers); broker requests arrive normalized to mm, so RequestContext passes 1.
+    /// A per-call "units" arg (mm|cm|m|in|ft) scales bare length numbers when the reader is created without an explicit
+    /// factor. The broker leaves plain numbers in the call's units, so RequestContext always derives the factor here.
     /// </summary>
     internal sealed class PayloadReader
     {

@@ -33,8 +33,9 @@ namespace RevitMcpNext.Addin
             Via = via ?? "externalEvent";
             _item = item;
             Stopwatch = Stopwatch.StartNew();
-            // The broker already applied the per-call "units" arg (SPEC §5.3); only in-process callers get it applied here.
-            Args = new PayloadReader(request.Args, null, Via == "inProcess" ? (double?)null : 1.0);
+            // The broker keeps plain numbers in the call's "units" (framework/normalize.ts step 3); the reader derives the
+            // bare-length factor from args.units for every caller (broker, in-process, jobs).
+            Args = new PayloadReader(request.Args, null);
             long elapsedSinceReceipt = item?.AgeMs ?? 0;
             _deadlineUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(250, request.TimeoutMs - elapsedSinceReceipt - ReadDeadlineMarginMs));
         }
