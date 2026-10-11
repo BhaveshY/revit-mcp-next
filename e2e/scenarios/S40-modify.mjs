@@ -16,9 +16,9 @@ function rowsOf(r) {
 
 /** "Family: Type" names of the element types of a category. */
 async function typeNames(t, category) {
-  const r = await t.call("find_elements", { category: [category], types: true, fields: ["family", "type", "name"], limit: 100 });
+  const r = await t.call("find_elements", { category: [category], types: true, fields: ["family", "name"], limit: 100 });
   return rowsOf(r)
-    .map((x) => (x.family && (x.type || x.name) ? `${x.family}: ${x.type ?? x.name}` : x.name ?? x.type))
+    .map((x) => (x.family && (x.name || x.type) ? `${x.family}: ${x.name ?? x.type}` : x.name ?? x.type))
     .filter((name) => typeof name === "string" && name.length > 0);
 }
 
@@ -48,7 +48,9 @@ export default {
     }
     const L1 = lv[0].name;
     const L2 = lv[1].name;
-    const wallTypes = await typeNames(t, "Walls");
+    const allWallTypes = await typeNames(t, "Walls");
+    const basic = allWallTypes.filter((n) => /^Basic Wall:/i.test(n));
+    const wallTypes = basic.length >= 2 ? basic : allWallTypes;
     const doorTypes = await typeNames(t, "Doors");
     t.assert(wallTypes.length >= 2 && doorTypes.length >= 1, `template has wall types (${wallTypes.length}) and door types (${doorTypes.length})`);
     const doorType = doorTypes[0];
