@@ -51,8 +51,6 @@ namespace RevitMcpNext.Addin.Ipc
         private long _completed;
         private long _clientFaults;
         private long _listenerFaults;
-        /// <summary>Requests refused by admission control (REVIT_QUEUE_FULL; P-REL-ADDIN adds admission).</summary>
-        private long _admissionRejections = 0;
 
         public NamedPipeHost(
             string pipeName,
@@ -69,7 +67,7 @@ namespace RevitMcpNext.Addin.Ipc
             _auth = auth ?? throw new ArgumentNullException(nameof(auth));
             _jobs = jobs;
             _pipeSecurity = PipeSecurityFactory.CreateCurrentUserOnly();
-            _control = new ControlOperations(GetListenerHealth, () => Interlocked.Read(ref _admissionRejections));
+            _control = new ControlOperations(GetListenerHealth, () => _queue.AdmissionRejections);
             _queue.RequestStarted += item => { if (RequestOutcomeLedger.IsRecorded(item.Request)) _ledger?.MarkRunning(item.RequestId); };
         }
 
@@ -379,7 +377,13 @@ namespace RevitMcpNext.Addin.Ipc
             using (var queueTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 queueTimeout.CancelAfter(Math.Max(1, request.TimeoutMs - QueueCancelMarginMs));
-                QueuedRevitWorkItem item = _queue.Enqueue(request, queueTimeout.Token);
+                QueuedRevitWorkItem item = _queue.TryEnqueue(request, queueTimeout.Token, out BridgeResponse rejection);
+                if (item == null)
+                {
+                    // Admission control (MaxPending / per client): nothing was queued, so the requestId stays reusable.
+                    if (recorded) _ledger.Release(request.RequestId, rejection);
+                    return rejection;
+                }
                 Task<BridgeResponse> completion = item.Completion.Task;
                 int maxWaitMs = Math.Max(1, request.TimeoutMs) + RunningGraceMs;
                 Task finished = await Task.WhenAny(completion, Task.Delay(maxWaitMs, cancellationToken)).ConfigureAwait(false);

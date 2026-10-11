@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,6 +25,7 @@ namespace RevitMcpNext.Addin
         private long _startedTimestamp;
         private long _firstRaiseTimestamp;
         private int _state = (int)QueuedRevitWorkState.Pending;
+        private readonly List<BridgeWarning> _earlyWarnings = new List<BridgeWarning>();
 
         public QueuedRevitWorkItem(BridgeRequest request, CancellationToken cancellationToken)
         {
@@ -96,6 +98,16 @@ namespace RevitMcpNext.Addin
             return true;
         }
 
+        /// <summary>
+        /// Records a warning that arose outside the item's own execution (e.g. a dialog answered while it waited, tier B);
+        /// it is merged into the item's response when it completes. Thread-safe.
+        /// </summary>
+        public void AddEarlyWarning(string code, string text)
+        {
+            if (string.IsNullOrEmpty(code)) return;
+            lock (_earlyWarnings) _earlyWarnings.Add(new BridgeWarning { Code = code, Text = text ?? string.Empty });
+        }
+
         /// <summary>Completes a running (or pending) item; false when it was already completed or cancelled.</summary>
         public bool TrySetResult(BridgeResponse response)
         {
@@ -104,6 +116,7 @@ namespace RevitMcpNext.Addin
                 QueuedRevitWorkState state = State;
                 if (state == QueuedRevitWorkState.Cancelled || state == QueuedRevitWorkState.Completed) return false;
                 if (Interlocked.CompareExchange(ref _state, (int)QueuedRevitWorkState.Completed, (int)state) != (int)state) continue;
+                MergeEarlyWarnings(response);
                 Completion.TrySetResult(response);
                 Dispose();
                 return true;
@@ -132,6 +145,20 @@ namespace RevitMcpNext.Addin
         }
 
         public long AgeMs => ElapsedMs(EnqueuedTimestamp, Stopwatch.GetTimestamp());
+
+        private void MergeEarlyWarnings(BridgeResponse response)
+        {
+            if (response == null) return;
+            List<BridgeWarning> early;
+            lock (_earlyWarnings)
+            {
+                if (_earlyWarnings.Count == 0) return;
+                early = new List<BridgeWarning>(_earlyWarnings);
+                _earlyWarnings.Clear();
+            }
+            if (response.Warnings == null) response.Warnings = new List<BridgeWarning>();
+            foreach (BridgeWarning warning in early) OpResult.AddWarning(response.Warnings, warning.Code, warning.Text, null, 1);
+        }
 
         public void Dispose()
         {

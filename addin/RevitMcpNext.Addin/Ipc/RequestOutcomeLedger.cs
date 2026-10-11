@@ -181,6 +181,25 @@ namespace RevitMcpNext.Addin.Ipc
             entry.Completion.TrySetResult(entry);
         }
 
+        /// <summary>
+        /// Forgets an accepted entry whose request never reached the queue (admission refused it): nothing ran, so the
+        /// same requestId may be sent again. Replays already waiting on the entry get <paramref name="response"/>.
+        /// </summary>
+        public void Release(string requestId, BridgeResponse response)
+        {
+            LedgerEntry entry;
+            lock (_gate)
+            {
+                if (!_entries.TryGetValue(requestId ?? string.Empty, out entry) || entry.State != OutcomeStates.Accepted) return;
+                _entries.Remove(requestId);
+                _order.Remove(requestId);
+                entry.State = OutcomeStates.Failed;
+                entry.Response = response;
+                entry.CompletedAtUtc = DateTime.UtcNow;
+            }
+            entry.Completion.TrySetResult(entry);
+        }
+
         /// <summary>get_request_result: memory first, then the ledger files of this instance.</summary>
         public LedgerEntry Find(string requestId)
         {
