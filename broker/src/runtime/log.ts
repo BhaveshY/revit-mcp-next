@@ -1,6 +1,10 @@
-// Broker log (D2 §14.3): JSONL at <home>\logs\broker-YYYYMMDD.<n>.jsonl, size rotation, retention, buffered async
-// writer flushed every 200 ms and on shutdown. Never writes to stdout. Tokens are never logged (only fingerprints).
-// Basic implementation; P-REL-BROKER owns hardening.
+// Broker log (D2 §14.3): JSONL at <home>\logs\broker-YYYYMMDD.<n>.jsonl, rotation at log.maxFileMb (10 MB), retention
+// log.retainDays (14 days, pruned at start and at each day change), buffered async writer flushed every 200 ms and on
+// shutdown. Never writes to stdout. Tokens are never logged (keys token/authToken/auth are dropped at any depth; only
+// fingerprints appear).
+// One line per tool call: the framework writes evt "call" with reqId; the transport adds its metrics beforehand with
+// annotate(reqId, {...}) (limiterMs, queueWaitMs, raiseToExecMs, execMs, via, retried, coalesced, partial...), which are
+// merged into that call line. Annotations nobody claims within 60 s are written as evt "exchange".
 
 import { appendFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +13,12 @@ import { brokerLogFile, logDateStamp, logsDir, type LogLevel } from "@revit-mcp-
 export type LogFields = Record<string, unknown>;
 
 const LEVELS: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-const REDACT_KEYS = new Set(["token", "authToken", "auth"]);
+const REDACT_KEYS = new Set(["token", "authtoken", "auth", "password", "secret"]);
+const MAX_QUEUE = 5_000;
+const FLUSH_MS = 200;
+const ANNOTATION_TTL_MS = 60_000;
+const MAX_ANNOTATIONS = 2_000;
+const MAX_DEPTH = 6;
 
 export interface LogOptions {
   level?: LogLevel;
@@ -28,6 +37,8 @@ export class BrokerLog {
   private dirReady = false;
   private disabled = false;
   private closed = false;
+  private dropped = 0;
+  private readonly annotations = new Map<string, { fields: LogFields; at: number }>();
   level: LogLevel;
   private maxBytes: number;
   private retainDays: number;
@@ -35,13 +46,22 @@ export class BrokerLog {
   constructor(readonly home: string, options: LogOptions = {}) {
     this.level = options.level ?? "info";
     this.maxBytes = Math.max(1, options.maxFileMb ?? 10) * 1024 * 1024;
-    this.retainDays = options.retainDays ?? 14;
+    this.retainDays = Math.max(1, options.retainDays ?? 14);
   }
 
   configure(options: LogOptions): void {
-    if (options.level) this.level = options.level;
-    if (options.maxFileMb) this.maxBytes = Math.max(1, options.maxFileMb) * 1024 * 1024;
-    if (options.retainDays) this.retainDays = options.retainDays;
+    if (options.level && options.level in LEVELS) this.level = options.level;
+    if (options.maxFileMb && options.maxFileMb > 0) this.maxBytes = Math.max(1, options.maxFileMb) * 1024 * 1024;
+    if (options.retainDays && options.retainDays > 0) this.retainDays = options.retainDays;
+  }
+
+  /** The current log file (status detail:full). */
+  get currentFile(): string | null {
+    return this.file;
+  }
+
+  get isDisabled(): boolean {
+    return this.disabled;
   }
 
   debug(evt: string, fields: LogFields = {}): void {
@@ -57,27 +77,73 @@ export class BrokerLog {
     this.write("error", evt, fields);
   }
 
+  /** Attach transport metrics to the coming `call` line of this request id (merged, one line per call). */
+  annotate(reqId: string, fields: LogFields): void {
+    if (!reqId || this.closed || this.disabled) return;
+    const now = Date.now();
+    const existing = this.annotations.get(reqId);
+    this.annotations.set(reqId, { fields: { ...(existing?.fields ?? {}), ...stripUndefined(fields) }, at: existing?.at ?? now });
+    if (this.annotations.size > MAX_ANNOTATIONS) this.expireAnnotations(now, true);
+    this.schedule();
+  }
+
   write(level: LogLevel, evt: string, fields: LogFields): void {
     if (this.closed || this.disabled || LEVELS[level] < LEVELS[this.level]) return;
+    let merged = fields;
+    if (evt === "call" && typeof fields.reqId === "string") {
+      const a = this.annotations.get(fields.reqId);
+      if (a) {
+        this.annotations.delete(fields.reqId);
+        merged = { ...a.fields, ...stripUndefined(fields) };
+      }
+    }
+    this.push(level, evt, merged);
+  }
+
+  private push(level: LogLevel, evt: string, fields: LogFields): void {
     let line: string;
     try {
-      line = JSON.stringify({ ts: new Date().toISOString(), lvl: level, evt, pid: process.pid, ...redact(fields) });
+      line = JSON.stringify({ ts: new Date().toISOString(), lvl: level, evt, pid: process.pid, ...(redact(fields, 0) as LogFields) });
     } catch {
       line = JSON.stringify({ ts: new Date().toISOString(), lvl: level, evt, pid: process.pid, note: "unserializable fields" });
     }
     this.queue.push(line);
-    if (this.queue.length > 5_000) this.queue.splice(0, this.queue.length - 5_000);
-    if (!this.timer) {
-      this.timer = setTimeout(() => {
-        this.timer = null;
-        void this.flush();
-      }, 200);
-      this.timer.unref();
+    if (this.queue.length > MAX_QUEUE) {
+      const drop = this.queue.length - MAX_QUEUE;
+      this.queue.splice(0, drop);
+      this.dropped += drop;
     }
+    this.schedule();
+  }
+
+  private schedule(): void {
+    if (this.timer || this.closed) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.expireAnnotations(Date.now(), false);
+      void this.flush();
+    }, FLUSH_MS);
+    this.timer.unref();
+  }
+
+  /** Annotations without a call line: written as "exchange" lines (control-only paths, nested helpers). */
+  private expireAnnotations(now: number, force: boolean): void {
+    for (const [reqId, a] of this.annotations) {
+      if (!force && now - a.at < ANNOTATION_TTL_MS) continue;
+      this.annotations.delete(reqId);
+      if (LEVELS.info >= LEVELS[this.level]) this.push("info", "exchange", { reqId, ...a.fields });
+      if (force && this.annotations.size <= MAX_ANNOTATIONS / 2) break;
+    }
+    if (this.annotations.size > 0) this.schedule();
   }
 
   /** Write everything queued so far. */
   flush(): Promise<void> {
+    if (this.dropped > 0) {
+      const n = this.dropped;
+      this.dropped = 0;
+      this.queue.unshift(JSON.stringify({ ts: new Date().toISOString(), lvl: "warn", evt: "log_dropped", pid: process.pid, lines: n }));
+    }
     if (this.queue.length === 0) return this.writing;
     const lines = this.queue.splice(0);
     this.writing = this.writing.then(() => this.append(lines)).catch(() => undefined);
@@ -89,6 +155,9 @@ export class BrokerLog {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.expireAnnotations(Date.now(), true);
+    for (const [reqId, a] of this.annotations) this.push("info", "exchange", { reqId, ...a.fields });
+    this.annotations.clear();
     await this.flush();
     this.closed = true;
   }
@@ -99,12 +168,12 @@ export class BrokerLog {
       if (!this.dirReady) {
         await mkdir(logsDir(this.home), { recursive: true });
         this.dirReady = true;
-        void this.prune();
       }
       const text = lines.join("\n") + "\n";
-      const target = await this.target(Buffer.byteLength(text));
+      const bytes = Buffer.byteLength(text);
+      const target = await this.target(bytes);
       await appendFile(target, text, "utf8");
-      this.size += Buffer.byteLength(text);
+      this.size += bytes;
     } catch (error) {
       // A broken home must never break the MCP session: log once to stderr and stop file logging.
       this.disabled = true;
@@ -119,6 +188,8 @@ export class BrokerLog {
       this.index = 1;
       this.file = brokerLogFile(this.home, date, this.index);
       this.size = await sizeOf(this.file);
+      // Retention runs at the first write and at every day change (long-running brokers).
+      void this.prune();
     }
     while (this.size + incoming > this.maxBytes && this.size > 0) {
       this.index += 1;
@@ -152,12 +223,23 @@ async function sizeOf(path: string): Promise<number> {
   }
 }
 
-function redact(fields: LogFields): LogFields {
+function stripUndefined(fields: LogFields): LogFields {
   const out: LogFields = {};
-  for (const [key, value] of Object.entries(fields)) {
-    if (REDACT_KEYS.has(key)) continue;
-    if (value instanceof Error) out[key] = { message: value.message, stack: value.stack?.split("\n").slice(0, 6).join("\n") };
-    else out[key] = value;
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+/** Drop secrets at any depth; errors become {message, stack}; bound depth and string sizes. */
+function redact(value: unknown, depth: number): unknown {
+  if (value instanceof Error) return { message: value.message, code: (value as NodeJS.ErrnoException).code, stack: value.stack?.split("\n").slice(0, 6).join("\n") };
+  if (typeof value === "string") return value.length > 4_000 ? `${value.slice(0, 4_000)}...(${value.length} chars)` : value;
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_DEPTH) return "[depth]";
+  if (Array.isArray(value)) return value.slice(0, 200).map((v) => redact(v, depth + 1));
+  const out: LogFields = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (REDACT_KEYS.has(key.toLowerCase())) continue;
+    out[key] = redact(v, depth + 1);
   }
   return out;
 }
