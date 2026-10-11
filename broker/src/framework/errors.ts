@@ -119,6 +119,9 @@ function renderTemplate(template: FixTemplate, ctx: FixContext): RenderedFix | n
       }
       case "same_call_with": {
         const set = interpolateValue(template.set, ctx) as Record<string, unknown>;
+        // A nested or indexed param ("values.Fire Ratng", "ops[2].type", "sheets[1]") is not a top-level arg: let the
+        // next template of the chain (ask/help) render instead of a call with a bogus key.
+        if (Object.keys(set).some((k) => /[.[]/.test(k))) return null;
         const call = formatCall(ctx.tool, { ...ctx.args, ...set }, discriminatorOf(ctx.tool));
         if (call.length > MAX_CALL_CHARS) return { fix: `repeat the same ${ctx.tool} call${Object.keys(set).length ? ` with ${JSON.stringify(set)}` : ""}${note}` };
         return { fix: `${call}${note}` };
