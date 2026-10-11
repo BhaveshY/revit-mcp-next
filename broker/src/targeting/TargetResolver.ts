@@ -132,6 +132,13 @@ export class TargetResolver {
     // ---------------------------------------------------------------- scope none
     if (req.scope === "none") {
       if (req.doc !== undefined && req.doc !== null && String(req.doc).trim() !== "") {
+        // "@2027": that Revit itself, even with no document open (manage_document new_project/open in a chosen year).
+        const sel = parseDocParam(req.doc);
+        if (sel?.kind === "active" && sel.year) {
+          const inst = this.instanceOfYear(world, sel.year);
+          if (!inst) return { ok: false, error: this.noYear(world, sel.year), notices };
+          return { ok: true, doc: instanceOnly(inst), notices };
+        }
         const picked = this.pickBySelector(req, world, notices);
         if (!picked.ok) return picked;
         return { ok: true, doc: picked.doc ?? null, notices };
@@ -291,8 +298,14 @@ export class TargetResolver {
     if (sel.kind === "follow" || sel.kind === "none")
       return { ok: false, error: failure("", "INVALID_ARGS", `doc '${sel.kind}' only works with set_target`, { param: "doc", reason: `${sel.kind} is a set_target mode` }), notices };
     if (sel.kind === "active") {
-      const active = this.activeCandidate(world, null);
-      if (!active) return { ok: false, error: this.noDocument(world, req.key), notices };
+      let instanceId: string | null = null;
+      if (sel.year) {
+        const inst = this.instanceOfYear(world, sel.year);
+        if (!inst) return { ok: false, error: this.noYear(world, sel.year), notices };
+        instanceId = inst.instanceId;
+      }
+      const active = this.activeCandidate(world, instanceId);
+      if (!active) return { ok: false, error: this.noDocument(world, req.key, instanceId), notices };
       return { ok: true, candidate: active, doc: resolvedOf(active, world.usable.find((i) => i.instanceId === active.instanceId)) };
     }
     const fuzzy = !exactOnly(req.kind);
@@ -470,8 +483,18 @@ export class TargetResolver {
     );
   }
 
-  private noDocument(world: World, key: string): BridgeResponse {
-    const inst = this.mostRecentInstance(world.usable);
+  /** The most recently active live Revit of a year. */
+  private instanceOfYear(world: World, year: number): InstanceInfo | undefined {
+    return this.mostRecentInstance(world.usable.filter((i) => i.year === year));
+  }
+
+  private noYear(world: World, year: number): BridgeResponse {
+    const running = [...new Set(world.usable.map((i) => i.year))].sort();
+    return failure("", "NO_REVIT_RUNNING", `no Revit ${year} with the add-in is running${running.length ? ` (running: Revit ${running.join(", ")})` : ""}`, null);
+  }
+
+  private noDocument(world: World, key: string, instanceId: string | null = null): BridgeResponse {
+    const inst = (instanceId ? world.usable.find((i) => i.instanceId === instanceId) : undefined) ?? this.mostRecentInstance(world.usable);
     return failure("", "NO_OPEN_DOCUMENT", `Revit ${inst?.year ?? ""} is running with no document open`.replace("  ", " "), { year: inst?.year });
   }
 
@@ -494,8 +517,10 @@ export class TargetResolver {
     if (world.usable.length === 0) return { ok: false, error: this.noRevit(world, { session, scope: "any", kind: "control", key: "set_target", tool: "set_target", deadline }) };
     let candidate: DocCandidate | undefined;
     if (sel.kind === "active" || sel.kind === "follow") {
-      candidate = this.activeCandidate(world, null);
-      if (!candidate) return { ok: false, error: this.noDocument(world, "set_target") };
+      const inst = sel.kind === "active" && sel.year ? this.instanceOfYear(world, sel.year) : undefined;
+      if (sel.kind === "active" && sel.year && !inst) return { ok: false, error: this.noYear(world, sel.year) };
+      candidate = this.activeCandidate(world, inst?.instanceId ?? null);
+      if (!candidate) return { ok: false, error: this.noDocument(world, "set_target", inst?.instanceId ?? null) };
     } else {
       const match = matchDocs(sel as Exclude<DocSelector, { kind: "active" | "follow" | "none" }>, world.candidates, true);
       if (match.matches.length > 1) {
@@ -526,14 +551,18 @@ export class TargetResolver {
     return `TARGET_NOW ${docLabel({ n, title: doc.title, year: doc.year ?? instance.year })}`;
   }
 
-  /** Closing the pinned doc with manage_document close clears the pin (mode auto) (§7.4 item 2). */
+  /**
+   * Closing the pinned doc with manage_document close clears the pin to mode auto (§7.4 item 2): the pin is kept as an
+   * auto pin of the closed doc, so the next call re-resolves with PIN_MOVED and the next write asks once
+   * (TARGET_CHANGED, item 3) instead of silently writing into whatever doc is picked next.
+   */
   onClosed(session: Session, key: string | null): string | null {
     this.registry.invalidate();
     if (!key) return null;
     const notices: string[] = [];
     if (session.pin && session.pin.key === key) {
-      notices.push(`PIN_MOVED ${stripExt(session.pin.title)} was closed; the next call picks the doc automatically`);
-      session.pin = null;
+      notices.push(`PIN_MOVED ${stripExt(session.pin.title)} was closed; the next call picks another doc and a write asks once first`);
+      session.pin = { ...session.pin, mode: "auto" };
     }
     if (session.projectPin && session.projectPin.key === key) session.projectPin = null;
     return notices[0] ?? null;

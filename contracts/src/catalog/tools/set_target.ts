@@ -19,8 +19,8 @@ export const tool: ToolSpec = {
   },
   required: ["doc"],
   ops: {
-    "": op("doc", "instance", M, [{"doc":"#2"}, {"doc":"active"}, {"doc":"Tower_A@2027"}, {"doc":"follow"}, {"doc":"none"}, {"doc":"Tower_A","instance":"2027"}], {
-      help: "Pins the doc for this session (notice TARGET_NOW). Grammar: #n or n, 'active', 'follow', 'none', exact title (extension optional), unique title prefix, absolute path, or title@2027. The pin follows Save As and a Revit restart (REBOUND). Calls arriving while set_target runs wait for it.",
+    "": op("doc", "instance", M, [{"doc":"#2"}, {"doc":"active"}, {"doc":"Tower_A@2027"}, {"doc":"follow"}, {"doc":"none"}, {"doc":"Tower_A","instance":"2027"}, {"doc":"@2027"}], {
+      help: "Pins the doc for this session (notice TARGET_NOW). Grammar: #n or n, 'active', 'follow', 'none', exact title (extension optional), unique title prefix, absolute path, title@2027, or @2027 (the active doc of Revit 2027). The pin follows Save As and a Revit restart (REBOUND). Calls arriving while set_target runs wait for it.",
       errors: ["DOC_NOT_OPEN", "TARGET_AMBIGUOUS", "NO_OPEN_DOCUMENT", "NO_REVIT_RUNNING"],
     }),
   },

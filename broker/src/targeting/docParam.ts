@@ -1,12 +1,13 @@
 // The `doc` parameter and set_target grammar (SPEC §7.3):
 //   #3 or 3 (session doc number) · active · follow (set_target only) · none (set_target only) ·
-//   exact title (case-insensitive, extension optional) · absolute path · title@2027.
+//   exact title (case-insensitive, extension optional) · absolute path · title@2027 · @2027 (the active doc of Revit 2027;
+//   for instance-only ops such as manage_document new_project, that Revit itself, even with no document open).
 // Reads also accept a unique title prefix or a unique contains match; writes accept exact matches only.
 
 import { normalizeKeyPath } from "@revit-mcp-next/contracts/protocol";
 
 export type DocSelector =
-  | { kind: "active" }
+  | { kind: "active"; year?: number }
   | { kind: "follow" }
   | { kind: "none" }
   | { kind: "number"; n: number }
@@ -21,6 +22,8 @@ export function parseDocParam(raw: unknown): DocSelector | null {
   if (lower === "active" || lower === "current") return { kind: "active" };
   if (lower === "follow") return { kind: "follow" };
   if (lower === "none" || lower === "auto" || lower === "clear") return { kind: "none" };
+  const yearOnly = /^(?:active)?\s*@\s*(\d{4})$/i.exec(text);
+  if (yearOnly) return { kind: "active", year: Number(yearOnly[1]) };
   const num = /^#?\s*(\d{1,4})$/.exec(text);
   if (num) return { kind: "number", n: Number(num[1]) };
   if (/^[a-z]:[\\/]/i.test(text) || text.startsWith("\\\\")) return { kind: "path", path: text };
