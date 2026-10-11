@@ -21,7 +21,7 @@ namespace RevitMcpNext.Addin
         private const long MaxFileBytes = 1_100_000;
         private const long PreferJpegAboveBytes = 400 * 1024;
         private const int DiffTolerance = 24;
-        private const int MaxSheetExportPixels = 8000;
+        private const int MaxSheetExportPixels = 4000;
         private static bool _groupExportRefused;
 
         [Op("capture")]
@@ -94,7 +94,9 @@ namespace RevitMcpNext.Addin
                     using (var temp = new TempScope(doc, Naming.Purposes.Capture))
                     {
                         var info = new ExportInfo();
-                        TxResult tx = temp.Run(() => Configure(ctx, doc, source, focus, o, info, copy: false));
+                        // Workshared: change a temporary copy instead of the view itself, so nothing is borrowed.
+                        bool copyInTemp = doc.IsWorkshared && CanCopy(source);
+                        TxResult tx = temp.Run(() => Configure(ctx, doc, source, focus, o, info, copy: copyInTemp));
                         if (!tx.Committed) throw tx.ToException("capture");
                         Describe(info.View, info);
                         ExportView(ctx, doc, info, o, folder);
@@ -547,6 +549,12 @@ namespace RevitMcpNext.Addin
             if (kind == null) return;
             throw new OpException(ErrorCodes.CaptureNotExportable, "'" + view.Name + "' is a " + kind + " and cannot be captured as an image.",
                 new Dictionary<string, object> { ["viewKind"] = kind, ["view"] = view.Name, ["schedule"] = kind == "schedule" ? view.Name : null });
+        }
+
+        private static bool CanCopy(View source)
+        {
+            if (source == null || source is ViewSheet) return false;
+            return Safe(() => source.CanViewBeDuplicated(ViewDuplicateOption.WithDetailing) || source.CanViewBeDuplicated(ViewDuplicateOption.Duplicate));
         }
 
         private static bool NeedsChanges(View source, CaptureOptions o)

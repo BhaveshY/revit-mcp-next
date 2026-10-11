@@ -187,7 +187,13 @@ namespace RevitMcpNext.Addin
         [Op("ui.activate_doc")]
         public static OpResult ActivateDoc(RequestContext ctx)
         {
-            Document doc = ctx.Doc ?? throw OpException.InvalidArgs("doc", "is required (the document to bring to the front: #n, title or path)");
+            Document doc = ctx.Doc;
+            if (doc == null && ctx.Request.Doc != null)
+            {
+                throw new OpException(ErrorCodes.DocNotOpen, "The document to activate is no longer open in this Revit.",
+                    new Dictionary<string, object> { ["key"] = ctx.Request.Doc.Key, ["rid"] = ctx.Request.Doc.Rid });
+            }
+            if (doc == null) throw OpException.InvalidArgs("doc", "is required (the document to bring to the front: #n, title or path)");
             bool already = UiActivation.IsActive(ctx.App, doc);
             if (!already) UiActivation.ActivateDocument(ctx, doc, null);
             View active = SafeGet(() => ctx.App.ActiveUIDocument?.ActiveView);
