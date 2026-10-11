@@ -82,8 +82,10 @@ namespace RevitMcpNext.Addin.Undo
         /// Attaches as soon as the add-in created its DocumentRegistry (polled from module load, so writes made before the
         /// first undo call are recorded too; RevitMcpApplication has no domain startup hook).
         /// </summary>
+#pragma warning disable CA2255 // The add-in is the application here: this only starts a timer that waits for the registry.
         [System.Runtime.CompilerServices.ModuleInitializer]
         internal static void InitializeModule()
+#pragma warning restore CA2255
         {
             try
             {
