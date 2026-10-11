@@ -653,6 +653,9 @@ namespace RevitMcpNext.Addin.Revit
                     ". Call revit.list_instances and select the intended instance again.");
             }
 
+            // model_delivery (scope none) binds to the Revit instance only: no control document is required.
+            if (string.IsNullOrEmpty(targetBinding.DocumentFingerprint)) return;
+
             Document document = application.Documents
                 .Cast<Document>()
                 .FirstOrDefault(candidate =>
