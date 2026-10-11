@@ -21,6 +21,9 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "family,path,types,detail,doc", M, [{"family":"Single-Flush"}, {"path":"C:\\Families\\Door-Double.rfa"}]),
+    "": op("", "family,path,types,detail,doc", M,
+      [{"family":"Single-Flush"}, {"path":"C:\\Families\\Door-Double.rfa"}, {"family":"Single-Flush","types":["0915 x 2134mm"],"detail":"full"}, {"doc":"#3"}],
+      { help: "family= reads a loaded family through a hidden copy (nothing in the project changes) and lists its project types with placed counts; path= opens an .rfa hidden and closes it; doc= reads an open family doc. Types show only values that differ between types; equal values are under same. detail:full adds built-ins, instance defaults, ids and use counts.",
+        api: "Document.EditFamily, FamilyManager", errors: ["NOT_FOUND", "INVALID_ARGS", "REVIT_REFUSED"] }),
   },
 };
