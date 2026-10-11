@@ -8,6 +8,7 @@
 import { join } from "node:path";
 import type { ModelDeliveryRecipe } from "@revit-mcp-next/contracts";
 import { defaultHandler } from "../framework/defaults.js";
+import { formatCall } from "../framework/errors.js";
 import type { ToolContextImpl } from "../framework/context.js";
 import { Deadline } from "../runtime/deadline.js";
 import { pollJob } from "../jobs/JobRunner.js";
@@ -47,6 +48,13 @@ function invalidRecipe(ctx: ToolContext, problem: string): ToolOutcome {
 
 // ------------------------------------------------------------------------------------------------ recipe library
 
+/** A complete inspect call for a recipe's source models (a next: line must be a call a model can send verbatim). */
+function inspectCall(recipe: Record<string, unknown>, projectId: string): string {
+  const models = Array.isArray(recipe.sourceModels) ? (recipe.sourceModels as Array<Record<string, unknown>>) : [];
+  const sources = models.map((s) => s.sourcePath).filter((p): p is string => typeof p === "string" && p.length > 0);
+  return formatCall("model_delivery", { op: "inspect", sources, project: projectId }, "op");
+}
+
 async function saveRecipe(ctx: ToolContext): Promise<ToolOutcome> {
   const recipe = ctx.args.recipe;
   const problem = recipeProblem(recipe);
@@ -60,7 +68,7 @@ async function saveRecipe(ctx: ToolContext): Promise<ToolOutcome> {
         ? `saved recipe ${saved.projectId} version ${saved.recipeVersion} (sha ${saved.recipeSha256.slice(0, 12)})`
         : `recipe ${saved.projectId} is unchanged (sha ${saved.recipeSha256.slice(0, 12)})`,
       data: { project: saved.projectId, version: saved.recipeVersion, sha: saved.recipeSha256, changed: saved.changed, saved_at: saved.savedAtUtc },
-      next: `model_delivery {"op":"preview","recipe":<this recipe>} checks it against the sources`,
+      next: `${inspectCall(recipe as Record<string, unknown>, saved.projectId)} compares the sources with this recipe; then preview with the recipe`,
       doc: null,
     };
   } catch (error) {
@@ -87,7 +95,7 @@ async function getRecipe(ctx: ToolContext): Promise<ToolOutcome> {
     status: "ok",
     summary: `recipe ${stored.projectId} version ${stored.recipeVersion}, ${stored.recipe.sourceModels.length} model(s), saved ${stored.savedAtUtc}`,
     data: { project: stored.projectId, version: stored.recipeVersion, sha: stored.recipeSha256, saved_at: stored.savedAtUtc, recipe: stored.recipe },
-    next: `model_delivery {"op":"inspect","sources":[...],"project":"${stored.projectId}"} detects changes; then preview with the recipe`,
+    next: `${inspectCall(stored.recipe as unknown as Record<string, unknown>, stored.projectId)} detects changes; then preview with the recipe`,
     doc: null,
   };
 }
@@ -101,7 +109,7 @@ async function listRecipes(ctx: ToolContext): Promise<ToolOutcome> {
     status: "ok",
     summary: all.length ? `${all.length} saved recipe${all.length === 1 ? "" : "s"}${all.length > rows.length ? `, showing ${rows.length}` : ""}` : "no saved recipes",
     data: { total: all.length, cols: ["project", "version", "models", "package", "saved_at", "sha"], rows },
-    next: all.length ? `model_delivery {"op":"get_recipe","project":"${all[0]!.projectId}"}` : `model_delivery {"op":"save_recipe","recipe":{...}}`,
+    next: all.length ? `model_delivery {"op":"get_recipe","project":"${all[0]!.projectId}"}` : `help {"topic":"recipe"} shows the recipe for model_delivery save_recipe`,
     doc: null,
   };
 }
