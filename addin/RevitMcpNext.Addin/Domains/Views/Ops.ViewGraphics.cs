@@ -109,7 +109,9 @@ namespace RevitMcpNext.Addin
             else
             {
                 int elements = 0, categories = 0, filters = 0;
-                foreach (Element element in new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
+                // A view template has no elements (and a view-filtered collector refuses a template id).
+                IEnumerable<Element> inView = view.IsTemplate ? Enumerable.Empty<Element>() : new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType();
+                foreach (Element element in inView)
                 {
                     if (GraphicsKit.Describe(doc, view.GetElementOverrides(element.Id)) == null) continue;
                     view.SetElementOverrides(element.Id, blank);
@@ -220,6 +222,10 @@ namespace RevitMcpNext.Addin
         {
             Document doc = c.Doc;
             View view = GraphicsView(c);
+            if (view.IsTemplate)
+            {
+                throw OpException.InvalidArgs(c.Args.Field("view"), "'" + view.Name + "' is a view template, which shows no elements; color_by a view that uses it instead");
+            }
             string param = c.Str("param");
             if (string.IsNullOrWhiteSpace(param)) throw OpException.InvalidArgs(c.Args.Field("param"), "is required (the parameter whose values get colors)");
             List<Category> categories = ViewKit.Categories(doc, c.Args);

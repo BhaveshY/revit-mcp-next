@@ -317,7 +317,9 @@ namespace RevitMcpNext.Addin
 
             int scanned = 0, found = 0;
             bool truncated = false;
-            foreach (Element element in new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
+            // A view template has no elements (and a view-filtered collector refuses a template id).
+            IEnumerable<Element> inView = view.IsTemplate ? Enumerable.Empty<Element>() : new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType();
+            foreach (Element element in inView)
             {
                 if (++scanned > MaxOverrideScan || ctx.ShouldYield(scanned))
                 {
@@ -445,6 +447,7 @@ namespace RevitMcpNext.Addin
                 }
                 return rows;
             }
+            if (view.IsTemplate) return rows;
             List<RevisionCloud> clouds = new FilteredElementCollector(doc, view.Id).OfClass(typeof(RevisionCloud)).Cast<RevisionCloud>().ToList();
             foreach (IGrouping<long, RevisionCloud> group in clouds.GroupBy(c => c.RevisionId.Value))
             {
