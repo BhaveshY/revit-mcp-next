@@ -32,7 +32,7 @@ export default {
     });
 
     const plan = await t.step("create floor_plan on the first level with a name", async () => {
-      const r = await t.call("edit_views", { op: "create", kind: "floor_plan", level: L1, name: "E2E Plan" });
+      const r = await t.call("edit_views", { op: "create", kind: "floor_plan", level: L1, name: "E2E Plan", template: "none" });
       t.assertEq(r.status, "ok", "create status");
       t.assertEq(r.json.name, "E2E Plan", "name");
       t.assertEq(r.json.type, "FloorPlan", "type");
@@ -63,7 +63,7 @@ export default {
     await t.step("rename; a duplicate name gives NAME_TAKEN with a free suggestion", async () => {
       const r = await t.call("edit_views", { op: "rename", view: "E2E Plan", name: "E2E Plan R" });
       t.assertMatch(r.summary, /E2E Plan R/, "rename summary");
-      await t.call("edit_views", { op: "create", kind: "floor_plan", level: L2, name: "E2E Plan 2" });
+      await t.call("edit_views", { op: "create", kind: "floor_plan", level: L2, name: "E2E Plan 2", template: "none" });
       const taken = await t.expectError("edit_views", { op: "rename", view: "E2E Plan 2", name: "E2E Plan R" }, "NAME_TAKEN");
       t.assertMatch(taken.fix ?? "", /E2E Plan R \(2\)/, "fix suggests a free name");
     });

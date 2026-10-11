@@ -66,7 +66,7 @@ export default {
     });
 
     await t.step("a cropped 2:1 plan: aspect within 1 %, bounds and mm_per_px map pixels to mm", async () => {
-      await t.call("edit_views", { op: "create", kind: "floor_plan", level: L1, name: "E2E Cap Plan" });
+      await t.call("edit_views", { op: "create", kind: "floor_plan", level: L1, name: "E2E Cap Plan", template: "none" });
       await t.call("edit_views", { op: "set", view: "E2E Cap Plan", crop_box: [0, 0, 24000, 12000] });
       for (const size of ["small", "medium", "large"]) {
         const r = await t.call("capture", { view: "E2E Cap Plan", size });
