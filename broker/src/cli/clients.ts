@@ -63,6 +63,8 @@ export interface ClientsOptions {
   agentsSnippetFile?: string;
   disableConflictingPlugins: boolean;
   plugins: boolean;
+  /** Clients that get the skills plugin (default codex and claude). */
+  pluginClients?: ClientName[];
   pluginsDir: string;
   stamp: string;
   version: string;
@@ -249,8 +251,9 @@ export function runClients(o: ClientsOptions): { changes: Change[]; ok: boolean 
 
   for (const client of o.clients) {
     try {
-      if (client === "codex") codexClient(o, install, command, args, add);
-      else if (client === "claude") claudeClient(o, install, command, args, add);
+      const oc = { ...o, plugins: o.plugins && (o.pluginClients ?? ["codex", "claude"]).includes(client) };
+      if (client === "codex") codexClient(oc, install, command, args, add);
+      else if (client === "claude") claudeClient(oc, install, command, args, add);
       else if (client === "claude-desktop") claudeDesktopClient(o, install, command, args, add);
     } catch (error) {
       add({ client, step: "error", result: "failed", detail: (error as Error).message });
@@ -493,6 +496,7 @@ export function clientsCommand(args: ParsedArgs, home: string, build: { version:
     agentsSnippetFile: flagString(args, "agents-snippet"),
     disableConflictingPlugins: flagBool(args, "disable-conflicting-plugins"),
     plugins: !flagBool(args, "no-plugins"),
+    pluginClients: (flagList(args, "plugin-clients") ?? ["codex", "claude"]).filter((c): c is ClientName => c === "codex" || c === "claude"),
     pluginsDir: flagString(args, "plugins-dir") ?? join(home, "plugins"),
     stamp: flagString(args, "stamp") ?? timestamp(),
     version: build.version,

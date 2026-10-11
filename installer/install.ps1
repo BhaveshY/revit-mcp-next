@@ -22,6 +22,8 @@
   auto (default: Codex and Claude Code when present), none, or a list of codex, claude, claude-desktop.
 .PARAMETER NoAgentsSnippet
   Do not add the short Revit rule block to <CODEX_HOME>\AGENTS.md.
+.PARAMETER PluginClients
+  Clients that get the revit / revit-setup skills plugin (default codex, claude; none for neither).
 .PARAMETER DisableConflictingPlugins
   Disable the revit-mcp-cowork plugin in Codex (its hooks act on every revit tool call). Claude Code is only reported.
 .PARAMETER TrustRevitAlwaysLoad
@@ -51,6 +53,7 @@ param(
     [switch] $DisableCodeExecution,
     [switch] $RemoveLegacy,
     [switch] $NoPlugins,
+    [string[]] $PluginClients = @("codex", "claude"),
     [switch] $NoManifest,
     [switch] $SkipDoctor,
     [switch] $DryRun,
@@ -298,6 +301,8 @@ if ($clientList.Count -gt 0) {
     if ($NoAgentsSnippet) { $clientArgs += "--no-agents-snippet" }
     if ($DisableConflictingPlugins) { $clientArgs += "--disable-conflicting-plugins" }
     if ($NoPlugins) { $clientArgs += "--no-plugins" }
+    $pluginList = @($PluginClients | ForEach-Object { "$_" -split "[,; ]+" } | Where-Object { $_ })
+    $clientArgs += "--plugin-clients"; $clientArgs += $(if ($pluginList.Count) { $pluginList -join "," } else { "none" })
     if ($DryRun) { $clientArgs += "--dry-run"; $clientArgs += "--command"; $clientArgs += $homeNode; $clientArgs += "--bundle"; $clientArgs += (Join-Path $HomeDir "broker\revit-mcp.mjs") }
     if ($CodexHome) { $clientArgs += "--codex-home"; $clientArgs += $codexHomeResolved }
     if ($ClaudeDesktopConfig) { $clientArgs += "--claude-desktop-config"; $clientArgs += (Get-RmnFullPath $ClaudeDesktopConfig) }
