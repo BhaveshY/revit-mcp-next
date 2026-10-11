@@ -369,12 +369,14 @@ namespace RevitMcpNext.Addin
                 {
                     Element sample = stat.Missing[0];
                     IEnumerable<string> names = sample.Parameters.Cast<Parameter>().Where(p => p?.Definition != null && !p.IsReadOnly).Select(ParamValues.KeyOf);
-                    OpException notFound = OpException.NotFound(stat.Field, "parameter", key, Resolve.Closest(key, names));
-                    throw new OpException(notFound.Code,
+                    List<string> closest = Resolve.Closest(key, names, 6);
+                    // No `candidates` on purpose: the generic NOT_FOUND fix would rewrite a nested values key blindly.
+                    throw new OpException(ErrorCodes.NotFound,
                         "No target has a parameter '" + key + "' (checked " + ModifySupport.Count(stat.Missing.Count, "element") + ", e.g. " +
                         (Rows.CategoryLabel(sample) ?? "element") + " " + sample.Id.Value.ToString(CultureInfo.InvariantCulture) + "); nothing was written." +
+                        (closest.Count > 0 ? " Closest: " + string.Join(", ", closest) + "." : string.Empty) +
                         (plan.Any(p => !(p.Target is ElementType)) ? " Type parameters need on:\"type\"." : string.Empty),
-                        notFound.Details);
+                        new Dictionary<string, object> { ["param"] = stat.Field, ["kind"] = "parameter", ["value"] = key, ["closest"] = closest.Cast<object>().ToList() });
                 }
                 if (stat.ReadOnly.Count > 0)
                 {
