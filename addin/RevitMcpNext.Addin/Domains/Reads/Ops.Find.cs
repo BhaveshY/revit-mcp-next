@@ -50,8 +50,13 @@ namespace RevitMcpNext.Addin
                     .WithPage(pageTotal, pageOffset, slice.Count);
             }
 
+            // Without a category, class or id scope only user-visible elements count (a category of type Model or
+            // Annotation), not Revit's internal bookkeeping elements.
+            bool scoped = query.ElementTypes || selector != null || ctx.Args.Strs("category").Count > 0 || ctx.Args.Strs("class").Count > 0;
+            Func<Element, bool> visible = scoped ? (Func<Element, bool>)(_ => true) : IsUserElement;
+
             // Fast exact count when nothing needs element-level evaluation.
-            if (countOnly && string.IsNullOrWhiteSpace(groupBy) && !query.HasPostFilter)
+            if (countOnly && scoped && string.IsNullOrWhiteSpace(groupBy) && !query.HasPostFilter)
             {
                 int count = query.Count(ctx);
                 return OpResult.Success(new Dictionary<string, object> { ["total"] = count }, ReadKit.Count(count, "element") + Describe(query, what));
@@ -63,6 +68,7 @@ namespace RevitMcpNext.Addin
             int total = 0;
             foreach (Element element in query.Elements(ctx))
             {
+                if (!visible(element)) continue;
                 total++;
                 if (ids.Count < MaxHandleIds) ids.Add(element.Id.Value);
                 if (groups != null)
@@ -102,6 +108,21 @@ namespace RevitMcpNext.Addin
             foreach (KeyValuePair<string, object> pair in table.ToWire()) data[pair.Key] = pair.Value;
             if (query.IsLink) data["link"] = query.LinkName;
             return OpResult.Success(data, summary).WithPage(total, offset, page.Count, ctx.WantIds ? ids : null);
+        }
+
+        private static bool IsUserElement(Element element)
+        {
+            try
+            {
+                Category category = element.Category;
+                if (category == null) return false;
+                CategoryType type = category.CategoryType;
+                return type == CategoryType.Model || type == CategoryType.Annotation;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static Document LinkDocOrHost(RequestContext ctx, Document host)
