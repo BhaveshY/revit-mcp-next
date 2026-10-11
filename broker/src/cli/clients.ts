@@ -2,7 +2,7 @@
 // (config.toml text-block surgery, plugin/skill, AGENTS.md snippet, optional cowork disable), Claude Code
 // (claude mcp add-json -s user + skills plugin) and Claude Desktop (JSON). Every changed file is backed up first.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   backupFile,
@@ -294,6 +294,8 @@ function codexClient(o: ClientsOptions, install: boolean, command: string, args:
     return;
   }
 
+  // The codex CLI refuses a CODEX_HOME that does not exist yet (Codex installed but never started).
+  if (install) mkdirSync(home, { recursive: true });
   const backup = backupFile(config, o.stamp);
   if (backup) add({ client: "codex", step: "backup", result: "done", file: config, backup, detail: `backed up config.toml` });
 

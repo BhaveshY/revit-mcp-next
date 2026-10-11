@@ -9,7 +9,7 @@ on:
 jobs:
   broker:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -21,8 +21,20 @@ jobs:
       - run: npm run typecheck
       - name: Catalog gates and spec parity
         run: npm run gen:catalog -- --check
-      - name: E2E surface (S00, no Revit)
+      - name: Broker bundle (esbuild)
+        run: npm run build:bundle
+      - name: Plugin and skill manifests
+        run: npm run validate:plugins
+      - name: E2E surface (S00, no Revit) against broker/dist
         run: node e2e/run.mjs --profile surface
+      - name: E2E surface against the bundle the installer ships
+        shell: pwsh
+        run: node e2e/run.mjs --profile surface --broker "$env:GITHUB_WORKSPACE\artifacts\broker\revit-mcp.mjs"
+      - name: CLI smoke
+        shell: pwsh
+        run: |
+          node artifacts/broker/revit-mcp-cli.mjs version
+          node artifacts/broker/revit-mcp-cli.mjs clients show --home "$env:USERPROFILE\.revit-mcp-next-ci"
       - name: Upload e2e summary
         if: always()
         uses: actions/upload-artifact@v4
