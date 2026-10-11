@@ -173,6 +173,8 @@ export default {
             "-c", `mcp_servers.revit.command=${JSON.stringify(process.execPath)}`,
             "-c", `mcp_servers.revit.args=[${JSON.stringify(t.broker)}]`,
             "-c", `mcp_servers.revit.env.REVIT_MCP_NEXT_HOME=${JSON.stringify(t.home)}`,
+            // exec has no one to answer an approval prompt: the read-only list call of this run is auto-approved.
+            "-c", 'mcp_servers.revit.tools.list.approval_mode="auto"',
             prompt,
           ],
           {},
