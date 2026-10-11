@@ -1,0 +1,46 @@
+{
+  "note": "e2e profiles (SPEC §13.5, D4 §8.11). Scenarios run in the listed order; disruptive reliability scenarios (kill, crash, auth) come last. gates: coverage = every Appendix B key and call mode per Revit year (e2e/coverage-exemptions.json), hints = W1/W2 over every call, t1 = output budgets (e2e/budgets.json) and p95 growth (e2e/t1-baseline.json). --only ignores this file (profile lane).",
+  "profiles": {
+    "surface": {
+      "description": "No Revit (hosted CI, ~20 s): surface gates, eras, lenient input, and the offline weak-model and token checks.",
+      "revit": false,
+      "scenarios": ["S00", "W1", "W2", "W3", "W4", "T1"],
+      "gates": ["hints", "t1"]
+    },
+    "quick": {
+      "description": "Real Revit, ~25 min per year: bootstrap, every domain once, the core reliability paths.",
+      "revit": true,
+      "scenarios": ["S00", "W1", "W2", "W3", "W4", "T1", "S01", "S20", "S30", "S31", "S32", "S35", "S36", "S40", "S50", "S55", "S60", "S65", "S70", "S75", "S85", "S88", "S90", "S92", "S99", "W3R", "R1", "R11"],
+      "gates": ["hints", "t1"]
+    },
+    "full": {
+      "description": "Real Revit on every given year (2024,2027): every scenario, the coverage gate over all 243 keys and 5 modes, hints and T1.",
+      "revit": true,
+      "scenarios": [
+        "S00", "W1", "W2", "W3", "W4", "T1",
+        "S01", "S20", "S21", "S30", "S31", "S32", "S35", "S36", "S40", "S50", "S55", "S60", "S65", "S70", "S75", "S78", "S80", "S85", "S88", "S89", "S90", "S92", "S95", "S96", "S97", "S99",
+        "W3R", "W4R",
+        "R1", "R3", "R11", "R10", "R9", "R5", "R6", "R7", "R12", "R13", "R8", "R4"
+      ],
+      "gates": ["coverage", "hints", "t1"]
+    },
+    "soak": {
+      "description": "Real Revit, long run (E2E_SOAK_MIN, default 30 min per year): a mixed read/write/capture/undo loop; no errors, stable latency and Revit memory.",
+      "revit": true,
+      "scenarios": ["S01", "K1"],
+      "gates": ["hints", "t1"]
+    },
+    "codex": {
+      "description": "Codex CLI integration (V22): isolated CODEX_HOME with the revit block (codex mcp get/list), the installed config (read only), and, only with E2E_CODEX_EXEC=1, one codex exec real-model run per client version.",
+      "revit": "optional",
+      "scenarios": ["S00", "C1"],
+      "gates": ["hints"]
+    },
+    "claude": {
+      "description": "Claude Code integration: claude mcp get (read only) and the 2025-11-25 era capture preset; the claude -p large-capture check (SPEC §12.4) runs only with E2E_CLAUDE_P=1 and is not approved yet.",
+      "revit": "optional",
+      "scenarios": ["S00", "C2"],
+      "gates": ["hints"]
+    }
+  }
+}

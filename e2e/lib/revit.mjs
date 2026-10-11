@@ -10,7 +10,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { instancesDir, revitExeCandidates, revitJournalDir } from "@revit-mcp-next/contracts/home";
+import { instancesDir, isDefaultHome, revitExeCandidates, revitJournalDir } from "@revit-mcp-next/contracts/home";
 
 export class LicensingBlocked extends Error {
   constructor(message) {
@@ -42,6 +42,12 @@ function psQuote(text) {
   return `'${String(text).replace(/'/g, "''")}'`;
 }
 
+/** Arguments every harness launch adds first (run.mjs --language DEU sets ["/language", "DEU"]). */
+let defaultLaunchArgs = [];
+export function setDefaultLaunchArgs(args) {
+  defaultLaunchArgs = Array.isArray(args) ? [...args] : [];
+}
+
 /**
  * Launch Revit through WMI so it runs outside this process tree and job (lead override 1).
  * @returns {Promise<{pid:number, exe:string, startedAt:number}>}
@@ -49,6 +55,7 @@ function psQuote(text) {
 export async function launchRevit({ year, home, args = [], minimized = false }) {
   const exe = findRevitExe(year);
   if (!exe) throw new Error(`Revit ${year} is not installed (looked for ${revitExeCandidates(year).join(", ")}); set E2E_REVIT_${year}_EXE`);
+  args = [...defaultLaunchArgs, ...args];
   const commandLine = [`"${exe}"`, ...args.map((a) => (/\s/.test(a) ? `"${a}"` : a))].join(" ");
   const script = [
     "$ErrorActionPreference = 'Stop'",
@@ -212,13 +219,56 @@ export async function waitReady(o) {
   }
 }
 
-/** Run scripts/dev-install.ps1 for the years (W1-ADDIN's script). */
-export function devInstall({ repo, home, years }) {
+/**
+ * The folder holding addin\<year>\RevitMcpNext.Addin.dll and loader\<year>\RevitMcpNext.Loader.dll: the repo's
+ * artifacts\ (built by scripts/build-addin.ps1), or an extracted release package (searched up to 3 levels deep).
+ */
+export function findArtifactsRoot(start, years) {
+  const has = (dir) => years.every((y) => existsSync(join(dir, "addin", String(y), "RevitMcpNext.Addin.dll")));
+  const queue = [{ dir: start, depth: 0 }];
+  while (queue.length) {
+    const { dir, depth } = queue.shift();
+    if (!existsSync(dir)) continue;
+    if (has(dir)) return dir;
+    if (depth >= 3) continue;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) if (e.isDirectory() && !/^(node_modules|\.git)$/i.test(e.name)) queue.push({ dir: join(dir, e.name), depth: depth + 1 });
+  }
+  return null;
+}
+
+/**
+ * Run scripts/dev-install.ps1 for the years (W1-ADDIN's script). Test ops are enabled in every non-default home
+ * (SPEC §13.4), so R5/R6/R7/R12/S99 work on the first launch. `artifactsRoot` installs an extracted release package
+ * instead of the repo build.
+ */
+export function devInstall({ repo, home, years, artifactsRoot = null }) {
   const script = join(repo, "scripts", "dev-install.ps1");
   if (!existsSync(script)) throw new Error(`scripts/dev-install.ps1 is missing (the add-in lane has not landed it yet)`);
-  const out = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Home", home, "-RevitYears", years.join(",")], { encoding: "utf8", windowsHide: true, timeout: 10 * 60_000 });
+  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Home", home, "-RevitYears", years.join(",")];
+  if (!isDefaultHome(home)) args.push("-EnableTestOps");
+  if (artifactsRoot) args.push("-ArtifactsRoot", artifactsRoot);
+  const out = spawnSync("powershell.exe", args, { encoding: "utf8", windowsHide: true, timeout: 10 * 60_000 });
   if (out.status !== 0) throw new Error(`dev-install failed (exit ${out.status}): ${(out.stderr || out.stdout || "").trim().slice(-1500)}`);
   return out.stdout;
+}
+
+/** File and product version of a Revit.exe (for summary.json), or null. */
+export function revitVersion(year) {
+  const exe = findRevitExe(year);
+  if (!exe) return null;
+  const script = `$v = (Get-Item -LiteralPath ${psQuote(exe)}).VersionInfo; @{ file = $v.FileVersion; product = $v.ProductVersion; name = $v.ProductName } | ConvertTo-Json -Compress`;
+  const out = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 30_000 });
+  try {
+    return { exe, ...JSON.parse((out.stdout ?? "").trim().split(/\r?\n/).pop()) };
+  } catch {
+    return { exe };
+  }
 }
 
 /** Build the add-in for a year (scripts/build-addin.ps1); E2E_DOTNET or REVIT_MCP_NEXT_DOTNET selects the SDK. */

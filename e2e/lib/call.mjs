@@ -1,9 +1,12 @@
 // The t.call contract (SPEC §13.1, D4 §8.2): 55 s client timeout; parses the text contract (status, doc, notice/warn,
 // JSON line, more/next/fix/options); decodes images; fails on structuredContent unless the session is structured;
-// marks coverage for (tool, op) on success or on a declared expected error; guards writes to the run folder.
+// marks coverage for (tool, op) and the call modes (preview, confirm, detail:full, page, from:r#) on success or on a
+// declared expected error; guards writes to the run folder; hands every parsed result to `observe` (the run-level
+// W1/W2 hint checks and T1 output budgets, lib/gates.mjs and lib/hints.mjs).
 
 import { byName } from "@revit-mcp-next/contracts/catalog";
 import { AssertionFailure } from "./assert.mjs";
+import { modesOf } from "./gates.mjs";
 
 export const CLIENT_TIMEOUT_MS = 55_000;
 
@@ -59,22 +62,45 @@ export function parseCallLine(text) {
 export class Coverage {
   constructor() {
     this.marks = new Map();
+    /** mode → year → Set(keys) */
+    this.modes = new Map();
   }
-  mark(tool, op, year) {
+  mark(tool, op, year, args) {
     const key = `${tool}${op ? "." + op : ""}`;
     const entry = this.marks.get(key) ?? { tool, op: op ?? null, years: new Set() };
     if (year) entry.years.add(year);
     this.marks.set(key, entry);
+    if (year && args) {
+      for (const mode of modesOf(args)) {
+        const perYear = this.modes.get(mode) ?? new Map();
+        const keys = perYear.get(year) ?? new Set();
+        keys.add(key);
+        perYear.set(year, keys);
+        this.modes.set(mode, perYear);
+      }
+    }
   }
   toJSON() {
     return [...this.marks.values()].map((e) => ({ tool: e.tool, op: e.op, years: [...e.years] }));
   }
+  modesJSON() {
+    const out = {};
+    for (const [mode, perYear] of this.modes) out[mode] = Object.fromEntries([...perYear].map(([y, keys]) => [y, [...keys]]));
+    return out;
+  }
+}
+
+/** Run-wide hooks (set by run.mjs): callers created without their own observe/record still feed the run gates. */
+const runHooks = { observe: null, record: null };
+export function setRunHooks(hooks) {
+  runHooks.observe = hooks?.observe ?? null;
+  runHooks.record = hooks?.record ?? null;
 }
 
 /**
  * Make the t.call function for one MCP session.
  * @param {{ session: any, structured?: boolean, coverage?: Coverage, year?: number, record?: (entry: any) => void,
- *           writeGuard?: (tool: string, args: any, op: string|null) => void }} o
+ *           writeGuard?: (tool: string, args: any, op: string|null) => void, observe?: (r: any) => Promise<void>|void }} o
  */
 export function makeCaller(o) {
   const call = async (tool, args = {}, options = {}) => {
@@ -93,7 +119,10 @@ export function makeCaller(o) {
     const images = (result.content ?? []).filter((c) => c.type === "image").map((c) => ({ mimeType: c.mimeType, bytes: Buffer.from(c.data, "base64"), base64Length: c.data.length, meta: c._meta }));
     const parsed = parseText(textBlocks[0] ?? "");
     const r = { ...parsed, tool, op, args, ms, isError: result.isError === true, text: textBlocks[0] ?? "", blocks: textBlocks.slice(1), images, raw: result, bytes: Buffer.byteLength(textBlocks.join("\n"), "utf8") };
-    o.record?.({ tool, op, ms, bytes: r.bytes, isError: r.isError, code: r.code, status: r.status });
+    const record = o.record ?? runHooks.record;
+    record?.({ tool, op, year: o.year ?? null, ms, bytes: r.bytes, isError: r.isError, code: r.code, status: r.status, images: r.images.length, imageBytes: r.images.reduce((s, i) => s + i.base64Length, 0), modes: modesOf(args) });
+    const observe = o.observe ?? runHooks.observe;
+    if (r.status !== null && observe) await observe(r, o.year ?? null);
     if (result.structuredContent !== undefined && !o.structured) throw new AssertionFailure(`${tool} returned structuredContent (Codex would drop the content blocks)`, { tool });
     if (r.status === null) throw new AssertionFailure(`${tool} result does not follow the text contract: ${JSON.stringify(r.text.slice(0, 200))}`, { tool });
     if (r.isError !== (r.status === "error")) throw new AssertionFailure(`${tool}: isError (${r.isError}) does not match status ${r.status}`, { text: r.text.slice(0, 300) });
@@ -103,11 +132,11 @@ export function makeCaller(o) {
       const codes = Array.isArray(expected) ? expected : [expected];
       if (r.status !== "error" || (codes[0] !== true && !codes.includes(r.code)))
         throw new AssertionFailure(`${tool}: expected ERROR ${codes.join("|")}, got ${r.status}${r.code ? " " + r.code : ""}: ${r.summary.slice(0, 200)}`, { text: r.text.slice(0, 400) });
-      o.coverage?.mark(tool, op, o.year);
+      o.coverage?.mark(tool, op, o.year, args);
     } else if (options.allowError !== true && r.status === "error") {
       throw new AssertionFailure(`${tool}: ERROR ${r.code}: ${r.summary.slice(0, 300)}`, { fix: r.fix, text: r.text.slice(0, 600) });
     } else if (r.status !== "error") {
-      o.coverage?.mark(tool, op, o.year);
+      o.coverage?.mark(tool, op, o.year, args);
     }
     return r;
   };
