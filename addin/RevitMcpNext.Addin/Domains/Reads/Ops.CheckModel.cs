@@ -591,7 +591,6 @@ namespace RevitMcpNext.Addin
             }
             ClashSet b = ctx.Args.Has("b") ? SetOf(ctx, bDoc, "b", host) : SetOf(ctx, bDoc, "a", host);
             b.ToHost = bToHost;
-            bool sameSet = !ctx.Args.Has("b") && bDoc == host;
 
             List<Element> aElements = Members(a).OrderBy(e => e.Id.Value).ToList();
             int start = 0;
@@ -641,8 +640,9 @@ namespace RevitMcpNext.Addin
 
                 foreach (Element other in candidates)
                 {
-                    if (sameSet)
+                    if (bDoc == host)
                     {
+                        // One row per unordered pair when both sets live in the host (a=b or overlapping sets).
                         long lo = Math.Min(element.Id.Value, other.Id.Value), hi = Math.Max(element.Id.Value, other.Id.Value);
                         if (!seen.Add(lo.ToString(CultureInfo.InvariantCulture) + ":" + hi.ToString(CultureInfo.InvariantCulture))) continue;
                     }

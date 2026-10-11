@@ -19,6 +19,6 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "since,limit,doc", M, [{"since":"last"}, {"since":"session"}]),
+    "": op("", "since,limit,doc", M, [{"since":"last"}, {"since":"session"}], { help: "Net added/modified/deleted elements (id, change, category) and the transaction names with who made them (you, user, other MCP sessions). Every result returns a mark m# for the next call. incomplete:true means the history overflowed.", api: "DocumentChanged", errors: ["INVALID_ARGS", "HANDLE_EXPIRED"] }),
   },
 };

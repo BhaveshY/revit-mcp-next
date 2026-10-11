@@ -646,7 +646,7 @@ namespace RevitMcpNext.Addin
             }
 
             IEnumerable<ElementType> types = collector.OfType<ElementType>()
-                .Where(t => SafeCategory(t) != null)
+                .Where(t => classType != null || SafeCategory(t) != null)
                 .OrderBy(t => Rows.CategoryLabel(t) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(t => t.FamilyName ?? string.Empty, NaturalComparer.Instance)
                 .ThenBy(t => t.Name, NaturalComparer.Instance);

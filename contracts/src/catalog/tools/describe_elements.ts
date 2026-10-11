@@ -24,6 +24,6 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("ids/from", "params,include,match,link,page,doc", M, [{"ids":["304512"],"include":["type","relations"]}, {"from":"r3","params":"all","match":"Fire"}], { help: "At most 50 elements per page. Dimension elements carry stable refs for annotate op=dimension refs=." }),
+    "": op("ids/from", "params,include,match,link,page,doc", M, [{"ids":["304512"],"include":["type","relations"]}, {"from":"r3","params":"all","match":"Fire"}, {"from":"selection","params":"names"}, {"ids":["304512"],"include":["geometry","connectors"],"params":"none"}], { help: "At most 50 elements per page. params: writable (default) = values you can set, all = every value plus read_only names, names = name: kind rw|ro. Values: lengths mm, areas m2, volumes m3, angles deg, Yes/No booleans, element params as ids. Keys are English labels; duplicates get a [bip:X] suffix that set_parameters accepts. Dimension elements carry value, segments and stable refs for annotate op=dimension refs=.", api: "Element.Parameters, HostObject.FindInserts, ConnectorManager", errors: ["NOT_FOUND", "INVALID_ARGS", "HANDLE_EXPIRED"] }),
   },
 };

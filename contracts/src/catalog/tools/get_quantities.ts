@@ -26,6 +26,6 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "by,category,level,view,from,material,paint,limit,page,doc", M, [{"by":"type","category":["Walls","Floors"]}, {"by":"material","category":["Walls"],"level":"Level 1"}]),
+    "": op("", "by,category,level,view,from,material,paint,limit,page,doc", M, [{"by":"type","category":["Walls","Floors"]}, {"by":"material","category":["Walls"],"level":"Level 1"}, {"by":"level","category":["Walls"]}, {"by":"material","material":"concrete","paint":true}], { help: "by=material uses each element's material areas and volumes (paint:true adds painted areas); other groupings sum element length (m), area (m2) and volume (m3) per group. Without category all model elements count.", api: "Element.GetMaterialArea, Element.GetMaterialVolume", errors: ["NOT_FOUND", "INVALID_ARGS", "HANDLE_EXPIRED", "PROJECT_DOC_REQUIRED"] }),
   },
 };

@@ -18,6 +18,6 @@ export const tool: ToolSpec = {
   },
   required: ["calls"],
   ops: {
-    "": op("calls", "", M, [{"calls":[{"tool":"list","args":{"kind":"levels"}},{"tool":"capture","args":{"size":"small"}}]}], { help: "Runs up to 8 reads with one shared time budget; sub-call i gets remaining/(n-i). At most 2 images (2 MB)." }),
+    "": op("calls", "", M, [{"calls":[{"tool":"list","args":{"kind":"levels"}},{"tool":"capture","args":{"size":"small"}}]}, {"calls":[{"tool":"find_elements","args":{"category":["Doors"],"count_only":true}},{"tool":"check_model","args":{"check":"warnings"}},{"tool":"get_changes","args":{}}]}], { help: "Runs up to 8 reads with one shared time budget; sub-call i gets remaining/(n-i). At most 2 images (2 MB). Items may also be {tool:\"list.levels\"} or flattened args. Each sub-result keeps its own more: page token; long ones are shortened to fit and say so.", errors: ["INVALID_ARGS"] }),
   },
 };
