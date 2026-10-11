@@ -190,7 +190,7 @@ async function writeStatus(ctx: ToolContext, id: string, requestId: string, w: W
     }
     return { status: "ok", summary: `${id} (${key}) never reached Revit; nothing ran`, data: { write: id, state: "not_received" }, doc: null };
   }
-  if (!w && candidates.length > 0) return ctx.fail("JOB_UNKNOWN", `no Revit knows request ${id}`);
+  if (!w) return ctx.fail("JOB_UNKNOWN", `no running Revit and no ledger file knows request ${id}`);
   if (candidates.length === 0) return ctx.fail("WRITE_OUTCOME_UNKNOWN", `the Revit that ran ${id} (${key}) is gone and its ledger has no outcome`, { ref: w ? id : undefined, ...(w ? exitDetails(ctx, w.instanceId) : {}) });
   void session;
   return { status: "running", summary: `${id} (${key}) has no recorded outcome yet`, data: { write: id, state: "unknown" }, next: `job_status {"id":"${id}","wait":30} - never repeat the write`, doc: null };
