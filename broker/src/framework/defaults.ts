@@ -132,7 +132,8 @@ function staticPlanText(ctx: ToolContextImpl): string {
 export async function defaultWrite(ctx: ToolContextImpl): Promise<ToolOutcome> {
   const doc = await ctx.resolveDoc();
   const blast = staticBlast(ctx);
-  if (blast) return notApplied(ctx, { rule: blast.rule, plan: blast.plan, stamp: 0, deleteSet: [] }, doc, null);
+  // Stamp = the doc generation now, so confirming later is CONFIRM_STALE only when the doc really changed since the plan.
+  if (blast) return notApplied(ctx, { rule: blast.rule, plan: blast.plan, stamp: doc?.generation ?? 0, deleteSet: [] }, doc, null);
   const plan = ctx.confirmPlan;
   if (plan) ctx.session.confirms.consume(plan.token);
   const asJob = ctx.meta.job === "always";
