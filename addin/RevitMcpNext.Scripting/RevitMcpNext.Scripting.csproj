@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Opt-in C# execution host (SPEC §11.7, D3 §3.13): the only assembly that references Roslyn. The add-in loads it lazily
+    from <payload>\scripting\ (Assembly.LoadFrom on net48, a private AssemblyLoadContext on net10) only when code
+    execution is enabled, so with it disabled no Roslyn assembly is ever loaded into Revit. It implements
+    RevitMcpNext.Contracts.IScriptCompiler and references no Revit or add-in types; scripts/build-addin.ps1 copies the
+    build output to <payload>\scripting\ without RevitMcpNext.Contracts.dll (the add-in's copy is shared).
+  -->
+  <PropertyGroup>
+    <RevitYear Condition="'$(RevitYear)' == ''">2024</RevitYear>
+    <TargetFramework Condition="'$(RevitYear)' == '2027'">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+    <AssemblyName>RevitMcpNext.Scripting</AssemblyName>
+    <RootNamespace>RevitMcpNext.Scripting</RootNamespace>
+    <Version>0.4.0</Version>
+    <Product>Revit MCP Next</Product>
+    <AssemblyTitle>Revit MCP Next Scripting (Roslyn)</AssemblyTitle>
+    <Company>BhaveshY</Company>
+    <Copyright>Copyright 2026</Copyright>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- A library: copy the Roslyn runtime assemblies next to it (net48 LoadFrom probing; net10 deps.json resolver). -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateDependencyFile>true</GenerateDependencyFile>
+    <!-- Compiler messages stay English (the add-in maps them to line/col); no satellite folders in the payload. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DefineConstants>$(DefineConstants);REVIT$(RevitYear)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RevitMcpNext.Contracts\RevitMcpNext.Contracts.csproj" />
+  </ItemGroup>
+
+  <Target Name="ValidateRevitConfiguration" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(RevitYear)' != '2024' and '$(RevitYear)' != '2027'" Text="Revit $(RevitYear) is not configured. Supported RevitYear values are 2024 and 2027." />
+    <Error Condition="'$(RevitYear)' == '2024' and '$(TargetFramework)' != 'net48'" Text="Revit 2024 must target net48." />
+    <Error Condition="'$(RevitYear)' == '2027' and '$(TargetFramework)' != 'net10.0-windows'" Text="Revit 2027 must target net10.0-windows." />
+  </Target>
+</Project>
