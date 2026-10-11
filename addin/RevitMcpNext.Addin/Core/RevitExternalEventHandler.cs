@@ -50,7 +50,6 @@ namespace RevitMcpNext.Addin.Revit
         private const int MaxDeleteDependentLimit = 256;
 
         private readonly RevitRequestQueue _queue;
-        private readonly ModelDeliveryWorkflow _modelDelivery;
         private readonly string _runtimeInstanceId;
         private volatile bool _inExecute;
 
@@ -69,7 +68,6 @@ namespace RevitMcpNext.Addin.Revit
         {
             _queue = queue ?? throw new ArgumentNullException(nameof(queue));
             _runtimeInstanceId = McpRuntime.Instance?.InstanceId ?? "in-process";
-            _modelDelivery = new ModelDeliveryWorkflow(_runtimeInstanceId, document => McpRuntime.Registry?.GetGeneration(document) ?? 0);
         }
 
         /// <summary>True while ExecuteBatch runs on the UI thread (the pump does not need to wake Revit then).</summary>
