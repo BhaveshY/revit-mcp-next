@@ -217,7 +217,7 @@ namespace RevitMcpNext.Addin
             var targets = new List<View>();
             for (int index = 0; index < names.Count; index++)
             {
-                View target = Resolve.View(doc, names[index], c.Args.Field("views") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]", c.Ctx.UiDoc);
+                View target = ListArgs.Item(c.Args, "views", index, (value, field) => Resolve.View(doc, value, field, c.Ctx.UiDoc));
                 if (target.Id == source.Id)
                 {
                     c.Warn(WarningCodes.ParamIgnored, "views: '" + target.Name + "' is the source view and was skipped");

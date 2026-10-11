@@ -49,7 +49,7 @@ namespace RevitMcpNext.Addin
             List<string> many = c.Args.Strs("sheets");
             for (int index = 0; index < many.Count; index++)
             {
-                ViewSheet sheet = Resolve.Sheet(c.Doc, many[index], c.Args.Field("sheets") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+                ViewSheet sheet = ListArgs.Item(c.Args, "sheets", index, (value, field) => Resolve.Sheet(c.Doc, value, field));
                 if (seen.Add(sheet.Id.Value)) result.Add(sheet);
             }
             if (result.Count == 0)

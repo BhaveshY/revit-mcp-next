@@ -46,7 +46,7 @@ namespace RevitMcpNext.Addin
             List<string> fields = c.Args.Strs("fields");
             if (fields.Count > 0)
             {
-                ScheduleSupport.AddFields(doc, schedule, fields, c.Args.Field("fields"), skipped);
+                ScheduleSupport.AddFields(doc, schedule, fields, c.Args, skipped);
             }
             else if (kind == "regular")
             {
@@ -55,7 +55,7 @@ namespace RevitMcpNext.Addin
                     if (ScheduleSupport.FindField(schedule, field) != null) continue;
                     try
                     {
-                        ScheduleSupport.AddFields(doc, schedule, new[] { field }, "fields", null);
+                        ScheduleSupport.AddFields(doc, schedule, new[] { field }, null, null);
                     }
                     catch (OpException)
                     {
@@ -85,7 +85,7 @@ namespace RevitMcpNext.Addin
             ViewSchedule schedule = ScheduleSupport.Schedule(doc, c.Str("schedule"));
             List<string> fields = RequireList(c, "fields");
             var skipped = new List<string>();
-            List<ScheduleField> added = ScheduleSupport.AddFields(doc, schedule, fields, c.Args.Field("fields"), skipped);
+            List<ScheduleField> added = ScheduleSupport.AddFields(doc, schedule, fields, c.Args, skipped);
             if (added.Count > 0) c.Modified(schedule, "fields", null);
             if (skipped.Count > 0) c.Warn(WarningCodes.ParamIgnored, "fields already in '" + schedule.Name + "': " + string.Join(", ", skipped));
             Finish(c, doc, schedule, "added " + ScheduleSupport.Count(added.Count, "field") + " to '" + schedule.Name + "'");
@@ -102,7 +102,7 @@ namespace RevitMcpNext.Addin
             var droppedRules = new List<string>();
             for (int index = 0; index < fields.Count; index++)
             {
-                ScheduleField field = ScheduleSupport.RequireField(schedule, fields[index], c.Args.Field("fields") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+                ScheduleField field = ListArgs.Item(c.Args, "fields", index, (value, param) => ScheduleSupport.RequireField(schedule, value, param));
                 ScheduleFieldId fieldId = field.FieldId;
                 string name = ScheduleSupport.FieldName(field);
 
@@ -191,7 +191,7 @@ namespace RevitMcpNext.Addin
             var ordered = new List<ScheduleFieldId>();
             for (int index = 0; index < names.Count; index++)
             {
-                ScheduleField field = ScheduleSupport.RequireField(schedule, names[index], c.Args.Field("fields") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+                ScheduleField field = ListArgs.Item(c.Args, "fields", index, (value, param) => ScheduleSupport.RequireField(schedule, value, param));
                 if (!ordered.Contains(field.FieldId)) ordered.Add(field.FieldId);
             }
             // Fields not named keep their relative order after the named ones.
@@ -336,19 +336,26 @@ namespace RevitMcpNext.Addin
             {
                 string param = c.Args.Field("filters") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]";
                 ScheduleFilterSpec spec = ScheduleSupport.ParseFilter(texts[index], param);
-                ScheduleField field = ScheduleSupport.FindField(schedule, spec.Field);
-                if (field == null)
+                try
                 {
-                    SchedulableField schedulable = ScheduleSupport.FindSchedulable(doc, schedule, spec.Field, param);
-                    field = schedule.Definition.AddField(schedulable);
-                    field.IsHidden = true;
-                    addedHidden.Add(ScheduleSupport.FieldName(field));
+                    ScheduleField field = ScheduleSupport.FindField(schedule, spec.Field);
+                    if (field == null)
+                    {
+                        SchedulableField schedulable = ScheduleSupport.FindSchedulable(doc, schedule, spec.Field, param);
+                        field = schedule.Definition.AddField(schedulable);
+                        field.IsHidden = true;
+                        addedHidden.Add(ScheduleSupport.FieldName(field));
+                    }
+                    if (!ScheduleSupport.CanFilter(schedule.Definition, field.FieldId, spec.Type))
+                    {
+                        throw OpException.InvalidArgs(param, "'" + ScheduleSupport.FieldName(field) + "' cannot be filtered with '" + spec.Text + "' in this schedule");
+                    }
+                    filters.Add(ScheduleSupport.BuildFilter(doc, schedule, field, spec, param));
                 }
-                if (!ScheduleSupport.CanFilter(schedule.Definition, field.FieldId, spec.Type))
+                catch (OpException ex) when (ex.Code == ErrorCodes.NotFound || ex.Code == ErrorCodes.AmbiguousName)
                 {
-                    throw OpException.InvalidArgs(param, "'" + ScheduleSupport.FieldName(field) + "' cannot be filtered with '" + spec.Text + "' in this schedule");
+                    throw ListArgs.Rewrap(ex, c.Args, "filters", texts, index, substitute: false);
                 }
-                filters.Add(ScheduleSupport.BuildFilter(doc, schedule, field, spec, param));
             }
             ScheduleDefinition definition = schedule.Definition;
             definition.ClearFilters();
@@ -368,7 +375,7 @@ namespace RevitMcpNext.Addin
                 string text = texts[index].Trim();
                 bool descending = text.StartsWith("-", StringComparison.Ordinal);
                 if (descending || text.StartsWith("+", StringComparison.Ordinal)) text = text.Substring(1).Trim();
-                ScheduleField field = ScheduleSupport.RequireField(schedule, text, c.Args.Field("sort") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+                ScheduleField field = ListArgs.Item(c.Args, "sort", index, (value, param) => ScheduleSupport.RequireField(schedule, text, param), decorate: name => (descending ? "-" : string.Empty) + name);
                 if (!schedule.Definition.CanSortByField(field.FieldId))
                 {
                     throw OpException.InvalidArgs(c.Args.Field("sort") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]", "'" + ScheduleSupport.FieldName(field) + "' cannot be used for sorting");

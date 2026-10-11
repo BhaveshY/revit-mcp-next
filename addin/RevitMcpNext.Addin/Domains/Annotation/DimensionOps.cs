@@ -120,7 +120,7 @@ namespace RevitMcpNext.Addin
             if (kind == "slope")
             {
                 throw new OpException(ErrorCodes.UnsupportedOp, "The Revit API cannot create spot slopes (Revit " + c.Ctx.Year.ToString(CultureInfo.InvariantCulture) + ").",
-                    new Dictionary<string, object> { ["kind"] = "slope", ["alternative"] = "place spot slopes in Revit, or use kind elevation at two points" });
+                    new Dictionary<string, object> { ["kind"] = "slope", ["hint"] = "place spot slopes by hand in Revit, or use kind elevation at two points" });
             }
             View view = AnnotationSupport.AnnotationView(c, "a spot dimension", allowSheet: false, allow3D: true);
             string hostText = c.Str("host");

@@ -41,7 +41,8 @@ namespace RevitMcpNext.Addin
             {
                 if (SheetSupport.NumberTaken(doc, plan.Number) || used.Contains(plan.Number))
                 {
-                    throw SheetSupport.NumberTakenError(doc, plan.Field, plan.Number, used);
+                    if (!c.Has("items")) throw SheetSupport.NumberTakenError(doc, "number", plan.Number, used);
+                    throw ItemsTaken(c, doc, planned, plan);
                 }
                 used.Add(plan.Number);
             }
@@ -191,6 +192,26 @@ namespace RevitMcpNext.Addin
         }
 
         // ---------------------------------------------------------------------------------------------------------
+
+        /// <summary>NAME_TAKEN for items: details.next is the whole items list with every used number replaced by a free one.</summary>
+        private static OpException ItemsTaken(ChangeContext c, Document doc, List<Planned> planned, Planned first)
+        {
+            var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var corrected = new List<object>();
+            foreach (Planned plan in planned)
+            {
+                string number = plan.Number;
+                if (SheetSupport.NumberTaken(doc, number) || taken.Contains(number)) number = SheetSupport.NextFreeNumber(doc, number, taken);
+                taken.Add(number);
+                var item = new Dictionary<string, object> { ["number"] = number };
+                if (!string.IsNullOrWhiteSpace(plan.Name)) item["name"] = plan.Name;
+                if (!string.IsNullOrWhiteSpace(plan.TitleBlock)) item["titleblock"] = plan.TitleBlock;
+                corrected.Add(item);
+            }
+            return new OpException(ErrorCodes.NameTaken,
+                "Sheet number '" + first.Number + "' (" + first.Field + ") is already used in '" + doc.Title + "'; the fix suggests free numbers.",
+                new Dictionary<string, object> { ["param"] = string.IsNullOrEmpty(c.Args.Path) ? "items" : c.Args.Field("items"), ["value"] = first.Number, ["next"] = corrected });
+        }
 
         private sealed class Planned
         {

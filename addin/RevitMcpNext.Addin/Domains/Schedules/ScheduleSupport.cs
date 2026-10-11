@@ -178,18 +178,26 @@ namespace RevitMcpNext.Addin
         }
 
         /// <summary>Adds the fields (skipping ones already present); returns the added fields.</summary>
-        public static List<ScheduleField> AddFields(Document doc, ViewSchedule schedule, IList<string> names, string param, List<string> skipped)
+        public static List<ScheduleField> AddFields(Document doc, ViewSchedule schedule, IList<string> names, PayloadReader args, List<string> skipped)
         {
             var added = new List<ScheduleField>();
             for (int index = 0; index < names.Count; index++)
             {
-                string field = param + "[" + index.ToString(CultureInfo.InvariantCulture) + "]";
+                string field = (args == null ? "fields" : args.Field("fields")) + "[" + index.ToString(CultureInfo.InvariantCulture) + "]";
                 if (FindField(schedule, names[index]) != null)
                 {
                     skipped?.Add(names[index]);
                     continue;
                 }
-                SchedulableField schedulable = FindSchedulable(doc, schedule, names[index], field);
+                SchedulableField schedulable;
+                try
+                {
+                    schedulable = FindSchedulable(doc, schedule, names[index], field);
+                }
+                catch (OpException ex) when (args != null && (ex.Code == ErrorCodes.NotFound || ex.Code == ErrorCodes.AmbiguousName))
+                {
+                    throw ListArgs.Rewrap(ex, args, "fields", names.ToList(), index);
+                }
                 added.Add(schedule.Definition.AddField(schedulable));
             }
             return added;
