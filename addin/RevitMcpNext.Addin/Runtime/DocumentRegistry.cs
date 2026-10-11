@@ -27,7 +27,7 @@ namespace RevitMcpNext.Addin
     {
         public long Generation { get; set; }
         public IReadOnlyList<string> Names { get; set; } = new List<string>();
-        /// <summary>committed | undone | redone | rolled_back | group_rolled_back.</summary>
+        /// <summary>committed | undone | redone | rolled_back | group_rolled_back | history_cleared.</summary>
         public string Operation { get; set; } = "committed";
         public NameClass Class { get; set; }
         /// <summary>Set when the change happened while an MCP request executed and its names are write/ui; else null.</summary>
@@ -502,6 +502,39 @@ namespace RevitMcpNext.Addin
                 query.Transactions = state.Journal.Where(entry => entry.Generation > sinceGeneration).ToList();
             }
             return query;
+        }
+
+        /// <summary>
+        /// Records that Revit cleared the document's undo history (SynchronizeWithCentral, ReloadLatest: V11). Undo then
+        /// sees an empty stack instead of steps Revit no longer has; the UndoLedger drops the doc's records. UI thread.
+        /// </summary>
+        public void RecordHistoryCleared(Document document, string reason)
+        {
+            if (document == null) return;
+            DocumentChangeRecord record;
+            lock (_gate)
+            {
+                DocState state = EnsureStateUnsafe(document);
+                var entry = new JournalEntry
+                {
+                    Generation = state.Generation,
+                    Names = new List<string> { reason ?? "history cleared" },
+                    Operation = "history_cleared",
+                    Class = NameClass.Foreign,
+                    AtUtc = DateTime.UtcNow
+                };
+                state.Journal.Add(entry);
+                if (state.Journal.Count > JournalCapacity) state.Journal.RemoveRange(0, state.Journal.Count - JournalCapacity);
+                record = new DocumentChangeRecord { Rid = state.Rid, DocKey = state.Key, Generation = state.Generation, Entry = entry };
+            }
+            try
+            {
+                DocumentChangeRecorded?.Invoke(record);
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLogger.Error("registry", "A DocumentChanged subscriber failed.", ex);
+            }
         }
 
         /// <summary>The newest journal entries (newest first). UI thread.</summary>

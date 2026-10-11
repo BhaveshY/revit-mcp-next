@@ -146,6 +146,12 @@ namespace RevitMcpNext.Addin.Undo
             try
             {
                 JournalEntry entry = change?.Entry;
+                if (entry != null && entry.Operation == "history_cleared")
+                {
+                    // Revit cleared the undo history: nothing recorded before can be compensated against it any more.
+                    lock (Gate) Records.Remove(change.Rid);
+                    return;
+                }
                 OursInfo ours = entry?.Ours;
                 if (entry == null || ours == null || string.IsNullOrEmpty(ours.RequestId)) return;
                 lock (Gate)

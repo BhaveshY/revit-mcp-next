@@ -62,6 +62,7 @@ namespace RevitMcpNext.Addin
             }
 
             // V11: Revit clears the undo history on sync; earlier MCP writes can no longer be undone with undo.
+            ctx.Registry?.RecordHistoryCleared(doc, "synchronize with central");
             ctx.Notice("UNDO_CLEARED", "synchronizing cleared Revit's undo history for '" + DocFiles.SafeTitle(doc) + "'");
             var data = new Dictionary<string, object>
             {
@@ -97,6 +98,7 @@ namespace RevitMcpNext.Addin
             {
                 throw MapCentralException(ex, central, "Reloading the latest changes of '" + DocFiles.SafeTitle(doc) + "'");
             }
+            ctx.Registry?.RecordHistoryCleared(doc, "reload latest");
             ctx.Notice("UNDO_CLEARED", "reloading cleared Revit's undo history for '" + DocFiles.SafeTitle(doc) + "'");
             long after = ctx.Generation;
             var data = new Dictionary<string, object> { ["central"] = central, ["changed"] = after != before };

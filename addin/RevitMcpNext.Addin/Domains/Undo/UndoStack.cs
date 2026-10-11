@@ -88,6 +88,11 @@ namespace RevitMcpNext.Addin.Undo
                     case "group_rolled_back":
                         stack.RollBackGroup(entry);
                         break;
+                    case "history_cleared":
+                        // Revit dropped its undo/redo history (sync with central, reload latest).
+                        stack.Undo.Clear();
+                        stack.Redo.Clear();
+                        break;
                 }
             }
             return stack;
