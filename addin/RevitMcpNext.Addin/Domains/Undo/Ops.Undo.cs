@@ -187,6 +187,7 @@ namespace RevitMcpNext.Addin.Undo
                     "nothing left to compensate: the elements " + labels + " created are already gone");
             }
 
+            var created = new HashSet<long>(targets.SelectMany(t => t.Created));
             OpMeta meta = CompensationMeta(ctx.Meta);
             var op = new PlannedOp
             {
@@ -200,6 +201,15 @@ namespace RevitMcpNext.Addin.Undo
                     InvokeChange = c =>
                     {
                         ICollection<ElementId> deleted = c.Delete(existing);
+                        // Only what the write created may go: elements added later and hosted on them would cascade.
+                        List<long> others = c.DeletedRecords.Where(d => d.Counted && !created.Contains(d.Id)).Select(d => d.Id).ToList();
+                        if (others.Count > 0)
+                        {
+                            throw new OpException(ErrorCodes.Irreversible,
+                                "Compensating " + labels + " would also delete " + others.Count.ToString(CultureInfo.InvariantCulture) +
+                                " element(s) added later that depend on it (e.g. " + string.Join(", ", others.Take(5)) + "); nothing was changed.",
+                                new Dictionary<string, object> { ["write"] = labels, ["dependents"] = others.Take(50).Cast<object>().ToList(), ["dependentsTotal"] = others.Count });
+                        }
                         c.Summary("compensated " + labels + ": deleted " + deleted.Count.ToString(CultureInfo.InvariantCulture) + " element" + (deleted.Count == 1 ? string.Empty : "s"));
                         c.Data(new Dictionary<string, object>
                         {
@@ -215,7 +225,10 @@ namespace RevitMcpNext.Addin.Undo
             return result;
         }
 
-        /// <summary>undo's registry meta adapted for the engine: one "in" transaction whose deletes count for the delete rule.</summary>
+        /// <summary>
+        /// undo's registry meta adapted for the engine: one "in" transaction. No blast rule: undo has no confirm param, and
+        /// compensation deletes only what the session's own write created (anything else makes it IRREVERSIBLE).
+        /// </summary>
         private static OpMeta CompensationMeta(OpMeta undo)
         {
             return new OpMeta
@@ -230,7 +243,7 @@ namespace RevitMcpNext.Addin.Undo
                 Min = undo?.Min ?? 2024,
                 Idle = false,
                 Tx = "in",
-                Blast = new List<string> { "delete" },
+                Blast = new List<string>(),
                 Strict = false,
                 Job = "never",
                 Inproc = false,
