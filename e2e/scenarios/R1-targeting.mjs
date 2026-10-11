@@ -21,6 +21,17 @@ import { makeWriteGuard } from "../lib/fixtures.mjs";
 const title = (r) => (r.doc?.title ?? "").replace(/\.(rvt|rfa|rte)$/i, "");
 const notice = (r, code) => r.notices.find((n) => n.startsWith(code));
 let levelSeq = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The registration mirror is rewritten 250 ms after a change and other brokers cache it 500 ms. */
+const SNAPSHOT_SETTLE_MS = 1_000;
+
+/** "The user" switches the active document (session 1), then other sessions' snapshots settle. */
+async function userSwitch(t, doc) {
+  const r = await t.call("ui", { op: "activate_doc", doc });
+  t.assertEq(title(r), doc, `activate_doc ${doc}`);
+  await sleep(SNAPSHOT_SETTLE_MS);
+  return r;
+}
 
 /** A second MCP session (another "Codex thread") with the same coverage and write guard. */
 async function openSession(t, o = {}) {
@@ -75,8 +86,7 @@ export default {
         t.assertEq(f.status, "ok", "new_family");
       } else t.log("SKIP family steps: no Generic Model family template found");
       // Make Site the UI-active doc for the auto-pin check.
-      const a = await t.call("ui", { op: "activate_doc", doc: "Site" });
-      t.assertEq(title(a), "Site", "activate_doc Site");
+      await userSwitch(t, "Site");
       t.setTargetPath(sitePath);
     });
 
@@ -103,7 +113,7 @@ export default {
       // ------------------------------------------------------------------ 3. ACTIVE_DIFFERS and the auto-pin switch gate
       await t.step("another session's tab switch: ACTIVE_DIFFERS once for an explicit pin", async () => {
         await s2.call("set_target", { doc: "Tower" });
-        await t.call("ui", { op: "activate_doc", doc: "Site" });
+        await userSwitch(t, "Site");
         const r = await s2.call("list", { kind: "levels" });
         t.assertEq(title(r), "Tower", "explicit pin unchanged");
         t.assert(notice(r, "ACTIVE_DIFFERS"), `ACTIVE_DIFFERS notice: ${r.notices.join(" | ")}`);
@@ -118,7 +128,7 @@ export default {
           const first = await s3.call("create_elements", levelArgs());
           t.assertEq(title(first), "Site", "s3 auto-pinned Site");
           // The "user" (session 1) switches the active project.
-          await t.call("ui", { op: "activate_doc", doc: "Tower" });
+          await userSwitch(t, "Tower");
           const args = levelArgs();
           const gated = await s3.call.expectError("create_elements", args, "TARGET_CHANGED");
           t.assertMatch(gated.summary, /nothing was written/i, "TARGET_CHANGED says nothing was written");
@@ -149,12 +159,12 @@ export default {
       });
 
       await t.step("follow mode tracks tab switches; a write after a switch is gated once", async () => {
-        await t.call("ui", { op: "activate_doc", doc: "Tower" });
+        await userSwitch(t, "Tower");
         const follow = await s2.call("set_target", { doc: "follow" });
         t.assertEq(title(follow), "Tower", "follow starts on the active doc");
         const w1 = await s2.call("create_elements", levelArgs());
         t.assertEq(title(w1), "Tower", "follow write goes to Tower");
-        await t.call("ui", { op: "activate_doc", doc: "Site" });
+        await userSwitch(t, "Site");
         const read = await s2.call("list", { kind: "levels" });
         t.assertEq(title(read), "Site", "follow read follows the switch");
         const args = levelArgs();
@@ -187,7 +197,7 @@ export default {
           // Family docs are never auto-picked while a project is open (fresh session).
           const s4 = await openSession(t);
           try {
-            await t.call("ui", { op: "activate_doc", doc: "R1Fam" });
+            await userSwitch(t, "R1Fam");
             const auto = await s4.call("list", { kind: "levels" });
             t.assert(title(auto) !== "R1Fam", `a fresh session never auto-picks the family doc (got ${title(auto)})`);
           } finally {
