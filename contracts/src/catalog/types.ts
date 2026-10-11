@@ -75,6 +75,11 @@ export interface OpSpec {
   req: string;
   /** Optional params, ',' separated. */
   opt: string;
+  /**
+   * Optional params the op also accepts that are not in the advertised op signature (tools/list stays equal to SPEC
+   * Appendix A). Validation and help include them.
+   */
+  moreOpt?: string;
   meta: OpMeta;
   /** One or two sentences of behaviour for help {tool,op}. */
   help?: string;

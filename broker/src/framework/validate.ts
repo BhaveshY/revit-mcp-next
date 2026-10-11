@@ -91,7 +91,7 @@ export function validateOp(spec: ToolSpec, op: string | null, args: Record<strin
   const opSpec = spec.ops[op ?? ""];
   if (!opSpec) return { args, warnings, error: { code: "INVALID_ARGS", message: `${prefix}${spec.name}: unknown op`, details: { reason: "unknown op" } } };
   const props = fullProperties(spec);
-  const allowed = new Set<string>([...paramList(opSpec.req), ...paramList(opSpec.opt)]);
+  const allowed = new Set<string>([...paramList(opSpec.req), ...paramList(opSpec.opt), ...paramList(opSpec.moreOpt ?? "")]);
   for (const t of TAIL_PARAMS) if (t in props) allowed.add(t);
   if (spec.discriminator) allowed.add(spec.discriminator);
   const out: Record<string, unknown> = {};

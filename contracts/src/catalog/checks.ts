@@ -247,7 +247,7 @@ function checkTool(tool: ToolSpec, failures: string[], warnings: string[]): void
   for (const [name, p] of Object.entries(props)) checkParam(`${tool.name}.${name}`, p, failures);
   for (const [opName, spec] of Object.entries(tool.ops)) {
     const label = opName ? `${tool.name}.${opName}` : tool.name;
-    for (const p of [...paramNamesOf(spec.req), ...paramNamesOf(spec.opt)]) if (!(p in props)) failures.push(`${label}: signature names unknown param ${p}`);
+    for (const p of [...paramNamesOf(spec.req), ...paramNamesOf(spec.opt), ...paramNamesOf(spec.moreOpt ?? "")]) if (!(p in props)) failures.push(`${label}: signature names unknown param ${p}`);
     if (spec.examples.length === 0) failures.push(`${label}: no example`);
     for (const example of spec.examples) {
       for (const key of Object.keys(example)) if (!(key in props)) failures.push(`${label}: example uses unknown param ${key}`);

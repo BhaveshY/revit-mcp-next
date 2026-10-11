@@ -35,13 +35,13 @@ function requiredList(req: string): string[] {
   return parseGroups(req).map((group) => group.map((alt) => alt.join("+")).join("|"));
 }
 
-function optionalList(opt: string): string[] {
-  return opt.split(",").map((s) => s.trim()).filter(Boolean);
+function optionalList(opt: string, more?: string): string[] {
+  return [opt, more ?? ""].join(",").split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 function opSummary(spec: ToolSpec, op: string): Record<string, unknown> {
   const o = spec.ops[op]!;
-  const out: Record<string, unknown> = { required: requiredList(o.req), optional: optionalList(o.opt) };
+  const out: Record<string, unknown> = { required: requiredList(o.req), optional: optionalList(o.opt, o.moreOpt) };
   if (o.examples[0]) out.example = o.examples[0];
   if (o.meta.min !== 2024) out.min = o.meta.min;
   if (o.meta.blast.length) out.confirm = o.meta.blast;
@@ -87,7 +87,7 @@ function paramDoc(p: ParamSpec): Record<string, unknown> {
 export function helpOp(spec: ToolSpec, op: string): ToolOutcome {
   const o = spec.ops[op]!;
   const props = fullProperties(spec);
-  const names = new Set([...requiredList(o.req).flatMap((g) => g.split(/[|+]/)), ...optionalList(o.opt), ...TAIL_PARAMS.filter((p) => p in props)]);
+  const names = new Set([...requiredList(o.req).flatMap((g) => g.split(/[|+]/)), ...optionalList(o.opt, o.moreOpt), ...TAIL_PARAMS.filter((p) => p in props)]);
   if (spec.discriminator) names.delete(spec.discriminator);
   const params: Record<string, unknown> = {};
   for (const name of names) if (props[name]) params[name] = paramDoc(props[name]!);
@@ -97,7 +97,7 @@ export function helpOp(spec: ToolSpec, op: string): ToolOutcome {
     key: op ? `${spec.name}.${op}` : spec.name,
     ...(o.help ? { help: o.help } : {}),
     required: requiredList(o.req),
-    optional: optionalList(o.opt),
+    optional: optionalList(o.opt, o.moreOpt),
     params,
     examples: o.examples.slice(0, 3),
     kind: o.meta.kind,

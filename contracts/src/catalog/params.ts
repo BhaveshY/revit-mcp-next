@@ -156,6 +156,6 @@ export const UI: OpMeta = { kind: "ui", impl: "addin", scope: "project_or_family
 export const CODE: OpMeta = { kind: "code", impl: "addin", scope: "project_or_family", ui: false, min: 2024, idle: false, tx: "temp", blast: ["code_commit"], strict: false, job: "auto", inproc: false, cs: false };
 
 /** Build an OpSpec. `req`/`opt` use the signature grammar of SPEC-catalog.mjs (`/` alternatives, `+` together). */
-export function op(req: string, opt: string, opMeta: OpMeta, examples: Record<string, unknown>[] = [], extra: Partial<Pick<OpSpec, "help" | "api" | "errors">> = {}): OpSpec {
+export function op(req: string, opt: string, opMeta: OpMeta, examples: Record<string, unknown>[] = [], extra: Partial<Pick<OpSpec, "help" | "api" | "errors" | "moreOpt">> = {}): OpSpec {
   return { req, opt, meta: opMeta, examples, ...extra };
 }
