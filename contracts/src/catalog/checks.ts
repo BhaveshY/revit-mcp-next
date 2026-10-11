@@ -61,12 +61,22 @@ export const GATES = {
     readManyMaxImages: 2,
     readManyMaxImageBytes: 2 * 1024 * 1024,
   },
+  /** T1 (e2e): per-key p95 output bytes may grow at most this much over e2e/t1-baseline.json. */
+  t1: {
+    p95GrowthMax: 0.2,
+    /** Slack over pageMaxBytes for the status line, notices and the more:/next: lines of a page. */
+    pageSlackBytes: 600,
+  },
 } as const;
 
 /** e2e/budgets.json (committed baseline). */
 export interface Budgets {
   toolsListBytes: { default: number; withOptIn: number; core: number };
   perTool?: Record<string, number>;
+  /** Copies of GATES (generated; e2e reads its output budgets from here). */
+  gates?: Record<string, unknown>;
+  outputs?: Record<string, number>;
+  t1?: Record<string, number>;
   updatedAt?: string;
   note?: string;
 }
@@ -296,6 +306,10 @@ export function runChecks(budgets: Budgets | null): CheckResult {
     growth(stats.toolsListBytesDefault, budgets.toolsListBytes.default, "tools/list (default)");
     growth(stats.toolsListBytesWithOptIn, budgets.toolsListBytes.withOptIn, "tools/list (with run_csharp)");
     growth(stats.toolsListBytesCore, budgets.toolsListBytes.core, "tools/list (core)");
+    // budgets.json is generated from GATES: a drift means the file was edited by hand or not regenerated.
+    if (budgets.outputs && !deepEqual(budgets.outputs, GATES.outputs)) failures.push("e2e/budgets.json outputs differ from GATES.outputs; run npm run gen:catalog -- --update-baseline");
+    if (budgets.t1 && !deepEqual(budgets.t1, GATES.t1)) failures.push("e2e/budgets.json t1 differs from GATES.t1; run npm run gen:catalog -- --update-baseline");
+    if (!budgets.outputs || !budgets.t1 || !budgets.gates) warnings.push("e2e/budgets.json has no generated gates/outputs/t1; run npm run gen:catalog -- --update-baseline");
   } else {
     warnings.push("no e2e/budgets.json baseline; growth gate skipped");
   }

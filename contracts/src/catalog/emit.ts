@@ -20,7 +20,7 @@ import {
   MAX_FRAME_BYTES,
   PRIMARY_PIPE_INSTANCES,
 } from "../protocol.js";
-import { type Budgets, deepEqual, firstDifference, runChecks, surfaceStats } from "./checks.js";
+import { type Budgets, deepEqual, firstDifference, GATES, runChecks, surfaceStats } from "./checks.js";
 import { CATALOG, catalogHash, ERRORS, REGISTRY, toolsList } from "./index.js";
 import { INSTRUCTIONS } from "./instructions.js";
 
@@ -96,8 +96,21 @@ function currentBudgets(): Budgets {
   return {
     toolsListBytes: { default: s.toolsListBytesDefault, withOptIn: s.toolsListBytesWithOptIn, core: s.toolsListBytesCore },
     perTool: s.perTool,
+    gates: {
+      totalMaxBytes: GATES.totalMaxBytes,
+      perToolMaxBytes: GATES.perToolMaxBytes,
+      growthMax: GATES.growthMax,
+      descriptionMaxChars: GATES.descriptionMaxChars,
+      depthMax: GATES.depthMax,
+      defaultToolCount: GATES.defaultToolCount,
+      coreToolCount: GATES.coreToolCount,
+      instructionsHeadMax: GATES.instructionsHeadMax,
+      instructionsTotalMax: GATES.instructionsTotalMax,
+    },
+    outputs: { ...GATES.outputs },
+    t1: { ...GATES.t1 },
     updatedAt: new Date().toISOString().slice(0, 10),
-    note: "Baseline for the §15 growth gate. Growth > 5 % needs an update of this file in the same commit (npm run gen:catalog -- --update-baseline).",
+    note: "Generated from contracts/src/catalog/checks.ts GATES (npm run gen:catalog -- --update-baseline). toolsListBytes/perTool are the §15 growth baseline (> 5 % growth needs an update in the same commit); outputs and t1 are the e2e output budgets (T1).",
   };
 }
 

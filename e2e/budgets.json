@@ -44,6 +44,30 @@
     "help": 572,
     "run_csharp": 987
   },
-  "updatedAt": "2026-10-02",
-  "note": "Baseline for the §15 growth gate. Growth > 5 % needs an update of this file in the same commit (npm run gen:catalog -- --update-baseline)."
+  "gates": {
+    "totalMaxBytes": 90000,
+    "perToolMaxBytes": 6000,
+    "growthMax": 0.05,
+    "descriptionMaxChars": 220,
+    "depthMax": 5,
+    "defaultToolCount": 37,
+    "coreToolCount": 17,
+    "instructionsHeadMax": 512,
+    "instructionsTotalMax": 1500
+  },
+  "outputs": {
+    "statusCompactMaxBytes": 2048,
+    "pageMaxBytes": 8192,
+    "resultMaxBytes": 12000,
+    "resultFullMaxBytes": 40000,
+    "imageBase64MaxBytes": 1500000,
+    "readManyMaxImages": 2,
+    "readManyMaxImageBytes": 2097152
+  },
+  "t1": {
+    "p95GrowthMax": 0.2,
+    "pageSlackBytes": 600
+  },
+  "updatedAt": "2026-10-11",
+  "note": "Generated from contracts/src/catalog/checks.ts GATES (npm run gen:catalog -- --update-baseline). toolsListBytes/perTool are the §15 growth baseline (> 5 % growth needs an update in the same commit); outputs and t1 are the e2e output budgets (T1)."
 }
