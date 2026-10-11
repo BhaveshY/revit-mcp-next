@@ -34,7 +34,7 @@ namespace RevitMcpNext.Addin
         }
 
         /// <summary>The rules ANDed into one ElementParameterFilter.</summary>
-        public static ElementFilter Build(Document doc, IList<ElementId> categories, IEnumerable<string> ruleTexts, string param)
+        public static ElementFilter Build(Document doc, IList<ElementId> categories, IEnumerable<string> ruleTexts, string param, double bareLengthToMm = 1.0)
         {
             List<string> texts = ruleTexts.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
             if (texts.Count == 0) throw OpException.InvalidArgs(param, "is required (rules like 'Fire Rating = EI30')");
@@ -45,7 +45,7 @@ namespace RevitMcpNext.Addin
                 string field = param + "[" + index.ToString(CultureInfo.InvariantCulture) + "]";
                 WhereRule rule = ElementQuery.ParseWhere(texts[index], field);
                 ElementId parameterId = FindParameter(doc, common, rule.Param, field);
-                rules.Add(BuildRule(doc, categories, parameterId, rule, field));
+                rules.Add(BuildRule(doc, categories, parameterId, rule, field, bareLengthToMm));
             }
             return new ElementParameterFilter(rules);
         }
@@ -95,7 +95,7 @@ namespace RevitMcpNext.Addin
             if (element != null) yield return element.Name;
         }
 
-        private static FilterRule BuildRule(Document doc, IList<ElementId> categories, ElementId id, WhereRule rule, string field)
+        private static FilterRule BuildRule(Document doc, IList<ElementId> categories, ElementId id, WhereRule rule, string field, double bareLengthToMm)
         {
             if (rule.Op == "empty") return ParameterFilterRuleFactory.CreateHasNoValueParameterRule(id);
             if (rule.Op == "notempty") return ParameterFilterRuleFactory.CreateHasValueParameterRule(id);
@@ -134,7 +134,7 @@ namespace RevitMcpNext.Addin
                 }
                 case StorageType.Double:
                 {
-                    double value = ParseDouble(doc, spec, rule.Value, field);
+                    double value = ParseDouble(doc, spec, rule.Value, field, bareLengthToMm);
                     switch (rule.Op)
                     {
                         case "=": return ParameterFilterRuleFactory.CreateEqualsRule(id, value, Epsilon);
@@ -234,13 +234,14 @@ namespace RevitMcpNext.Addin
             throw OpException.InvalidArgs(field, "needs a whole number, got '" + value + "'");
         }
 
-        private static double ParseDouble(Document doc, ForgeTypeId spec, string value, string field)
+        /// <summary>A rule value in internal units; bare lengths are in the call's units (<paramref name="bareLengthToMm"/>).</summary>
+        private static double ParseDouble(Document doc, ForgeTypeId spec, string value, string field, double bareLengthToMm)
         {
             string text = (value ?? string.Empty).Trim();
             switch (Units.KindOf(spec))
             {
                 case ValueKind.Length:
-                    if (Units.TryParseLength(text, 1.0, out double mm)) return Units.MmToFt(mm);
+                    if (Units.TryParseLength(text, bareLengthToMm, out double mm)) return Units.MmToFt(mm);
                     break;
                 case ValueKind.Area:
                     if (Units.TryParseArea(text, out double m2)) return Units.M2ToFt2(m2);

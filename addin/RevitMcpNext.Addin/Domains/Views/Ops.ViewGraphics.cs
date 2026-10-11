@@ -330,7 +330,7 @@ namespace RevitMcpNext.Addin
                     new Dictionary<string, object> { ["param"] = "view_filter", ["value"] = name, ["next"] = NextFilterName(doc, name) });
             }
             List<ElementId> categories = ViewFilterRules.Categories(doc, c.Args.Strs("categories"), c.Args.Field("categories"));
-            ElementFilter rules = ViewFilterRules.Build(doc, categories, c.Args.Strs("rules"), c.Args.Field("rules"));
+            ElementFilter rules = ViewFilterRules.Build(doc, categories, c.Args.Strs("rules"), c.Args.Field("rules"), c.Args.BareLengthToMm);
             if (!ParameterFilterElement.ElementFilterIsAcceptableForParameterFilterElement(doc, new HashSet<ElementId>(categories), rules))
             {
                 throw OpException.InvalidArgs(c.Args.Field("rules"), "Revit does not accept these rules for the categories " + string.Join(", ", c.Args.Strs("categories")));
@@ -373,7 +373,7 @@ namespace RevitMcpNext.Addin
             }
             if (c.Has("rules"))
             {
-                ElementFilter rules = ViewFilterRules.Build(doc, categories, c.Args.Strs("rules"), c.Args.Field("rules"));
+                ElementFilter rules = ViewFilterRules.Build(doc, categories, c.Args.Strs("rules"), c.Args.Field("rules"), c.Args.BareLengthToMm);
                 if (!ParameterFilterElement.ElementFilterIsAcceptableForParameterFilterElement(doc, new HashSet<ElementId>(categories), rules))
                 {
                     throw OpException.InvalidArgs(c.Args.Field("rules"), "Revit does not accept these rules for the filter's categories");

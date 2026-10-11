@@ -265,7 +265,7 @@ namespace RevitMcpNext.Addin
         /// (sampled from an element of the schedule, else derived from the field's spec): lengths in mm (units allowed),
         /// element ids by name (e.g. Level = Level 1), yes/no as 1/0.
         /// </summary>
-        public static ScheduleFilter BuildFilter(Document doc, ViewSchedule schedule, ScheduleField field, ScheduleFilterSpec spec, string param)
+        public static ScheduleFilter BuildFilter(Document doc, ViewSchedule schedule, ScheduleField field, ScheduleFilterSpec spec, string param, double bareLengthToMm = 1.0)
         {
             if (spec.Type == ScheduleFilterType.HasValue || spec.Type == ScheduleFilterType.HasNoValue) return new ScheduleFilter(field.FieldId, spec.Type);
             ForgeTypeId specType = SafeSpec(field);
@@ -276,7 +276,8 @@ namespace RevitMcpNext.Addin
                 {
                     double number;
                     ValueKind kind = Units.KindOf(specType);
-                    if (kind == ValueKind.Length && Units.TryParseLength(spec.Value, 1.0, out double mm)) number = Units.MmToFt(mm);
+                    // Bare lengths are in the call's units (units arg), like every other length of the call.
+                    if (kind == ValueKind.Length && Units.TryParseLength(spec.Value, bareLengthToMm, out double mm)) number = Units.MmToFt(mm);
                     else if (PayloadReader.TryNumber(spec.Value, out double raw)) number = Units.ToInternal(specType, raw, doc);
                     else throw OpException.InvalidArgs(param, "'" + spec.Field + "' is numeric; '" + spec.Value + "' is not a number" + (kind == ValueKind.Length ? " (mm or with a unit)" : string.Empty));
                     return new ScheduleFilter(field.FieldId, spec.Type, number);

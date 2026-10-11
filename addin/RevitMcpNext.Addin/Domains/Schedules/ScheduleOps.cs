@@ -350,7 +350,7 @@ namespace RevitMcpNext.Addin
                     {
                         throw OpException.InvalidArgs(param, "'" + ScheduleSupport.FieldName(field) + "' cannot be filtered with '" + spec.Text + "' in this schedule");
                     }
-                    filters.Add(ScheduleSupport.BuildFilter(doc, schedule, field, spec, param));
+                    filters.Add(ScheduleSupport.BuildFilter(doc, schedule, field, spec, param, c.Args.BareLengthToMm));
                 }
                 catch (OpException ex) when (ex.Code == ErrorCodes.NotFound || ex.Code == ErrorCodes.AmbiguousName)
                 {
