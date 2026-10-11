@@ -20,6 +20,10 @@ export const tool: ToolSpec = {
     doc: P.doc,
   },
   ops: {
-    "": op("", "steps,redo,mode,doc", M, [{}, {"steps":2}, {"redo":true}], { help: "Only your own newest writes; the doc must be UI-active. A newer change by someone else gives UNDO_BLOCKED." }),
+    "": op("", "steps,redo,mode,doc", M, [{}, {"steps":2}, {"redo":true}, {"mode":"compensate"}], {
+      help: "Only your own newest writes; the doc must be UI-active (ui activate_doc). Temporary view changes (ui isolate/hide) on top are undone along. A newer change by the user or another session gives UNDO_BLOCKED (not undone); mode compensate deletes what your newest write created, as a new write.",
+      api: "UIApplication.PostCommand(PostableCommand.Undo|Redo), confirmed by DocumentChanged(TransactionUndone|Redone)",
+      errors: ["NEEDS_ACTIVE_DOC", "UNDO_BLOCKED", "UNDO_UNCONFIRMED", "IRREVERSIBLE", "REVIT_REFUSED"],
+    }),
   },
 };

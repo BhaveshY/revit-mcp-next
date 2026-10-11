@@ -19,6 +19,9 @@ export const tool: ToolSpec = {
     ...WRITE_TAIL,
   },
   ops: {
-    "": op("ops", "name,doc,preview,confirm,units", M, [{"ops":[{"tool":"edit_sheets","op":"create","number":"A201","name":"Sections"},{"tool":"edit_views","op":"create","kind":"section","start":[0,4000],"end":[12000,4000]},{"tool":"edit_sheets","op":"place","sheet":"$0.sheet","view":"$1.view"}]}, {"ops":[{"tool":"create_elements","op":"level","elevation":7000,"name":"Level 3"},{"tool":"create_elements","op":"wall","level":"$0","points":[[0,0],[12000,0]],"type":"Generic - 200mm"},{"tool":"place_family","op":"place","type":"Single-Flush: 0915 x 2134mm","at":[6000,0],"level":"$0","host":"$1"}]}], { help: "One undo step, all or nothing. '$0' = first id of op 0, '$0.ids' all ids, '$1.type' a named output, '$prev' the previous op. Lifecycle ops (open/save/sync/close/export) are refused." }),
+    "": op("ops", "name,doc,preview,confirm,units", M, [{"ops":[{"tool":"edit_sheets","op":"create","number":"A201","name":"Sections"},{"tool":"edit_views","op":"create","kind":"section","start":[0,4000],"end":[12000,4000]},{"tool":"edit_sheets","op":"place","sheet":"$0.sheet","view":"$1.view"}]}, {"ops":[{"tool":"create_elements","op":"level","elevation":7000,"name":"Level 3"},{"tool":"create_elements","op":"wall","level":"$0","points":[[0,0],[12000,0]],"type":"Generic - 200mm"},{"tool":"place_family","op":"place","type":"Single-Flush: 0915 x 2134mm","at":[6000,0],"level":"$0","host":"$1"}]}], {
+      help: "One undo step, all or nothing. '$0' = first id of op 0, '$0.ids' all ids, '$0.ids[1]' one of them, '$1.type' a named output, '$prev' the previous op, '$$' a literal $. Units and doc apply to the whole set. Lifecycle ops (open/save/sync/close/export, undo, run_csharp) are refused; ops that always need the user's OK make the whole set NOT APPLIED once.",
+      errors: ["INVALID_ARGS", "UNKNOWN_OP", "REVIT_TRANSACTION_ROLLED_BACK", "CONFIRM_STALE", "NOT_FOUND", "UNSUPPORTED_VERSION"],
+    }),
   },
 };
