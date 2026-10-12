@@ -1,75 +1,126 @@
 # Architecture
 
-`revit-mcp-next` uses a two-process architecture.
+```
+Codex / Claude --stdio MCP--> broker (node; one process per client session)
+                                 | catalog-driven tools, lenient input, text results, targeting, jobs
+                                 | discovers Revit through <home>\instances\r<year>-<pid>-<6hex>.json + .lock
+                                 v  protocol v3: length-prefixed JSON frames over local named pipes, token auth
+                  Revit 2024 (net48) / Revit 2027 (net10) -> RevitMcpNext.Loader.dll -> payload RevitMcpNext.Addin.dll
+                     primary pipe  -> request queue -> ExternalEvent/Idling -> OperationRegistry -> handlers (UI thread)
+                     control pipe  -> hello, snapshot, health, cancel, results, jobs, dialogs, press (no UI thread)
+```
+
+The repo has three layers, and one source of truth for the tool surface:
+
+| Path | What |
+|---|---|
+| `contracts/` | TypeScript contracts shared by the broker, CLI, installer and e2e: the tool catalog, op registry, ErrorCatalog, wire protocol, transaction naming and the home layout + settings schema |
+| `broker/` | The MCP server (`src/server.ts`, `src/framework`, `src/tools/<tool>.ts`), transport (`src/ipc`, `src/instances`), targeting, jobs, ledger, and the `revit-mcp-cli` (`src/cli`). Bundled by esbuild into `revit-mcp.mjs` and `revit-mcp-cli.mjs` |
+| `addin/` | `RevitMcpNext.Loader` (manifest target), `RevitMcpNext.Addin` (payload), `RevitMcpNext.Contracts` (wire types in C#), `RevitMcpNext.Scripting` (Roslyn host for opt-in `run_csharp`) |
+| `installer/`, `plugins/`, `e2e/` | Per-user installer, Codex/Claude skills plugins, the end-to-end harness |
+
+## The catalog
+
+`contracts/src/catalog/tools/<tool>.ts` holds one file per tool (38): the advertised JSON schema, and per op its
+required/optional params, examples, help text, error codes and registry metadata (kind, scope, transaction mode, blast
+rules, job behaviour, minimum Revit year, in-process and change_set eligibility). `npm run build` emits
+`artifacts/catalog/catalog.json` and the exact `tools/list` JSON.
+
+- The broker serves `tools/list` verbatim from it and validates arguments itself (permissive SDK validator), so a
+  small model's sloppy input is normalized instead of rejected.
+- `scripts/build-addin.ps1` embeds `catalog.json` into the add-in. At startup the add-in checks that every add-in key
+  has an `[Op("<key>")]` handler and every handler has a key. The catalog hash ties a broker build to an add-in build.
+- `help`, the e2e coverage gate and the generated docs ([tools.md](tools.md)) read the same file.
+
+Keys are `<tool>.<op>` (`create_elements.wall`, `list.levels`, `export.pdf`) or the tool name for tools without an op
+(`find_elements`, `capture`). There are 243 keys; 232 are served by the add-in, the rest by the broker (`status`,
+`set_target`, `help`, `job_status`, ...) or the control pipe (`ui.dialogs`, `ui.press`).
 
 ## Broker
 
-The broker is launched by MCP clients over stdio. It owns:
+One broker process runs per client session (Codex and Claude each start their own). Per call:
 
-- MCP `2026-07-28` and supported legacy protocol negotiation through the TypeScript SDK v2 stdio server.
-- Tool registration and annotations.
-- Input validation.
-- Output shaping and token budgets.
-- Pagination. MCP resource handles are planned for larger export surfaces but are not part of the current broker contract.
-- Client-specific startup and diagnostics.
+1. **Normalize** the arguments (`framework/normalize.ts`): camelCase to snake_case, scalars to arrays, unit strings
+   (`"3.5 m"`, `12'6"`) to mm, enum synonyms, ranges clamped. Unknown params give `warn: PARAM_IGNORED`; a missing
+   requirement gives `INVALID_ARGS` with the op's example filled with the caller's values.
+2. **Resolve the target document** (`targeting/`): the session pins the first doc it uses and every result names it
+   (`- doc: Tower_A (Revit 2024)`). `set_target`, opening or activating a doc re-pin explicitly; a write after the user
+   switched projects under an automatic pin returns `TARGET_CHANGED` with nothing written.
+3. **Expand short ids**: `r#` handles (element sets from `find_elements` or a write), `last`, `selection`. Short ids
+   (`#n`, `r#`, `p#`, `c#`, `w#`, `j#`) are allocated by the broker and never cross the pipe.
+4. **Send one frame** to the add-in of the right Revit instance (`ipc/PipeClient.ts`) with a ULID requestId, the auth
+   token, the doc ref and the remaining time budget. Reads run in parallel (limiter + coalescer); a read that waits
+   behind a long write or a native operation fails fast with `REVIT_BUSY` after about 8 s instead of hanging.
+5. **Render** the text result (`framework/render.ts`): status line, notices, warnings, one JSON line, `more:` and
+   `next:`; errors get a `fix:` rendered from the ErrorCatalog template, never from add-in free text.
 
-Modern MCP connections are sessionless at the public protocol layer. The broker still uses explicit request IDs, preview IDs, document fingerprints, cursors, and a private bridge session ID because these values protect Revit writes and recover uncertain local IPC outcomes. Static tool, prompt, and resource discovery is deterministic and privately cacheable for five minutes. Live Revit reads and writes are never cached by this policy.
-
-The broker never references Autodesk DLLs and never calls the Revit API.
+Every call answers within the budget (`callBudgetMs`, 50 s). Work that takes longer continues as a job (`j#`); a write
+still running at the budget returns `WRITE_STILL_RUNNING w#`. Write outcomes go to the add-in ledger
+(`<home>\ledger\<instanceId>.jsonl`) and the broker's in-flight journal (`<home>\state\inflight`), so a broker that
+crashed or restarted can report `RECOVERED_WRITE` instead of guessing.
 
 ## Add-in
 
-The Revit add-in is loaded in-process by Revit. It owns:
+The manifest points at `RevitMcpNext.Loader.dll`. The loader resolves the home (`REVIT_MCP_NEXT_HOME`, else its own
+location), reads `addin\<year>\current.json`, loads that payload's `RevitMcpNext.Addin.dll` and forwards
+startup/shutdown. On any failure it writes `logs\loader-<year>.log` and lets Revit start normally. This is what lets the
+installed build, the e2e build and developer builds coexist on one PC.
 
-- Local IPC listener.
-- Request queue.
-- One `ExternalEvent` dispatcher.
-- Revit API reads/writes.
-- Transaction and failure handling.
-- Queue, ExternalEvent, and preview-token diagnostics surfaced through `revit.status`.
-- A bounded add-in-process request-outcome ledger for at-most-once write handling and response recovery.
+Inside the payload:
 
-The add-in never writes to stdout and never opens modal dialogs for automation paths.
+- **Ipc**: `NamedPipeHost` hosts the primary pipe `revit-mcp-next-<instanceId>` (16 instances) and the control pipe
+  `revit-mcp-next-<instanceId>-control` (4). The pipe ACL admits the current Windows user only, and every frame except
+  `hello` must carry the token from `<home>\config\auth.env`. `RuntimeInstanceRegistration` writes
+  `<home>\instances\<instanceId>.json` (a mirror of the document snapshot) and holds the `.lock` file while Revit runs.
+- **Runtime**: `RevitRequestQueue` + `ExternalEventPump` bring requests onto Revit's UI thread (ExternalEvent with a
+  WM_NULL wake-up and an Idling fallback). `DocumentRegistry` keeps the document snapshot (docs, keys, levels,
+  selection, generations), the change ring behind `get_changes`, per-element stamps for confirm tokens and the
+  transaction journal behind `undo`. `DialogPolicy` + `DialogUia` handle Revit dialogs. `JobRunner` runs long ops as
+  jobs in steps.
+- **Core**: `Dispatcher` and `OperationRegistry` bind keys to `[Op]` handlers. `ChangeEngine` runs every write in a
+  `WriteScope` (a TransactionGroup with per-op Transactions and `FailureCapture`, so warnings come back in the result
+  instead of as dialogs). `TempScope` is the always-rolled-back variant used by `preview:true`, capture and probes.
+  Transaction names follow one naming table (`MCP <writeTag> <tool>.<op>`), shared with `contracts/src/naming.ts`.
+- **Domains**: the handlers, one folder per area (Reads, Model, Modify, Views, Sheets, Annotation, Schedules,
+  Families, Mep, Structure, Documents, Worksharing, Links, Export, Delivery, Visual, Ui, Undo, Code, TestOps, Dev).
+- **Integration**: `RevitMcpInProcessBridge` lets pyRevit and Dynamo call read and non-destructive keys on the UI
+  thread without the pipe ([../integrations](../integrations/README.md)).
 
-## IPC
+## Write pipeline
 
-The intended IPC is Windows named pipes with length-prefixed JSON frames:
+1. The add-in executes the op inside a WriteScope and records created, modified and deleted elements.
+2. It evaluates the blast rules from `settings.json` `confirm.*` (more than 20 deletions including dependents, more
+   than 200 existing elements modified, more than 500 created) and the always-confirm cases (file overwrite, closing
+   with unsaved changes, opening a central, sync, coordinates, link removal, model delivery, C# commit, a dialog button
+   other than Cancel/Close).
+3. If a rule triggers and the call had no confirm token, the group is rolled back and the broker stores the plan under
+   a 6-character token: `NOT APPLIED - needs the user's OK`, with `next: ask the user, then <tool> {"op":...,"confirm":"K7QM2X"}`.
+   A confirm call re-runs the stored args; it fails with `CONFIRM_STALE` only if an affected element changed.
+4. Otherwise the group is committed as one undo step. The result carries ids, warnings, an undo hint, a handle `r#`
+   and a write id `w#`.
 
-```text
-uint32_be payload_length
-utf8_json_payload
+`change_set` runs up to 100 ops in one WriteScope (one undo step, all or nothing) with `$0`/`$prev` references.
+`undo` posts Revit's own Undo for this session's writes and verifies it in the transaction journal.
+
+## Home
+
+```
+<home>\                                  default %USERPROFILE%\.revit-mcp-next
+  .revit-mcp-next-home  install.json     marker, installer receipt
+  runtime\node.exe                       Node 24 (copied by the installer)
+  broker\revit-mcp.mjs  revit-mcp-cli.mjs  build-info.json
+  addin\<year>\loader\<id>\RevitMcpNext.Loader.dll      manifest target
+  addin\<year>\<payloadId>\...           payload (scripting\ = Roslyn, opt-in)
+  addin\<year>\current.json              active payload
+  config\auth.env  config\settings.json  token (user-only ACL), settings
+  instances\  ledger\  jobs\  state\inflight\
+  logs\  captures\  exports\  recipes\  plugins\  support\
 ```
 
-The broker and add-in exchange the canonical camelCase bridge envelope over this framing. The add-in preserves request IDs, validates `bridgeProtocolVersion`, and returns compact structured data or structured bridge errors. The JSON wire key remains `protocolVersion` for compatibility. This private version is independent of the negotiated MCP protocol version.
+`contracts/src/home.ts` and `addin/RevitMcpNext.Addin/Runtime/McpHome.cs` implement this layout and the settings
+schema; the installer, doctor and e2e use the TypeScript module.
 
-Each running Revit add-in gets a stable runtime instance ID and unique normal/control pipes named from the configured base pipe. It publishes only safe connection metadata under `%LOCALAPPDATA%\RevitMcpNext\instances`; authentication tokens are never written to these registrations. The broker ignores/removes stale registrations and maintains one bridge client per live instance. If no current registration exists, it retains the legacy base-pipe path for an older single-instance add-in.
+## Design record
 
-`revit.bridge_health`, queued cancellation, and request-result lookup use the selected instance's control pipe, so they remain available when normal workers are occupied or stalled. Mutation requests are fingerprinted and tracked by broker process session ID and request ID. If the broker loses a mutation response, it asks that same instance's ledger for the terminal result and never replays the original write. The guarantee is bounded to the lifetime of the current add-in process and ledger retention window.
-
-The MCP broker owns an in-memory target store scoped to its generated session ID. An explicit target contains runtime `instanceId`, `documentFingerprint`, and document generation. The router injects it into every document-scoped request. Multiple open documents require selection, and a missing/closed target fails without falling back to Revit's active tab. Preview tokens are keyed and validated by MCP session, runtime instance, document fingerprint, generation, and exact change-set hashes.
-
-Queued Revit responses expose optional `queueWaitMs` and `revitExecutionMs` phase metrics. These separate queue pressure from time spent on the Revit external-event thread while preserving the existing operation-local `elapsedMs`.
-
-Windows installs provision a per-install pipe auth token in `%LOCALAPPDATA%\RevitMcpNext\config\auth.env`. The generated MCP launcher reads that file and exports `REVIT_MCP_NEXT_AUTH_TOKEN` before starting the broker. The broker forwards the token in the bridge envelope, and the add-in enforces it when `REVIT_MCP_NEXT_AUTH_TOKEN`, `REVIT_MCP_NEXT_AUTH_CONFIG`, or the default auth config is available. The token must not be logged.
-
-## Safety Boundaries
-
-- All writes must go through preview/apply.
-- Preview tokens are bound to the originating broker process session ID, active document generation, and canonical typed operation payload.
-- Reads need no transaction.
-- Writes use one explicit named transaction or a transaction group.
-- No arbitrary code execution in normal mode.
-- Large current-contract results are paginated and bounded. MCP resource handles are reserved for future large export surfaces.
-- Read/analysis tools return bounded structured data for current views, sheets, schedules, active-view elements, selection, model statistics, model-readiness preflights, material quantities, catalogs, rooms, and custom queries.
-- Current end-to-end write handlers cover `set_parameter`, `create_level`, `create_wall`, `create_grid`, `create_floor`, `create_room`, `place_family_instance`, guarded `load_family`, `create_sheet`, `place_view_on_sheet`, `create_schedule`, `add_schedule_field`, `place_schedule_on_sheet`, `create_text_note`, `tag_room`, `tag_element`, `move_element`, `rotate_element`, `copy_element`, `change_element_type`, `rename_element_type`, `duplicate_element_type`, `set_element_pinned`, and guarded `delete_element`. The direct `revit.create_project_from_template` setup tool creates disposable `.rvt` projects from local `.rte` templates for smoke fixtures; it is intentionally outside the preview/apply edit path.
-- `revit.cancel_request` uses the reserved control pipe and atomically cancels only requests that are still queued. Running Revit API work is reconciled through the request-outcome ledger because interrupting an active Revit transaction is not safe.
-
-## External Automation Integrations
-
-Claude and Codex enter through the MCP broker over stdio. Plain Python processes can do the same through `integrations/python/revit_mcp_next_client.py`.
-
-The installed `revitctl.cmd` is a lower-level bridge CLI for debugging, support, and scripted CI smoke checks. It reuses the same named-pipe bridge contract and auth config as the MCP broker, but it is not the primary agent interface. MCP remains the "agent brain socket" because it exposes typed tools, descriptions, annotations, and output schemas.
-
-pyRevit and Dynamo run inside Revit, so their examples use the add-in's public in-process bridge through `integrations/python/revit_mcp_next_inprocess.py`. That path shares the same bounded Revit dispatcher as the named-pipe route but does not queue through `ExternalEvent`, avoiding a common deadlock when a Revit-hosted script waits synchronously for work that Revit cannot process until the script returns.
-
-Do not call the add-in named pipe directly from pyRevit or Dynamo. Direct pipe use from an in-process script can deadlock and bypasses the stable integration helpers.
+`docs/design/SPEC.md` is the historical design specification of the 0.4 overhaul. The code is the source of truth
+where they differ.
