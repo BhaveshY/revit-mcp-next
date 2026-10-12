@@ -1,6 +1,11 @@
-# SPEC: revit-mcp-next overhaul (authoritative implementation spec)
+# SPEC: revit-mcp-next overhaul (historical design)
 
-Status: normative. Date 2026-09-30. Synthesized from D1 (tool catalog), D2 (reliability), D3 (add-in capabilities), D4 (integration and e2e), the critic review (37 findings, all resolved in §19), and the investigation files. The repo is at HEAD `5406155`.
+> **Historical design; the code is the source of truth.** This is the design specification the 0.4 overhaul was built
+> from (waves 1-3, September-October 2026). Where it and the code differ, the code wins: `contracts/` for the tool
+> catalog, op registry, errors and home layout, `broker/` and `addin/` for behaviour, `e2e/` for what is verified. For
+> current documentation start at the [README](../../README.md) and [docs/architecture.md](../architecture.md).
+
+Status: historical (was normative during the overhaul). Date 2026-09-30. Synthesized from D1 (tool catalog), D2 (reliability), D3 (add-in capabilities), D4 (integration and e2e), the critic review (37 findings, all resolved in §19), and the investigation files. The repo is at HEAD `5406155`.
 
 ## 0. How to use this spec
 
