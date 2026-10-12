@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "revit-mcp-next": {
-      "command": "cmd",
-      "args": ["/c", "C:\\Users\\YOUR_USER\\AppData\\Local\\RevitMcpNext\\launch-revit-mcp-next.cmd"],
-      "env": {}
-    }
-  }
-}
