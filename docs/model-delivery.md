@@ -29,8 +29,8 @@ model_delivery {"op":"save_recipe","recipe":{...}}        -> keep the approved d
 4. **execute** takes only the confirm token; the stored plan is applied. It refuses (`REVIT_REFUSED`, reason `SOURCE_DOCUMENT_OPEN`) while a
    source is open in this Revit, re-checks the source fingerprints (`CONFIRM_STALE` if a source changed since the preview) and runs as a
    job, one phase per step, so other calls still get through.
-5. **save_recipe** stores the recipe after a successful delivery. `get_recipe {"project":...}` and `list_recipes`
-   read the library.
+5. **save_recipe** stores the recipe after a successful delivery.
+   `model_delivery {"op":"get_recipe","project":"P2026-017"}` and `model_delivery {"op":"list_recipes"}` read the library.
 
 ## What execute does
 

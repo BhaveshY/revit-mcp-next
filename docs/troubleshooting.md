@@ -235,5 +235,5 @@ Notices the add-in adds to single ops (also information only):
 | `LOCAL_SAVED` | `manage_document save` | A workshared doc: only the local file was saved; `worksharing {"op":"sync"}` sends the changes to central. |
 | `UNDO_CLEARED` | `worksharing sync`, `reload_latest` | Revit cleared its undo history; `undo` cannot step back over this point. |
 | `UNSYNCED_KEPT` | `worksharing relinquish` | Elements changed since the last sync stay borrowed until the next sync. |
-| `SAVE_AS_CENTRAL` | `worksharing enable` | Worksharing is on, but the doc has no file yet: save it once with `manage_document {"op":"save_as","as_central":true}` to create the central model. |
+| `SAVE_AS_CENTRAL` | `worksharing enable` | Worksharing is on, but the doc has no file yet: save it once with `manage_document {"op":"save_as","path":"<central .rvt path>","as_central":true}` to create the central model. |
 | `GBXML_BUILDING_ELEMENTS` | `export gbxml` | No placed rooms or spaces: the energy model is built from building elements (slower). |
