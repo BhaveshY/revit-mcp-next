@@ -376,6 +376,8 @@ if (-not $DryRun -and -not $SkipDoctor) {
 
 $failed = @($steps | Where-Object { $_.result -eq "failed" })
 $ok = $failed.Count -eq 0
+$clientNames = @{ "codex" = "Codex (quit and reopen the desktop app, or start a new CLI session)"; "claude" = "Claude Code"; "claude-desktop" = "Claude Desktop" }
+$restartNext = if ($clientList.Count) { "Restart so the 'revit' server loads: $(($clientList | ForEach-Object { $clientNames[$_] }) -join '; ')." } else { "No AI client was registered; rerun with -Clients codex,claude (see docs\clients.md)." }
 $summary = [ordered] @{
     ok = $ok
     dryRun = [bool] $DryRun
@@ -389,9 +391,9 @@ $summary = [ordered] @{
     warnings = $warnings.ToArray()
     doctor = if ($doctor) { [ordered] @{ ok = $doctor.ok; fails = $doctor.fails; warns = $doctor.warns } } else { $null }
     next = @(
-        "Restart Codex (desktop app or CLI session) and Claude Code so they load the 'revit' server.",
+        $restartNext,
         "Start Revit $($years -join ' / ') normally; the first start may ask once to load the add-in (choose Always Load).",
-        "Check: `"$homeNode`" `"$homeCli`" doctor"
+        "Check (PowerShell): & `"$homeNode`" `"$homeCli`" doctor"
     )
 }
 
