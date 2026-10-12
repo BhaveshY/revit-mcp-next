@@ -251,6 +251,6 @@ Warnings never fail a call: REVIT_WARNING, REVIT_DIALOG_ANSWERED, VALUE_CLAMPED,
 | C# on the Revit API (opt-in, last resort) | `run_csharp {"code":"...","mode":"read"}` |
 <!-- skill-tool-map:end -->
 
-Help topics: `help {"topic":"targeting"}`, `units`, `selectors`, `confirm`, `paging`, `jobs`, `images`, `errors`, `dialogs`, `change_set`, `run_csharp`, `recipe`, `profiles`, and workflows `workflow:audit`, `workflow:selection-update`, `workflow:sheet-planning`, `workflow:family-placement`, `workflow:room-layout`, `workflow:visual-check`, `workflow:family-edit`, `workflow:documentation`.
+Help topics: `help {"topic":"targeting"}`, `units`, `selectors`, `confirm`, `paging`, `jobs`, `images`, `errors`, `dialogs`, `change_set`, `run_csharp`, `recipe`, `profiles`, `setup` (connection, doctor, missing tools), and workflows `workflow:audit`, `workflow:selection-update`, `workflow:sheet-planning`, `workflow:family-placement`, `workflow:room-layout`, `workflow:visual-check`, `workflow:family-edit`, `workflow:documentation`.
 
 If the server runs the 17-tool core profile, tools such as `edit_views` or `export` are missing: reads still work through `read_many` and non-lifecycle writes through `change_set` (`help {"topic":"profiles"}`).
