@@ -220,6 +220,18 @@ export const TOPICS: HelpTopic[] = [
     ),
   },
   {
+    name: "setup",
+    title: "Connection and setup",
+    aliases: ["install", "doctor", "connection", "troubleshooting"],
+    text: lines(
+      "status says no Revit with the add-in is running: not an error. Ask the user to start Revit 2024 or 2027 and open the model, then call status again. Never start Revit yourself.",
+      "Revit is open but not listed: the add-in did not load. Ask the user to run the doctor (<home>\\runtime\\node.exe <home>\\broker\\revit-mcp-cli.mjs doctor) and, if Revit asked about the add-in, to choose Always Load.",
+      "The revit tools are missing or fail with a transport error: stop the Revit part of the task. Codex: start a new thread or restart the app (codex mcp list shows revit). Claude Code: /mcp and reconnect revit, or restart.",
+      "Installing, upgrading and enabling code execution are the user's actions (installer\\install.ps1 from a normal PowerShell). Never edit settings.json, the client configs or the add-in manifests yourself.",
+      "<home> is %USERPROFILE%\\.revit-mcp-next unless REVIT_MCP_NEXT_HOME says otherwise. Logs are in <home>\\logs; revit-mcp-cli support writes a zip without tokens."
+    ),
+  },
+  {
     name: "change_set",
     title: "Change sets and references",
     aliases: ["refs", "batch"],
@@ -238,8 +250,9 @@ export const TOPICS: HelpTopic[] = [
       "run_csharp exists only when the user enabled it locally (enableCodeExecution in the revit-mcp-next settings.json). Only the user changes that setting; an agent must never edit settings.json or enable code execution. Prefer a tool whenever one fits.",
       "code is a C# method body with doc, uidoc, app, args (IDictionary) and log(object); return a value. Only framework, RevitAPI and RevitAPIUI types are available.",
       "mode read: always rolled back; creating Transactions is refused. mode dry_run (default): runs in a rolled-back group and reports changes, warnings and a confirm token. mode commit: {\"mode\":\"commit\",\"confirm\":\"<token>\"} applies exactly the dry-run code and args (not re-sent) after the user agreed; it is one undo step.",
-      "Refused always: processes, network, registry, reflection emit, threads, file writes, PostCommand, UI automation. Refused in read/dry_run: save, close, sync, export, open, EditFamily and other lifecycle APIs.",
-      "timeout 1-45 s (default 30). Compile errors report line:col of your code. Every run is audited in <home>\\logs\\code-exec-audit.jsonl."
+      "Refused always (CODE_DENIED_API): processes, network, registry, reflection emit, threads, file writes, PostCommand, UI windows. Refused in read and dry_run, and in commit unless the user allowed unsafe APIs: save, close, sync, export, open, EditFamily and other lifecycle APIs.",
+      "If the user turned on the consent prompt, the first run in a Revit session waits for them to click Allow in Revit: the call returns a job; ask the user to answer the prompt, then job_status. Block gives CODE_EXECUTION_DECLINED.",
+      "timeout 1-45 s (default 30). Compile errors report line:col of your code. Every run is audited in <home>\\logs\\code-exec-audit.jsonl (the source in <home>\\logs\\code\\)."
     ),
   },
   {
