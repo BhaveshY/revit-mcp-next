@@ -13,7 +13,7 @@ same harness runs from a repo checkout and from an extracted release zip.
 From the extracted release folder (normal Windows PowerShell, not elevated, not inside the Codex or Claude app):
 
 ```powershell
-.\runtime\node.exe e2e\run.mjs --profile surface                            # no Revit, ~20 s
+.\runtime\node.exe e2e\run.mjs --profile surface                            # no Revit, ~10 s
 .\runtime\node.exe e2e\run.mjs --years 2024,2027 --launch --profile quick    # ~25 min per year
 .\runtime\node.exe e2e\run.mjs --years 2024,2027 --launch --profile full     # ~2 h, unattended
 ```

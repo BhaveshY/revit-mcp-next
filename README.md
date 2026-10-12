@@ -74,7 +74,7 @@ Details, approval modes and output limits: [docs/clients.md](docs/clients.md).
 All tests run against real Revit with throwaway models; there are no unit tests. From the extracted release folder:
 
 ```powershell
-.\runtime\node.exe e2e\run.mjs --profile surface                          # no Revit, about 20 s
+.\runtime\node.exe e2e\run.mjs --profile surface                          # no Revit, about 10 s
 .\runtime\node.exe e2e\run.mjs --years 2024,2027 --launch --profile full   # starts Revit itself, about 2 h
 ```
 
