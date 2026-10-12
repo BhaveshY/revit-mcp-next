@@ -98,4 +98,4 @@ The user closes Revit, then in the package folder:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\uninstall.ps1 -DryRun
 ```
-Show the summary, and after the user agrees run it without `-DryRun`. If the script rejects `-DryRun`, explain what it will remove (the home, the manifests, the `revit` entries in the Codex and Claude configs) and run it only after the user agrees. Then restart the AI app.
+Show the summary, and after the user agrees run it without `-DryRun`. It removes the `revit` entries, the skills plugin and the AGENTS.md block from the Codex and Claude configs (re-enabling a plugin the installer disabled), the Revit manifests and trust entries it added, and the runtime, server and add-in files; `config` and `logs` stay. `-Purge` deletes the whole home instead. Then restart the AI app.
