@@ -6,89 +6,42 @@ import os
 import sys
 
 
-def candidate_python_dirs():
+def helper_dirs(here=None):
+    """REVIT_MCP_NEXT_INTEGRATIONS, then integrations/python above this file, then <home>/integrations/python."""
     dirs = []
-    auth_config = os.environ.get("REVIT_MCP_NEXT_AUTH_CONFIG")
-    if auth_config:
-        dirs.append(os.path.join(os.path.dirname(os.path.dirname(auth_config)), "integrations", "python"))
-
-    install_root = os.environ.get("REVIT_MCP_NEXT_INSTALL_ROOT")
-    if install_root:
-        dirs.append(os.path.join(install_root, "integrations", "python"))
-
-    current = os.path.abspath(os.path.dirname(__file__))
-    for _ in range(8):
-        candidate = os.path.join(current, "integrations", "python")
-        if os.path.exists(os.path.join(candidate, "revit_mcp_next_inprocess.py")):
-            dirs.append(candidate)
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        dirs.append(os.path.join(local_app_data, "RevitMcpNext", "integrations", "python"))
-
-    app_data = os.environ.get("APPDATA")
-    if app_data:
-        for year in ("2027", "2024", "2021"):
-            dirs.append(os.path.join(app_data, "Autodesk", "Revit", "Addins", year, "RevitMcpNext", "integrations", "python"))
-
+    explicit = os.environ.get("REVIT_MCP_NEXT_INTEGRATIONS")
+    if explicit:
+        dirs.append(explicit)
+    if here:
+        current = os.path.abspath(here)
+        for _ in range(8):
+            dirs.append(os.path.join(current, "integrations", "python"))
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    home = os.environ.get("REVIT_MCP_NEXT_HOME") or os.path.join(os.path.expanduser("~"), ".revit-mcp-next")
+    dirs.append(os.path.join(home, "integrations", "python"))
     return dirs
 
 
-def add_installed_python_client_to_path():
-    for python_dir in candidate_python_dirs():
-        if os.path.exists(os.path.join(python_dir, "revit_mcp_next_inprocess.py")):
-            if python_dir not in sys.path:
-                sys.path.insert(0, python_dir)
-            return python_dir
-    raise RuntimeError("Unable to find installed Revit MCP Next Python integration helper.")
+def add_helpers_to_path(module, here=None):
+    for folder in helper_dirs(here):
+        if os.path.exists(os.path.join(folder, module + ".py")):
+            if folder not in sys.path:
+                sys.path.insert(0, folder)
+            return folder
+    raise RuntimeError(
+        "revit-mcp-next Python helpers not found. Set REVIT_MCP_NEXT_INTEGRATIONS to the integrations/python folder "
+        "of the repo or release, or copy that folder to <home>/integrations/python (home: REVIT_MCP_NEXT_HOME or %USERPROFILE%/.revit-mcp-next)."
+    )
 
 
-def format_blocked_preview(preview):
-    changes = preview.get("changes") or []
-    messages = []
-    for change in changes:
-        message = change.get("message") or change.get("status") or "blocked"
-        messages.append("{0}: {1}".format(change.get("type") or "change", message))
-    return "\n".join(messages) or "Preview was not ready."
+add_helpers_to_path("revit_mcp_next_inprocess", os.path.dirname(__file__))
 
+from revit_mcp_next_inprocess import create_level  # noqa: E402
 
-add_installed_python_client_to_path()
-
-from revit_mcp_next_inprocess import apply_preview, preview_change_set, status  # noqa: E402
-
-
-stamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-status_response = status(__revit__)
-status_data = status_response.get("data") or {}
-active_document = status_data.get("activeDocument") or {}
-document_fingerprint = active_document.get("fingerprint")
-expected_generation = active_document.get("generation")
-
-change_set = {
-    "documentFingerprint": document_fingerprint,
-    "expectedGeneration": expected_generation,
-    "transactionName": "pyRevit MCP create level {0}".format(stamp),
-    "operations": [
-        {
-            "id": "pyrevit-create-level",
-            "type": "create_level",
-            "name": "pyRevit MCP {0}".format(stamp),
-            "elevation": {"value": 9000, "unit": "mm", "system": "metric"},
-        }
-    ],
-}
-
-preview = preview_change_set(__revit__, change_set)
-if not preview.get("ready"):
-    raise RuntimeError(format_blocked_preview(preview))
-
-apply_result = apply_preview(__revit__, change_set, preview)
-
-print(json.dumps({
-    "preview": preview,
-    "apply": apply_result,
-}, indent=2, sort_keys=True))
+name = "pyRevit MCP {0}".format(datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S"))
+preview = create_level(__revit__, name, 9000, preview=True)  # noqa: F821
+applied = create_level(__revit__, name, 9000)  # noqa: F821
+print(json.dumps({"preview": preview.get("summary"), "apply": applied.get("summary"), "changes": applied.get("changes")}, indent=2, sort_keys=True))

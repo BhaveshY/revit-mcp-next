@@ -1,3 +1,20 @@
+"""Stdlib MCP stdio client for plain Python running OUTSIDE Revit (scripts, notebooks, schedulers).
+
+It starts the installed server exactly like Codex and Claude do:
+    <home>\\runtime\\node.exe <home>\\broker\\revit-mcp.mjs     env REVIT_MCP_NEXT_HOME=<home>
+and calls the same 37 tools. Results are the server's compact text (first line "<STATUS>: <summary> - doc: ...",
+then notice:/warn: lines, one JSON line, more:/next:/fix: lines); ToolResult splits them for you.
+
+    from revit_mcp_next_client import RevitMcpClient
+    with RevitMcpClient() as revit:
+        print(revit.call("status").text)
+        walls = revit.call("find_elements", {"category": "Walls", "count_only": True})
+        print(walls.status, walls.json)
+
+Do not use it from inside Revit (pyRevit, Dynamo): it would wait on Revit's own UI thread. Use
+revit_mcp_next_inprocess.py there. Do not call the add-in's named pipes yourself; the broker owns auth and targeting.
+"""
+
 from __future__ import print_function
 
 import json
@@ -9,44 +26,88 @@ import time
 
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+CLIENT_NAME = "revit-mcp-next-python"
+CLIENT_VERSION = "0.4.0"
 
 
 class RevitMcpError(RuntimeError):
     pass
 
 
-class RevitMcpToolError(RevitMcpError):
-    def __init__(self, tool_name, result):
-        self.tool_name = tool_name
-        self.result = result
-        message = "MCP tool failed: {0}".format(tool_name)
-        content = result.get("content") if isinstance(result, dict) else None
-        if content:
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(item.get("text") or "")
-            if text_parts:
-                message = message + "\n" + "\n".join(text_parts)
-        RuntimeError.__init__(self, message)
+class ToolResult(object):
+    """One tools/call result. status: "ok", "not_applied", "running" or "error"; code: the ERROR code."""
+
+    def __init__(self, tool, result):
+        self.tool = tool
+        self.raw = result or {}
+        self.is_error = bool(self.raw.get("isError"))
+        texts, images = [], []
+        for item in self.raw.get("content") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text":
+                texts.append(item.get("text") or "")
+            elif item.get("type") == "image":
+                images.append({"mimeType": item.get("mimeType"), "data": item.get("data")})
+        self.text = "\n".join(texts)
+        self.images = images
+        lines = [line for line in self.text.splitlines() if line.strip()]
+        self.first_line = lines[0] if lines else ""
+        self.status, self.code = _classify(self.first_line, self.is_error)
+        self.json = None
+        self.next = []
+        self.fix = []
+        self.more = None
+        for line in lines[1:]:
+            stripped = line.strip()
+            if self.json is None and stripped.startswith("{"):
+                try:
+                    self.json = json.loads(stripped)
+                    continue
+                except ValueError:
+                    pass
+            if stripped.startswith("next:"):
+                self.next.append(stripped[5:].strip())
+            elif stripped.startswith("fix:"):
+                self.fix.append(stripped[4:].strip())
+            elif stripped.startswith("more:"):
+                self.more = stripped[5:].strip()
+
+    @property
+    def ok(self):
+        return self.status == "ok"
+
+    def __repr__(self):
+        return "<ToolResult {0} {1}: {2}>".format(self.tool, self.status, self.first_line[:120])
+
+
+def _classify(first_line, is_error):
+    if first_line.startswith("ERROR"):
+        head = first_line[len("ERROR"):].strip()
+        code = head.split(":", 1)[0].strip() or None
+        return "error", code
+    if first_line.startswith("NOT APPLIED"):
+        return "not_applied", None
+    if first_line.startswith("running"):
+        return "running", None
+    if is_error:
+        return "error", None
+    return "ok", None
 
 
 class RevitMcpClient(object):
-    """Small stdlib MCP stdio client for plain Python outside Revit.
+    """Starts the revit-mcp-next broker over stdio and calls its tools."""
 
-    The client talks to the installed Revit MCP Next launcher. It does not call
-    the add-in named pipe directly; auth, broker policy, and tool schemas stay
-    in one place.
-    """
-
-    def __init__(self, launcher_path=None, command=None, timeout_seconds=60):
-        self.launcher_path = launcher_path
+    def __init__(self, home=None, command=None, env=None, timeout_seconds=130):
+        self.home = home or default_home()
         self.command = command
+        self.env = env
         self.timeout_seconds = timeout_seconds
+        self.server_info = None
+        self.instructions = None
         self._process = None
         self._next_id = 1
         self._stderr = []
-        self._stderr_thread = None
         self._initialized = False
 
     def __enter__(self):
@@ -59,158 +120,83 @@ class RevitMcpClient(object):
     def start(self):
         if self._process is not None:
             return
-
-        command = self.command or default_launcher_command(self.launcher_path)
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        command = self.command or default_command(self.home)
+        env = dict(os.environ)
+        env["REVIT_MCP_NEXT_HOME"] = self.home
+        if self.env:
+            env.update(self.env)
         self._process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=None,
-            creationflags=creationflags,
+            env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        self._stderr_thread = threading.Thread(target=self._drain_stderr)
-        self._stderr_thread.daemon = True
-        self._stderr_thread.start()
-        self.initialize()
+        thread = threading.Thread(target=self._drain_stderr)
+        thread.daemon = True
+        thread.start()
+        self._initialize()
 
-    def initialize(self):
-        if self._initialized:
-            return
-
+    def _initialize(self):
         result = self.request(
             "initialize",
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "revit-mcp-next-python", "version": "0.1.0"},
+                "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
             },
         )
-        negotiated = result.get("protocolVersion")
-        if not negotiated:
-            raise RevitMcpError("MCP server initialize response did not include protocolVersion.")
+        if not result.get("protocolVersion"):
+            raise RevitMcpError("The server's initialize response has no protocolVersion.")
+        self.server_info = result.get("serverInfo")
+        self.instructions = result.get("instructions")
         self.notify("notifications/initialized", {})
         self._initialized = True
 
     def list_tools(self):
-        result = self.request("tools/list", {})
-        return result.get("tools") or []
-
-    def call_tool(self, name, arguments=None):
         self.start()
-        result = self.request(
-            "tools/call",
-            {
-                "name": name,
-                "arguments": arguments or {},
-            },
-        )
-        if result.get("isError"):
-            raise RevitMcpToolError(name, result)
-        structured = result.get("structuredContent")
-        if isinstance(structured, dict) and "data" in structured:
-            return structured.get("data")
-        return result
+        return self.request("tools/list", {}).get("tools") or []
+
+    def call(self, tool, arguments=None):
+        """Calls a tool (bare name: "status", "find_elements", ...) and returns a ToolResult. Never raises for
+        ERROR results; check result.status / result.code and follow result.fix like a model would."""
+        self.start()
+        result = self.request("tools/call", {"name": tool, "arguments": arguments or {}})
+        return ToolResult(tool, result)
 
     def status(self):
-        return self.call_tool("revit.status", {})
+        return self.call("status")
 
-    def read_bundle(self, arguments=None):
-        return self.call_tool("revit.read_bundle", arguments or {})
+    def help(self, tool=None, op=None, topic=None):
+        args = {}
+        if tool:
+            args["tool"] = tool
+        if op:
+            args["op"] = op
+        if topic:
+            args["topic"] = topic
+        return self.call("help", args)
 
-    def list_documents(self, arguments=None):
-        return self.call_tool("revit.list_documents", arguments or {})
-
-    def get_levels(self, arguments=None):
-        return self.call_tool("revit.get_levels", arguments or {})
-
-    def get_views(self, arguments=None):
-        return self.call_tool("revit.get_views", arguments or {})
-
-    def get_sheets(self, arguments=None):
-        return self.call_tool("revit.get_sheets", arguments or {})
-
-    def get_schedules(self, arguments=None):
-        return self.call_tool("revit.get_schedules", arguments or {})
-
-    def get_schedule_fields(self, arguments=None):
-        return self.call_tool("revit.get_schedule_fields", arguments or {})
-
-    def get_current_view(self, arguments=None):
-        return self.call_tool("revit.get_current_view", arguments or {})
-
-    def get_current_view_elements(self, arguments=None):
-        return self.call_tool("revit.get_current_view_elements", arguments or {})
-
-    def get_selection(self, arguments=None):
-        return self.call_tool("revit.get_selection", arguments or {})
-
-    def analyze_model(self, arguments=None):
-        return self.call_tool("revit.analyze_model", arguments or {})
-
-    def get_model_readiness(self, arguments=None):
-        return self.call_tool("revit.get_model_readiness", arguments or {})
-
-    def get_model_context(self, arguments=None):
-        return self.call_tool("revit.get_model_context", arguments or {})
-
-    def get_material_quantities(self, arguments=None):
-        return self.call_tool("revit.get_material_quantities", arguments or {})
-
-    def get_warnings(self, arguments=None):
-        return self.call_tool("revit.get_warnings", arguments or {})
-
-    def get_rooms(self, arguments=None):
-        return self.call_tool("revit.get_rooms", arguments or {})
-
-    def query(self, arguments=None):
-        return self.call_tool("revit.query", arguments or {})
-
-    def describe_parameters(self, arguments=None):
-        return self.call_tool("revit.describe_parameters", arguments or {})
-
-    def catalog(self, arguments=None):
-        return self.call_tool("revit.catalog", arguments or {})
-
-    def preview_change_set(self, change_set):
-        return self.call_tool("revit.preview_change_set", change_set or {})
-
-    def apply_change_set(self, change_set):
-        return self.call_tool("revit.apply_change_set", change_set or {})
-
-    def apply_preview(self, change_set, preview):
-        apply_payload = dict(change_set or {})
-        apply_payload["previewId"] = preview.get("previewId")
-        apply_payload["confirm"] = True
-        for key in ("changeSetHash", "baseGeneration", "expiresAt"):
-            if preview.get(key) is not None:
-                apply_payload[key] = preview.get(key)
-        return self.apply_change_set(apply_payload)
+    def wait_job(self, job_id, poll_seconds=2.0, timeout_seconds=1800):
+        """Polls job_status until the job is no longer running; returns the last ToolResult."""
+        deadline = time.time() + timeout_seconds
+        while True:
+            result = self.call("job_status", {"id": job_id})
+            if result.status != "running" or time.time() > deadline:
+                return result
+            time.sleep(poll_seconds)
 
     def request(self, method, params=None):
         self._ensure_running()
         request_id = self._next_id
         self._next_id += 1
-        self._write_message(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": method,
-                "params": params or {},
-            }
-        )
+        self._write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}})
         return self._read_response(request_id)
 
     def notify(self, method, params=None):
         self._ensure_running()
-        self._write_message(
-            {
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params or {},
-            }
-        )
+        self._write({"jsonrpc": "2.0", "method": method, "params": params or {}})
 
     def close(self):
         process = self._process
@@ -219,16 +205,13 @@ class RevitMcpClient(object):
             return
         try:
             if process.stdin:
-                process.stdin.close()
+                process.stdin.close()  # the broker exits on stdin EOF
         except Exception:
             pass
-        try:
-            process.terminate()
-        except Exception:
-            pass
-        try:
-            wait_process(process, 2)
-        except Exception:
+        deadline = time.time() + 3
+        while process.poll() is None and time.time() < deadline:
+            time.sleep(0.05)
+        if process.poll() is None:
             try:
                 process.kill()
             except Exception:
@@ -245,15 +228,15 @@ class RevitMcpClient(object):
 
     def _ensure_running(self):
         if self._process is None:
-            raise RevitMcpError("MCP client is not started.")
+            raise RevitMcpError("The client is not started.")
         if self._process.poll() is not None:
-            stderr = self.stderr_text().strip()
-            suffix = "\n" + stderr if stderr else ""
-            raise RevitMcpError("MCP launcher exited with code {0}.{1}".format(self._process.returncode, suffix))
+            tail = self.stderr_text().strip()
+            raise RevitMcpError(
+                "The revit-mcp-next server exited with code {0}.{1}".format(self._process.returncode, ("\n" + tail) if tail else "")
+            )
 
-    def _write_message(self, message):
-        line = json.dumps(message, separators=(",", ":")) + "\n"
-        self._process.stdin.write(to_bytes(line))
+    def _write(self, message):
+        self._process.stdin.write(_to_bytes(json.dumps(message, separators=(",", ":")) + "\n"))
         self._process.stdin.flush()
 
     def _read_response(self, request_id):
@@ -264,20 +247,17 @@ class RevitMcpClient(object):
             if not raw:
                 time.sleep(0.02)
                 continue
-            line = to_text(raw).strip()
+            line = _to_text(raw).strip()
             if not line:
                 continue
             message = json.loads(line)
             if message.get("id") != request_id:
-                continue
+                continue  # notifications and server requests are ignored
             if "error" in message:
                 error = message.get("error") or {}
                 raise RevitMcpError("{0}: {1}".format(error.get("code"), error.get("message")))
             return message.get("result") or {}
-
-        stderr = self.stderr_text().strip()
-        suffix = "\n" + stderr if stderr else ""
-        raise RevitMcpError("Timed out waiting for MCP response id {0}.{1}".format(request_id, suffix))
+        raise RevitMcpError("No answer to request {0} within {1} s.".format(request_id, self.timeout_seconds))
 
     def _drain_stderr(self):
         try:
@@ -285,86 +265,49 @@ class RevitMcpClient(object):
                 chunk = self._process.stderr.readline()
                 if not chunk:
                     break
-                self._stderr.append(to_text(chunk))
-                if len("".join(self._stderr)) > 16000 and len(self._stderr) > 1:
+                self._stderr.append(_to_text(chunk))
+                while len(self._stderr) > 200:
                     self._stderr.pop(0)
         except Exception:
             pass
 
 
-def default_launcher_path():
-    discovery = read_client_discovery(required=False)
-    launcher_path = discovery.get("launcherPath") if isinstance(discovery, dict) else None
-    if launcher_path:
-        return launcher_path
-
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        raise RevitMcpError("LOCALAPPDATA is not set. Pass launcher_path explicitly.")
-    return os.path.join(local_app_data, "RevitMcpNext", "launch-revit-mcp-next.cmd")
+def default_home():
+    """REVIT_MCP_NEXT_HOME, else %USERPROFILE%\\.revit-mcp-next."""
+    explicit = os.environ.get("REVIT_MCP_NEXT_HOME")
+    if explicit:
+        return explicit
+    return os.path.join(os.path.expanduser("~"), ".revit-mcp-next")
 
 
-def default_client_discovery_path():
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        raise RevitMcpError("LOCALAPPDATA is not set. Pass discovery_path explicitly.")
-    return os.path.join(local_app_data, "RevitMcpNext", "config", "client-discovery.json")
+def default_command(home=None):
+    """[<home>\\runtime\\node.exe, <home>\\broker\\revit-mcp.mjs], the same command the installer registers."""
+    home = home or default_home()
+    node = os.path.join(home, "runtime", "node.exe")
+    bundle = os.path.join(home, "broker", "revit-mcp.mjs")
+    for path in (node, bundle):
+        if not os.path.exists(path):
+            raise RevitMcpError(
+                "{0} is missing. Install revit-mcp-next (installer\\install.ps1) or pass home=/command=.".format(path)
+            )
+    return [node, bundle]
 
 
-def read_client_discovery(discovery_path=None, required=True):
-    try:
-        path = discovery_path or default_client_discovery_path()
-    except RevitMcpError:
-        if required:
-            raise
-        return {}
-    if not os.path.exists(path):
-        if required:
-            raise RevitMcpError("Revit MCP Next client discovery was not found: {0}".format(path))
-        return {}
-    with open(path, "r") as handle:
-        return json.load(handle)
-
-
-def default_launcher_command(launcher_path=None):
-    launcher = launcher_path or default_launcher_path()
-    if not os.path.exists(launcher):
-        raise RevitMcpError("Revit MCP Next launcher was not found: {0}".format(launcher))
-    if os.name == "nt":
-        comspec = os.environ.get("ComSpec") or "cmd.exe"
-        return [comspec, "/d", "/s", "/c", '"{0}"'.format(launcher)]
-    return [launcher]
-
-
-def wait_process(process, timeout_seconds):
-    if hasattr(process, "wait"):
-        try:
-            return process.wait(timeout=timeout_seconds)
-        except TypeError:
-            deadline = time.time() + timeout_seconds
-            while time.time() < deadline:
-                code = process.poll()
-                if code is not None:
-                    return code
-                time.sleep(0.05)
-            raise RevitMcpError("process did not exit before timeout")
-
-
-def to_bytes(value):
-    if sys.version_info[0] < 3:
-        if isinstance(value, unicode):  # noqa: F821
-            return value.encode("utf-8")
-        return value
+def _to_bytes(value):
     if isinstance(value, bytes):
         return value
     return value.encode("utf-8")
 
 
-def to_text(value):
+def _to_text(value):
     if sys.version_info[0] < 3:
-        if isinstance(value, unicode):  # noqa: F821
-            return value
-        return value.decode("utf-8")
-    if isinstance(value, str):
-        return value
-    return value.decode("utf-8", "replace")
+        return value if isinstance(value, unicode) else value.decode("utf-8")  # noqa: F821
+    return value if isinstance(value, str) else value.decode("utf-8", "replace")
+
+
+if __name__ == "__main__":
+    # python revit_mcp_next_client.py [tool] [json-args]   e.g.  status   or   help '{"tool":"list"}'
+    tool_name = sys.argv[1] if len(sys.argv) > 1 else "status"
+    tool_args = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+    with RevitMcpClient() as client:
+        print(client.call(tool_name, tool_args).text)
