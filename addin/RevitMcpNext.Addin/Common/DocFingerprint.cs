@@ -6,8 +6,8 @@ using Autodesk.Revit.DB;
 
 namespace RevitMcpNext.Addin.Revit
 {
-    /// <summary>The protocol v2 document fingerprint, kept for the legacy helpers (model delivery, change-set hashing).</summary>
-    internal static class LegacyFingerprint
+    /// <summary>Short document fingerprint (title, path, session hash) used by targeting checks and model delivery.</summary>
+    internal static class DocFingerprint
     {
         public static string Compute(Document document)
         {

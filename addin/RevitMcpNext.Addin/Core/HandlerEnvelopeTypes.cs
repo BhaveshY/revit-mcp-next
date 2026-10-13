@@ -2,9 +2,9 @@ using System.Collections.Generic;
 
 namespace RevitMcpNext.Addin.Revit
 {
-    // Protocol v2 envelope types, kept only so the legacy per-op handlers (Domains/**, Serialization/**) keep
-    // compiling until the wave-2 lanes rewrite them onto RequestContext/ChangeContext. Nothing on the wire uses them;
-    // Legacy/LegacyAdapter.cs converts between them and protocol v3. Deleted in wave 3.
+    // Protocol v2 envelope types used by the old per-op read handlers (Domains/Reads/Handler.*.cs,
+    // Core/Handler.Responses.cs, Serialization/Handler.FieldSets.cs) and the paging/warning helpers they share.
+    // Nothing on the wire uses them; protocol v3 requests go through RequestContext/ChangeContext.
 
     internal sealed class LegacyRequest
     {

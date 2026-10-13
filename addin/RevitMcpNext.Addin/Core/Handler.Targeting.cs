@@ -168,7 +168,7 @@ namespace RevitMcpNext.Addin.Revit
 
         private static string ComputeDocumentFingerprint(Document document)
         {
-            return LegacyFingerprint.Compute(document);
+            return DocFingerprint.Compute(document);
         }
 
         private static View SafeActiveView(Document document)

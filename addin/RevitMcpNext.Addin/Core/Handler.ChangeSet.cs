@@ -101,43 +101,9 @@ namespace RevitMcpNext.Addin.Revit
             }
         }
 
-        private static string GetTransactionName(Dictionary<string, object> payload)
-        {
-            string name = GetString(payload, "transactionName");
-            return string.IsNullOrWhiteSpace(name) ? "Revit MCP Next change" : name.Trim();
-        }
-
-        private string ComputePreviewId(Document document, string transactionName, List<Dictionary<string, object>> operations)
-        {
-            string raw = _runtimeInstanceId + "|" + ComputeDocumentFingerprint(document) + "|" + transactionName + "|" + Canonicalize(operations);
-            return HashString(raw).Substring(0, 24);
-        }
-
         private static string ComputeChangeSetHash(object value)
         {
             return "sha256:" + HashString(Canonicalize(value));
-        }
-
-        private static string ComputePreviewChangeSetHash(
-            string documentFingerprint,
-            long generation,
-            string transactionName,
-            string operationsHash,
-            string changesHash)
-        {
-            return ComputeChangeSetHash(new Dictionary<string, object>
-            {
-                ["documentFingerprint"] = documentFingerprint,
-                ["baseGeneration"] = generation,
-                ["transactionName"] = transactionName,
-                ["operationsHash"] = operationsHash,
-                ["changesHash"] = changesHash
-            });
-        }
-
-        private static string FormatUtc(DateTimeOffset value)
-        {
-            return value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
         }
 
         private static string Canonicalize(object value)
