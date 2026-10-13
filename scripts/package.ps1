@@ -116,7 +116,7 @@ Copy-Into (Join-Path $repo "e2e") (Join-Path $stage "e2e")
 $noMaps = @("*.map", "*.d.ts")
 Copy-Into (Join-Path $repo "broker\dist") (Join-Path $stage "broker\dist") $noMaps
 Copy-Into (Join-Path $repo "broker\package.json") (Join-Path $stage "broker\package.json")
-foreach ($s in @("dev-install.ps1", "ensure-revit-addin-trust.ps1", "resolve-dotnet-sdk.ps1", "create-revit-project-from-template.ps1")) {
+foreach ($s in @("dev-install.ps1", "ensure-revit-addin-trust.ps1", "resolve-dotnet-sdk.ps1")) {
     if (Test-Path (Join-Path $repo "scripts\$s")) { Copy-Into (Join-Path $repo "scripts\$s") (Join-Path $stage "scripts\$s") }
 }
 Copy-Into (Join-Path $repo "addin\RevitMcpNext.Addin\RevitMcpNext.addin.template") (Join-Path $stage "addin\RevitMcpNext.Addin\RevitMcpNext.addin.template")

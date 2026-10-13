@@ -15,8 +15,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist",
-    "schemas"
+    "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -48,6 +47,10 @@
     "./home": {
       "types": "./dist/home.d.ts",
       "default": "./dist/home.js"
+    },
+    "./delivery": {
+      "types": "./dist/delivery.d.ts",
+      "default": "./dist/delivery.js"
     },
     "./catalog": {
       "types": "./dist/catalog/index.d.ts",

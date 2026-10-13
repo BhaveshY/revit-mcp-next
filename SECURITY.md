@@ -90,8 +90,7 @@ The e2e test ops (`test.sleep_ui`, `test.show_dialog`, `test.enter_command`, `te
 
 ## Release boundaries
 
-- Release zips are unsigned unless `scripts\sign-release.ps1` signed them with a real certificate. Do not describe an
-  unsigned or dev-signed build as a signed release.
+- Release zips and the add-in assemblies are unsigned. Do not describe a release as signed.
 - Run the e2e tests and demos only on disposable models. The harness creates its own projects under
   `<e2e home>\runs\` and refuses writes elsewhere.
 - `undo` covers this session's writes only; it is no backup. Keep project files under your normal backup regime.

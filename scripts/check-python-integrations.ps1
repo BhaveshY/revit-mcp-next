@@ -106,4 +106,4 @@ try {
     Remove-Item -LiteralPath $syntaxScript -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "[revit-mcp-next integrations] Python integration syntax and Dynamo graph checks passed. Run npm run smoke:host-integrations against a live Revit for behavioural coverage."
+Write-Host "[revit-mcp-next integrations] Python integration syntax and Dynamo graph checks passed. Run the pyRevit Host Smoke button or the Dynamo host-smoke graph in a live Revit for behavioural coverage."

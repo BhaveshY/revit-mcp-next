@@ -13,14 +13,9 @@ For coding agents working **on this repo**. To use Revit through the MCP server,
 | `installer/` | `install.ps1`, `uninstall.ps1`, `lib/Rmn.psm1`, `agents-snippet.md` |
 | `plugins/` | Codex and Claude plugins with the `revit` and `revit-setup` skills |
 | `e2e/` | The only test harness (scenarios, profiles, gates); `e2e/TEST-PC.md` for the test PC |
-| `scripts/` | `build-addin.ps1`, `dev-install.ps1`, `package.ps1`, `gen-tool-docs.mjs`, `validate-plugins.mjs`, host-integration helpers |
+| `scripts/` | `build-addin.ps1`, `dev-install.ps1`, `package.ps1`, `gen-tool-docs.mjs`, `validate-plugins.mjs`, `ensure-revit-addin-trust.ps1`, `check-python-integrations.ps1` |
 | `docs/` | User and design docs; `docs/tools.md` is generated; `docs/design/SPEC.md` is historical |
 | `integrations/` | pyRevit, Dynamo and Python examples using the in-process bridge |
-
-Legacy files excluded from the build stay until the owner approves their removal (`scripts/validate-repo.mjs`,
-`broker/src/cli/revitctl.ts`, `broker/src/tools/{coreTools,discovery,pageCursor,toolResult}.ts`, the old `broker/src/ipc`
-and `instances` clients, `contracts/schemas/**`, `addin/RevitMcpNext.Addin/Legacy/**`,
-`.github/workflows/live-revit-smoke.yml`). Do not delete or revive them.
 
 ## Build
 

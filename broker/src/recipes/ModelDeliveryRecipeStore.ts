@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ModelDeliveryRecipe } from "@revit-mcp-next/contracts";
+import type { ModelDeliveryRecipe } from "@revit-mcp-next/contracts/delivery";
 
 export const MODEL_DELIVERY_RECIPE_STORE_SCHEMA_VERSION = 1;
 

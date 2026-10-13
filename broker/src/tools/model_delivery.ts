@@ -6,7 +6,7 @@
 //   execute   only with that token: sends the stored recipe/previewId/planHash with confirmed{} as a job (j#).
 //   fixture   add-in job behind the default static confirm (rule always).
 import { join } from "node:path";
-import type { ModelDeliveryRecipe } from "@revit-mcp-next/contracts";
+import type { ModelDeliveryRecipe } from "@revit-mcp-next/contracts/delivery";
 import { defaultHandler } from "../framework/defaults.js";
 import { formatCall } from "../framework/errors.js";
 import type { ToolContextImpl } from "../framework/context.js";
