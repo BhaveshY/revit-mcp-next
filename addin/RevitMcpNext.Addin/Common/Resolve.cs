@@ -304,8 +304,12 @@ namespace RevitMcpNext.Addin
         // Views and sheets
         // ---------------------------------------------------------------------------------------------------------
 
-        /// <summary>"active" | id | exact view name (non-templates first) | sheet number.</summary>
-        public static View View(Document doc, string value, string param = "view", UIDocument uidoc = null)
+        /// <summary>
+        /// "active" | id | exact view name (non-templates first) | sheet number. A floor plan and a ceiling plan (or
+        /// other views) sharing one name resolve to the floor plan, as the project browser reading of the name; with
+        /// <paramref name="strict"/> (delete/rename) such a tie stays AMBIGUOUS_NAME.
+        /// </summary>
+        public static View View(Document doc, string value, string param = "view", UIDocument uidoc = null, bool strict = false)
         {
             string text = (value ?? string.Empty).Trim();
             if (text.Length == 0 || text.Equals("active", StringComparison.OrdinalIgnoreCase))
@@ -337,6 +341,11 @@ namespace RevitMcpNext.Addin
                 if (iso.Count == 1) return iso[0];
             }
 
+            if (nonTemplates.Count > 1 && !strict)
+            {
+                List<View> floorPlans = nonTemplates.Where(v => v.ViewType == ViewType.FloorPlan).ToList();
+                if (floorPlans.Count == 1) return floorPlans[0];
+            }
             if (nonTemplates.Count > 1)
             {
                 throw OpException.Ambiguous(param, "view", value, nonTemplates.Select(v => v.Name + " (" + v.ViewType + ", id " + v.Id.Value.ToString(CultureInfo.InvariantCulture) + ")"));
@@ -562,9 +571,24 @@ namespace RevitMcpNext.Addin
         /// <summary>The element with this numeric id when it is a T, else null (non-numeric text returns null).</summary>
         public static T ById<T>(Document doc, string value) where T : Element
         {
-            long? id = Wire.ToLong(value?.Trim());
+            long? id = Wire.ToLong(value?.Trim()) ?? LabelledId(value);
             if (!id.HasValue || doc == null) return null;
             return SafeGet(doc, new ElementId(id.Value)) as T;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex LabelId =
+            new System.Text.RegularExpressions.Regex(@"\((?:[^()]*,\s*)?id\s+(\d+)\)\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// The id of an option label "Name (Kind, id 123)" / "Name (id 123)" as AMBIGUOUS_NAME and NOT_FOUND list them, so
+        /// a fix: line that passes the label verbatim resolves.
+        /// </summary>
+        public static long? LabelledId(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.IndexOf("id", StringComparison.OrdinalIgnoreCase) < 0) return null;
+            System.Text.RegularExpressions.Match match = LabelId.Match(value);
+            if (!match.Success) return null;
+            return long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out long id) ? id : (long?)null;
         }
 
         // ---------------------------------------------------------------------------------------------------------
