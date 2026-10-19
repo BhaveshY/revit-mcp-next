@@ -79,12 +79,17 @@ namespace RevitMcpNext.Addin
         private static ExportInfo Export(RequestContext ctx, Document doc, View source, List<Element> focus, CaptureOptions o, string folder)
         {
             bool needsTemp = o.Focus || NeedsChanges(source, o);
+            bool clip = false;
             if (!needsTemp)
             {
                 var plain = new ExportInfo { View = source };
                 Describe(source, plain);
                 ExportView(ctx, doc, plain, o, folder);
-                return plain;
+                if (!AnnotationsWiden(plain)) return plain;
+                // Annotations outside the crop (template elevation markers, tags) widened the image, so the crop no longer
+                // maps onto the pixels: export again with the annotation crop on the model crop (temporary, rolled back).
+                foreach (string file in Directory.GetFiles(folder)) TryDeleteFile(file);
+                clip = true;
             }
 
             if (!_groupExportRefused)
@@ -93,13 +98,14 @@ namespace RevitMcpNext.Addin
                 {
                     using (var temp = new TempScope(doc, Naming.Purposes.Capture))
                     {
-                        var info = new ExportInfo();
+                        var info = new ExportInfo { ClipAnnotations = clip };
                         // Workshared: change a temporary copy instead of the view itself, so nothing is borrowed.
                         bool copyInTemp = doc.IsWorkshared && CanCopy(source);
                         TxResult tx = temp.Run(() => Configure(ctx, doc, source, focus, o, info, copy: copyInTemp));
                         if (!tx.Committed) throw tx.ToException("capture");
                         Describe(info.View, info);
                         ExportView(ctx, doc, info, o, folder);
+                        if (clip) AnnotationsWiden(info);
                         return info;
                     }
                 }
@@ -107,18 +113,18 @@ namespace RevitMcpNext.Addin
                 {
                     DiagnosticsLogger.Warn("capture", "ExportImage refused with a TransactionGroup open (V1); trying fallback B: " + ex.Message);
                     foreach (string file in Directory.GetFiles(folder)) TryDeleteFile(file);
-                    ExportInfo fallback = ExportWithCommittedCopy(ctx, doc, source, focus, o, folder);
+                    ExportInfo fallback = ExportWithCommittedCopy(ctx, doc, source, focus, o, folder, clip);
                     _groupExportRefused = true;
                     return fallback;
                 }
             }
-            return ExportWithCommittedCopy(ctx, doc, source, focus, o, folder);
+            return ExportWithCommittedCopy(ctx, doc, source, focus, o, folder, clip);
         }
 
         /// <summary>Fallback B: configure a committed temporary copy, export it, delete it.</summary>
-        private static ExportInfo ExportWithCommittedCopy(RequestContext ctx, Document doc, View source, List<Element> focus, CaptureOptions o, string folder)
+        private static ExportInfo ExportWithCommittedCopy(RequestContext ctx, Document doc, View source, List<Element> focus, CaptureOptions o, string folder, bool clip = false)
         {
-            var info = new ExportInfo();
+            var info = new ExportInfo { ClipAnnotations = clip };
             RunTempCommitted(doc, () => Configure(ctx, doc, source, focus, o, info, copy: true));
             try
             {
@@ -226,9 +232,67 @@ namespace RevitMcpNext.Addin
                 else ViewKit.Orient(view3D, o.Orient);
             }
             if (o.Annotations == false) target.AreAnnotationCategoriesHidden = true;
+            if (info.ClipAnnotations) ClipAnnotationsToCrop(target);
             Highlight(ctx, doc, target, o);
             info.View = target;
             info.Title = ViewKit.Title(source);
+        }
+
+        /// <summary>True when a cropped plan's exported image is off the crop aspect by more than 1 % (annotations outside the crop).</summary>
+        private static bool AnnotationsWiden(ExportInfo info)
+        {
+            if (info.BoundsMm == null || !info.Aspect.HasValue || info.RawPath == null || info.IsSheet) return false;
+            try
+            {
+                Raster image = Raster.Load(info.RawPath);
+                if (image.Width <= 0 || image.Height <= 0) return false;
+                double actual = image.Width / (double)image.Height;
+                bool off = Math.Abs(actual - info.Aspect.Value) / info.Aspect.Value > 0.01;
+                if (off) DiagnosticsLogger.Info("capture", "image aspect " + actual.ToString("0.000", CultureInfo.InvariantCulture) + " differs from the crop aspect " +
+                    info.Aspect.Value.ToString("0.000", CultureInfo.InvariantCulture) + (info.ClipAnnotations ? " after clipping annotations" : "; clipping annotations to the crop"));
+                return off;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Annotation crop on with zero offsets and reference planes/cameras hidden (the crop does not clip them; templates
+        /// carry reference planes that run far past the crop, e2e S92 on 2027), so the export covers exactly the model crop.
+        /// </summary>
+        private static void ClipAnnotationsToCrop(View view)
+        {
+            if (view.ViewTemplateId != ElementId.InvalidElementId &&
+                ViewKit.TemplateControls(view, BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE, BuiltInParameter.VIS_GRAPHICS_MODEL, BuiltInParameter.VIS_GRAPHICS_ANNOTATION)) DetachTemplate(view);
+            foreach (BuiltInCategory category in new[] { BuiltInCategory.OST_CLines, BuiltInCategory.OST_Cameras })
+            {
+                try
+                {
+                    var id = new ElementId(category);
+                    if (view.CanCategoryBeHidden(id)) view.SetCategoryHidden(id, true);
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException) { /* category not in this view */ }
+            }
+            Parameter annotationCrop = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE);
+            if (annotationCrop == null || annotationCrop.IsReadOnly) return;
+            annotationCrop.Set(1);
+            try
+            {
+                ViewCropRegionShapeManager crop = view.GetCropRegionShapeManager();
+                if (!crop.CanHaveAnnotationCrop) return;
+                double min = 0;
+                foreach (Action<double> set in new Action<double>[] { v => crop.LeftAnnotationCropOffset = v, v => crop.RightAnnotationCropOffset = v, v => crop.TopAnnotationCropOffset = v, v => crop.BottomAnnotationCropOffset = v })
+                {
+                    try { set(min); }
+                    catch (Autodesk.Revit.Exceptions.ArgumentException) { /* keep Revit's minimum offset */ }
+                }
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                // The annotation crop stays at its offsets; the aspect check reports any remaining difference.
+            }
         }
 
         private static void DetachTemplate(View view)
@@ -383,7 +447,7 @@ namespace RevitMcpNext.Addin
                 Parameter annotationCrop = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE);
                 bool annotationCropOn = annotationCrop != null && annotationCrop.HasValue && annotationCrop.AsInteger() != 0;
                 double[] rect = ViewKit.CropRectXY(view);
-                if (!annotationCropOn && rect != null) info.BoundsMm = rect.Select(Units.FtToMm).ToArray();
+                if ((!annotationCropOn || info.ClipAnnotations) && rect != null) info.BoundsMm = rect.Select(Units.FtToMm).ToArray();
             }
         }
 
@@ -639,6 +703,8 @@ namespace RevitMcpNext.Addin
             public double[] BoundsMm { get; set; }
             public double[] SheetOutlineMm { get; set; }
             public string RawPath { get; set; }
+            /// <summary>Export with the annotation crop on the model crop (annotations outside the crop widened the image).</summary>
+            public bool ClipAnnotations { get; set; }
         }
     }
 
