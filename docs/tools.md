@@ -841,7 +841,7 @@ Ops (`op`):
   Settings a view template controls give TEMPLATE_CONTROLLED (get_view lists template_controls); set them on the template or pass template:'none'. crop_box turns crop on. section_box [] turns it off.
   e.g. `edit_views {"op":"set","view":"Level 1","scale":50,"detail_level":"fine","view_range":{"cut":1100}}`
 - `edit_views.create_template`: view, name
-  e.g. `edit_views {"op":"create_template","view":"Level 1","name":"EBA Plan 1:50"}`
+  e.g. `edit_views {"op":"create_template","view":"Level 1","name":"EBA Plan 1-50"}`
 - `edit_views.delete`: views [NOT APPLIED over 20 deleted]
   Deleting views also deletes their viewports, dependent views and view-specific annotation; more than the confirm limit needs the user's OK. The active view cannot be deleted.
   e.g. `edit_views {"op":"delete","views":["Section A"]}`

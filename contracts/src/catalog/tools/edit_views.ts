@@ -63,7 +63,7 @@ export const tool: ToolSpec = {
       help: "Settings a view template controls give TEMPLATE_CONTROLLED (get_view lists template_controls); set them on the template or pass template:'none'. crop_box turns crop on. section_box [] turns it off.",
       errors: ["TEMPLATE_CONTROLLED", "INVALID_ARGS", "NOT_FOUND"],
     }),
-    create_template: op("view,name", "", M, [{"op":"create_template","view":"Level 1","name":"EBA Plan 1:50"}], { errors: ["NAME_TAKEN", "UNSUPPORTED_OP"] }),
+    create_template: op("view,name", "", M, [{"op":"create_template","view":"Level 1","name":"EBA Plan 1-50"}], { errors: ["NAME_TAKEN", "UNSUPPORTED_OP"] }),
     delete: op("views", "", meta(M, { blast: ["delete"], inproc: false }), [{"op":"delete","views":["Section A"]}], { help: "Deleting views also deletes their viewports, dependent views and view-specific annotation; more than the confirm limit needs the user's OK. The active view cannot be deleted.", errors: ["UNSUPPORTED_OP", "NOT_FOUND"] }),
   },
 };

@@ -177,7 +177,7 @@ async function preview(ctx: ToolContext): Promise<ToolOutcome> {
   if (o.status !== "ok") return o;
   const plan = readyPlan(r);
   if (!plan) {
-    o.next = `fix the blockers listed above, then model_delivery {"op":"preview","recipe":...} again`;
+    o.next = "fix the blockers listed above, then repeat this preview with the corrected recipe";
     return o;
   }
   const token = issueExecuteToken(ctx, r, recipe as Record<string, unknown>, plan, `run delivery ${String((recipe as Record<string, unknown>).deliveryId)}: ${o.summary}`);

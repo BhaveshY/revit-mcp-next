@@ -257,7 +257,7 @@ export class InstanceChannel {
   // ------------------------------------------------------------------------------------------- primary pipe
 
   async send(request: BridgeRequest, o: SendOptions): Promise<SendResult> {
-    if (this.retired) return { response: this.exitedFailure(request.requestId) };
+    if (this.retired) return { response: this.exitedFailure(request.requestId, request.doc) };
     if (o.coalesceKey && request.kind === "read") {
       // Only a client cancellation detaches a subscriber; the deadline itself ends the shared call (READ_STILL_RUNNING).
       const cancel = clientCancelSignal(o.deadline);
@@ -441,7 +441,7 @@ export class InstanceChannel {
             const lock = await lockState(this.lockPath());
             if (lock !== "held") {
               this.deps.registry.invalidate();
-              return { response: this.exitedFailure(request.requestId) };
+              return { response: this.exitedFailure(request.requestId, request.doc) };
             }
             if (this.info.state === "starting") {
               o.progress?.(`Revit ${this.info.year} is still starting`);
@@ -466,7 +466,7 @@ export class InstanceChannel {
           const lock = await lockState(this.lockPath());
           if (lock !== "held") {
             this.deps.registry.invalidate();
-            return { response: this.exitedFailure(request.requestId) };
+            return { response: this.exitedFailure(request.requestId, request.doc) };
           }
           // One auto-retry for reads and previews (D2 §11.6), never after a timeout and only with ≥5 s left.
           if (!retried && o.deadline.remaining() >= RETRY_MIN_REMAINING_MS) {
@@ -722,8 +722,11 @@ export class InstanceChannel {
     return join(this.deps.registry.dir, `${this.info.instanceId}.lock`);
   }
 
-  private exitedFailure(requestId: string): BridgeResponse {
-    const docs = (this.info.snapshot?.docs ?? []).map((d) => d.title);
+  /** REVIT_EXITED naming the request's target doc first (the fix reopens that one), else the first doc it had open. */
+  private exitedFailure(requestId: string, target?: { key: string } | null): BridgeResponse {
+    const all = this.info.snapshot?.docs ?? [];
+    const first = target ? all.find((d) => d.key === target.key) : undefined;
+    const docs = [...(first ? [first] : []), ...all.filter((d) => d !== first)].map((d) => d.title);
     const at = this.deps.registry.exitOf(this.info.instanceId)?.at;
     return failure(requestId, "REVIT_EXITED", `Revit ${this.info.year} (pid ${this.info.pid})${docs[0] ? `, which had ${docs[0]} open,` : ""} exited${at ? ` at ${new Date(at).toLocaleTimeString("en-GB")}` : ""}`, { year: this.info.year, pid: this.info.pid, doc: docs[0] });
   }

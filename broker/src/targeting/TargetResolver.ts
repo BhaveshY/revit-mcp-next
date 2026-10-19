@@ -51,6 +51,8 @@ const exactOnly = (kind: Kind) => kind !== "read" && kind !== "control";
 export class TargetResolver {
   /** Per session and pinned doc: the active doc last reported by ACTIVE_DIFFERS (once per change of the active doc). */
   private readonly activeSeen = new WeakMap<Session, Map<string, string>>();
+  /** Per session: the doc it activated/opened itself last (repin) and when; older snapshots still show the previous active doc. */
+  private readonly ownActivation = new WeakMap<Session, { key: string; at: number }>();
 
   constructor(
     private readonly registry: InstanceRegistry,
@@ -261,7 +263,11 @@ export class TargetResolver {
     // The user switched the active project under an automatic pin since this session's last write (§7.4 item 5).
     const pin = session.pin;
     const inst = world.usable.find((i) => i.instanceId === candidate.instanceId);
-    const activeDoc = inst ? activeDocOf(inst) : null;
+    let activeDoc = inst ? activeDocOf(inst) : null;
+    // A snapshot taken before this session's own activate/open (repin) still shows the previous active doc: no
+    // ACTIVE_DIFFERS / TARGET_CHANGED from it (seen live in e2e R1: the notice fired after the session's own activate_doc).
+    const ownActivation = this.ownActivation.get(session);
+    if (activeDoc && ownActivation && ownActivation.key === candidate.key && inst?.snapshot && Date.parse(inst.snapshot.atUtc) < ownActivation.at) activeDoc = null;
     if (o.checkActiveSwitch && pin && pin.key === candidate.key && activeDoc && activeDoc.key !== candidate.key) {
       const activeCandidate = world.candidates.find((c) => c.key === activeDoc.key && c.instanceId === inst!.instanceId);
       if (pin.mode === "auto" && isGated(req.kind) && session.lastWriteAt > 0 && activeDoc.kind === "project") {
@@ -554,6 +560,7 @@ export class TargetResolver {
   /** Explicit re-pin after a successful activate/open/new_project/new_family/edit_family open (§7.4 item 1). */
   repin(session: Session, doc: ResponseDoc, instance: { instanceId: string; pid: number; year: number }): string {
     const n = session.docNumber(doc.key);
+    this.ownActivation.set(session, { key: doc.key, at: Date.now() });
     session.pin = { key: doc.key, rid: doc.rid, instanceId: instance.instanceId, pid: instance.pid, year: doc.year ?? instance.year, mode: "explicit", title: doc.title, kind: doc.kind, setAt: Date.now() };
     if (doc.kind === "project") session.projectPin = { ...session.pin };
     this.registry.invalidate();

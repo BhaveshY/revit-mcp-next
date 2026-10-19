@@ -7,7 +7,7 @@
 // Every wave-1 tool module without a handler works through these, so an add-in handler landing in wave 2 works end to end.
 // Frozen in wave 2.
 
-import { byKey, type Blast } from "@revit-mcp-next/contracts/catalog";
+import { byKey, fullProperties, type Blast } from "@revit-mcp-next/contracts/catalog";
 import type { BridgeChanges, BridgeResponse, ControlOp, ResponseDoc } from "@revit-mcp-next/contracts/protocol";
 import { failure } from "../ipc/errors.js";
 import { readCaptureImage } from "./images.js";
@@ -383,7 +383,11 @@ export function outcomeFromResult(ctxIn: ToolContext, r: AddinResult): ToolOutco
   const page = r.page;
   const pageOffset = typeof ctx.args.page_offset === "number" ? (ctx.args.page_offset as number) : (page?.offset ?? 0);
   const pageTotal = typeof ctx.args.page_total === "number" ? (ctx.args.page_total as number) : (page?.total ?? 0);
-  if (page && pageOffset + page.count < pageTotal) {
+  const pageable = "page" in fullProperties(ctx.spec);
+  if (page && pageOffset + page.count < pageTotal && !pageable) {
+    // A tool without a page param (get_changes): a page token would not validate, so say how to see the rest.
+    summaryParts.push(`showing ${fmtCount(pageOffset + 1)}-${fmtCount(pageOffset + page.count)} of ${fmtCount(pageTotal)}; raise limit for more`);
+  } else if (page && pageOffset + page.count < pageTotal) {
     const id = session.pages.add({
       tool: ctx.tool,
       key: ctx.key,
@@ -475,8 +479,12 @@ export function outcomeFromResult(ctxIn: ToolContext, r: AddinResult): ToolOutco
 }
 
 function outcomeDoc(ctx: ToolContextImpl, doc: ResponseDoc | null): ToolOutcome["doc"] {
-  if (doc && doc.title) return { title: doc.title, year: doc.year, n: doc.key ? ctx.session.docNumber(doc.key) : null };
   const resolved = ctx.resolvedCache;
+  if (doc && doc.title) {
+    // Same rid as the resolved doc under a new key (Save As): keep its #n instead of numbering a "new" doc.
+    const previous = resolved && resolved.rid === doc.rid && resolved.instanceId && resolved.key && resolved.key !== doc.key ? [resolved.key] : [];
+    return { title: doc.title, year: doc.year, n: doc.key ? ctx.session.docNumber(doc.key, previous) : null };
+  }
   if (resolved?.title) return { title: resolved.title, year: resolved.year, n: resolved.n };
   return undefined;
 }
