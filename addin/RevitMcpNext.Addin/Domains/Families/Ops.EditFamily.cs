@@ -225,8 +225,9 @@ namespace RevitMcpNext.Addin
             FamilySession s = FamilySession.Of(c);
             FamilyParameter parameter = FamilyValues.Param(s.Manager, c.Args.ReqStr("name"), c.Args.Field("name"));
             string name = FamilyValues.NameOf(parameter);
-            if (!c.Has("formula")) throw OpException.InvalidArgs(c.Args.Field("formula"), "is required (a formula, or '' to clear it)");
-            string formula = c.Str("formula");
+            // '' is a value here (clear the formula): Has() treats an empty string as absent, so test for the key itself.
+            if (!c.Args.TryGet("formula", out object rawFormula) || rawFormula == null) throw OpException.InvalidArgs(c.Args.Field("formula"), "is required (a formula, or '' to clear it)");
+            string formula = rawFormula as string ?? c.Str("formula");
             bool clear = string.IsNullOrWhiteSpace(formula);
             string before = SafeFormula(parameter);
             if (clear && string.IsNullOrEmpty(before))

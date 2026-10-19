@@ -367,8 +367,11 @@ namespace RevitMcpNext.Addin
                 {
                     app.OpenAndActivateDocument(doc.GetCloudModelPath(), new OpenOptions(), false);
                 }
-                else if (!string.IsNullOrWhiteSpace(doc.PathName) && File.Exists(doc.PathName) && !doc.IsFamilyDocument)
+                else if (!string.IsNullOrWhiteSpace(doc.PathName) && File.Exists(doc.PathName))
                 {
+                    // Saved project and family files alike (a background family from new_family has no open view, so the
+                    // ShowElements fallback cannot bring it up; seen live in e2e R1). Families edited out of a project
+                    // have no PathName and take the fallback.
                     app.OpenAndActivateDocument(doc.PathName);
                 }
             }

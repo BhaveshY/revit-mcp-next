@@ -90,6 +90,12 @@ namespace RevitMcpNext.Addin
             }
 
             elements = elements.Where(e => e != null && e.IsValidObject).ToList();
+            if (elements.Count == 0)
+            {
+                // An empty handle/list (e.g. a find with no match) is a content miss, not a crash further down.
+                throw new OpException(ErrorCodes.NotFound, a.Field(source) + " names no existing element in '" + c.Doc.Title + "'; find the elements first (find_elements gives a handle).",
+                    new Dictionary<string, object> { ["param"] = a.Field(source), ["kind"] = "element", ["value"] = source == "from" ? a.Str("from") : null, ["candidates"] = new List<object>() });
+            }
             if (!c.IsPreview && c.Doc.IsWorkshared) WorksharingGuard.EnsureEditable(c.Doc, elements.Select(e => e.Id));
             return elements;
         }
