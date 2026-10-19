@@ -83,6 +83,8 @@ export interface OpSpec {
    * Appendix A). Validation and help include them.
    */
   moreOpt?: string;
+  /** NOT advertised: required params for which an empty array is a value ("[] clears"), not a missing param. */
+  emptyOk?: string;
   meta: OpMeta;
   /** One or two sentences of behaviour for help {tool,op}. */
   help?: string;

@@ -82,7 +82,7 @@ export interface ValidateResult {
   error?: ArgError;
 }
 
-const present = (args: Record<string, unknown>, p: string) => args[p] !== undefined && args[p] !== null && !(Array.isArray(args[p]) && (args[p] as unknown[]).length === 0);
+const isPresent = (args: Record<string, unknown>, p: string) => args[p] !== undefined && args[p] !== null && !(Array.isArray(args[p]) && (args[p] as unknown[]).length === 0);
 
 /** Per-op validation from the req/opt signature. */
 export function validateOp(spec: ToolSpec, op: string | null, args: Record<string, unknown>, options: ValidateOptions = {}): ValidateResult {
@@ -103,6 +103,8 @@ export function validateOp(spec: ToolSpec, op: string | null, args: Record<strin
   if (options.skipRequired) return { args: out, warnings };
 
   const groups = parseGroups(opSpec.req);
+  const emptyOk = new Set(paramList(opSpec.emptyOk ?? ""));
+  const present = (o: Record<string, unknown>, p: string) => emptyOk.has(p) ? Array.isArray(o[p]) || isPresent(o, p) : isPresent(o, p);
   const problems: string[] = [];
   let firstParam: string | undefined;
   for (const group of groups) {
