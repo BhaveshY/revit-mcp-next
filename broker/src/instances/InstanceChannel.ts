@@ -512,8 +512,18 @@ export class InstanceChannel {
         resolve(outcome);
       };
       o.deadline.signal.addEventListener("abort", onAbort);
+      // While a fail-fast decision cancels the queued item, the add-in answers that cancel with REQUEST_CANCELLED on
+      // this exchange: hold it, so the call reports the reason (REVIT_DIALOG_OPEN, REVIT_BUSY...) instead of a bare
+      // cancel (seen live in e2e R7).
+      let heldCancel: BridgeResponse | null = null;
       ex.response.then(
-        (response) => finish({ kind: "response", response }),
+        (response) => {
+          if (deciding && !response.ok && response.code === "REQUEST_CANCELLED") {
+            heldCancel = response;
+            return;
+          }
+          finish({ kind: "response", response });
+        },
         (error) => finish({ kind: "error", error: error instanceof TransportError ? error : new TransportError("DISCONNECTED", String(error), "read", ex.written) })
       );
       unsubscribe = this.poller.subscribe((sample) => {
@@ -533,7 +543,11 @@ export class InstanceChannel {
         deciding = true;
         void this.failFast(ex, request, decision).then((response) => {
           deciding = false;
-          if (settled || !response) return;
+          if (settled) return;
+          if (!response) {
+            if (heldCancel) finish({ kind: "response", response: heldCancel });
+            return;
+          }
           ex.abandon(`busy: ${decision.code}`);
           finish({ kind: "busy", response });
         });
