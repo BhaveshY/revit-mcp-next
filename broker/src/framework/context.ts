@@ -496,7 +496,11 @@ export class ToolContextImpl implements ToolContext {
     };
 
     // Job start: wait inline until terminal or the budget (§6.8).
-    if (o.asJob && response.ok && response.job && response.job.jobId) {
+    // job "auto" ops (export, close, ...) are not sent asJob, but the add-in hands long work to a job and answers
+    // "running as a job" at the budget: follow it too, or the call would read as done while Revit is still busy
+    // (seen live in e2e S96: a 13-view export reported ok, the next scenario hit REVIT_BUSY).
+    const handedOff = !!response.job?.jobId && !["succeeded", "failed", "cancelled", "interrupted"].includes(String(response.job.state));
+    if ((o.asJob || handedOff) && response.ok && response.job && response.job.jobId) {
       const jobId = response.job.jobId;
       const polled = await pollJob({ channel, jobId, deadline, clientKey: session.clientKey, progress: (m, d, t) => this.progress(m, d, t) });
       if (polled.terminal && polled.result) {
