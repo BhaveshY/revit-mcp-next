@@ -52,7 +52,9 @@ export default {
       const id = w.json?.created?.[0];
       t.assert(id, "a level was created");
       const preview = await s1.call("modify_elements", { op: "delete", ids: [id], preview: true });
-      t.assertEq(preview.status, "not_applied", "preview returns NOT APPLIED");
+      // A preview is a dry run (status ok, "preview: ..."); its confirm token is what this scenario holds.
+      t.assert(preview.status === "ok" || preview.status === "not_applied", `preview status ${preview.status}`);
+      t.assertMatch(preview.summary, /preview|would/i, "preview summary");
       token = preview.json?.confirm ?? null;
       t.assert(token, "confirm token");
     });

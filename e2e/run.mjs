@@ -118,7 +118,8 @@ function loadProfiles() {
 
 /** Scenarios of a profile in profiles.json order (unknown ids are reported). Profiles not in the file use scenario.profiles. */
 function selectScenarios(all, profiles, profile, only) {
-  if (only) return { selected: all.filter((s) => only.includes(s.id.toUpperCase())), missing: only.filter((id) => !all.some((s) => s.id.toUpperCase() === id)) };
+  // --only keeps the given order (disruptive reliability scenarios such as R4 can be put last).
+  if (only) return { selected: only.map((id) => all.find((s) => s.id.toUpperCase() === id)).filter(Boolean), missing: only.filter((id) => !all.some((s) => s.id.toUpperCase() === id)) };
   const def = profiles[profile];
   if (!def) return { selected: all.filter((s) => (s.profiles ?? []).includes(profile)), missing: [] };
   const byId = new Map(all.map((s) => [s.id.toUpperCase(), s]));

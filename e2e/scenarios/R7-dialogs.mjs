@@ -32,6 +32,9 @@ async function show(t, addin, spec) {
     return h && h.ui?.mainWindowEnabled === false ? h : null;
   }, 5_000);
   t.assert(shown, "the dialog disabled the Revit main window within 5 s");
+  // The health sample can still show the previous dialog: wait until ui dialogs lists this one by its title.
+  const listed = await waitFor(async () => findDialog(await t.call("ui", { op: "dialogs" }, { allowError: true }), spec.title), 5_000, 250);
+  t.assert(listed, `ui dialogs lists '${spec.title}' within 5 s`);
   return shown;
 }
 
@@ -48,6 +51,20 @@ export default {
   async run(t) {
     const addin = rawAddin(t);
     await requireTestOps(t, addin);
+    try {
+      await this.steps(t, addin);
+    } finally {
+      // Never leave a test dialog open for the next scenario: Cancel is pressed at once by the product's ui press.
+      for (let i = 0; i < 3; i++) {
+        const h = await health(addin).catch(() => null);
+        if (!h || h.ui?.mainWindowEnabled !== false) break;
+        await t.call("ui", { op: "press", button: "Cancel" }, { allowError: true });
+        await sleep(500);
+      }
+    }
+  },
+
+  async steps(t, addin) {
     const { path } = await t.newProject("R7");
     t.setTargetPath(path);
     const pid = t.revit.pid;
