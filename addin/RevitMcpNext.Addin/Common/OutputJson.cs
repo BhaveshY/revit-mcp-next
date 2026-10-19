@@ -29,6 +29,20 @@ namespace RevitMcpNext.Addin
             return new List<object> { Units.Mm(point.X), Units.Mm(point.Y), Units.Mm(point.Z) };
         }
 
+        /// <summary>A direction as a unit vector [x,y,z] (4 decimals, no unit).</summary>
+        public static List<object> Direction(XYZ vector)
+        {
+            if (vector == null || vector.GetLength() < 1e-12) return null;
+            XYZ unit = vector.Normalize();
+            return new List<object> { Clean(unit.X), Clean(unit.Y), Clean(unit.Z) };
+        }
+
+        private static double Clean(double value)
+        {
+            double rounded = Math.Round(value, 4);
+            return rounded == 0 ? 0 : rounded;
+        }
+
         /// <summary>A point as [x,y] in mm.</summary>
         public static List<object> Point2(XYZ point)
         {

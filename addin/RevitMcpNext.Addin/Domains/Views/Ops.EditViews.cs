@@ -130,16 +130,21 @@ namespace RevitMcpNext.Addin
             double length = flat.GetLength();
             if (length < Units.MmToFt(10)) throw OpException.InvalidArgs(c.Args.Field("end"), "must be at least 10 mm away from start");
             XYZ along = flat.Normalize();
+            // V5: CreateSection looks along sectionBox.Transform.BasisZ from the cut plane at Min.Z (measured live on 2027:
+            // BasisZ = along x Z put the cut line at the far end, looking right). Looking left of start->end therefore
+            // needs BasisZ = Z x along with the volume z in [0, depth]; BasisX = BasisY x BasisZ keeps the frame
+            // right-handed (Revit derives the screen-right direction itself, which comes out as start->end).
+            XYZ left = XYZ.BasisZ.CrossProduct(along);
             var transform = Transform.Identity;
             transform.Origin = new XYZ((start.X + end.X) / 2, (start.Y + end.Y) / 2, 0);
-            transform.BasisX = along;
+            transform.BasisX = XYZ.BasisZ.CrossProduct(left);
             transform.BasisY = XYZ.BasisZ;
-            transform.BasisZ = along.CrossProduct(XYZ.BasisZ);
+            transform.BasisZ = left;
             var box = new BoundingBoxXYZ
             {
                 Transform = transform,
-                Min = new XYZ(-length / 2, bottom, -depth),
-                Max = new XYZ(length / 2, top, 0)
+                Min = new XYZ(-length / 2, bottom, 0),
+                Max = new XYZ(length / 2, top, depth)
             };
             ViewFamilyType type = ViewKit.FamilyType(doc, ViewFamily.Section, c.Str("view_type"), c.Args.Field("view_type"), ElementTypeGroup.ViewTypeSection);
             ViewSection section = ViewSection.CreateSection(doc, type.Id, box);
@@ -160,18 +165,46 @@ namespace RevitMcpNext.Addin
             ElevationMarker marker = ElevationMarker.CreateElevationMarker(doc, type.Id, at, scale);
             c.Created(marker);
             XYZ looking = LookingVector(direction);
-            // V5: the index → direction mapping is verified on the created view instead of assumed.
-            for (int index = 0; index < marker.MaximumViewCount; index++)
+            // V5: the index → direction mapping is verified on the created view instead of assumed. Wrong-facing tries
+            // are deleted only after the match exists: deleting a marker's last view deletes the marker (e2e S50, 2027).
+            var wrong = new List<ElementId>();
+            var tried = new List<string>();
+            ViewSection match = null;
+            int count = marker.MaximumViewCount;
+            for (int index = 0; index < count && match == null; index++)
             {
                 if (!marker.IsAvailableIndex(index)) continue;
                 ViewSection elevation = marker.CreateElevation(doc, host.Id, index);
                 doc.Regenerate();
                 XYZ actual = elevation.ViewDirection.Negate();
-                if (new XYZ(actual.X, actual.Y, 0).Normalize().IsAlmostEqualTo(looking, 1e-3)) return elevation;
-                doc.Delete(elevation.Id);
+                tried.Add(index.ToString(CultureInfo.InvariantCulture) + ":" + string.Join(",", OutputJson.Direction(actual)));
+                if (new XYZ(actual.X, actual.Y, 0).Normalize().IsAlmostEqualTo(looking, 1e-3)) match = elevation;
+                else wrong.Add(elevation.Id);
+            }
+            if (match == null && wrong.Count > 0 && doc.GetElement(wrong[0]) is ViewSection first)
+            {
+                // Marker types with fewer views than directions (MaximumViewCount 1 in the Revit 2027 templates): turn the
+                // marker so its view faces the requested direction.
+                XYZ actual = first.ViewDirection.Negate();
+                XYZ flatActual = new XYZ(actual.X, actual.Y, 0).Normalize();
+                double angle = flatActual.AngleOnPlaneTo(looking, XYZ.BasisZ);
+                ElementTransformUtils.RotateElement(doc, marker.Id, Line.CreateBound(at, at + XYZ.BasisZ), angle);
+                doc.Regenerate();
+                XYZ turned = first.ViewDirection.Negate();
+                tried.Add("rotated " + Math.Round(angle * 180 / Math.PI).ToString(CultureInfo.InvariantCulture) + ":" + string.Join(",", OutputJson.Direction(turned)));
+                if (new XYZ(turned.X, turned.Y, 0).Normalize().IsAlmostEqualTo(looking, 1e-3))
+                {
+                    match = first;
+                    wrong.RemoveAt(0);
+                }
+            }
+            if (match != null)
+            {
+                if (wrong.Count > 0) doc.Delete(wrong);
+                return match;
             }
             throw new OpException(ErrorCodes.RevitRefused, "Revit did not create an elevation looking " + direction + " from this marker.",
-                new Dictionary<string, object> { ["apiMessage"] = "no marker index faces " + direction });
+                new Dictionary<string, object> { ["apiMessage"] = "no marker index faces " + direction, ["tried"] = tried, ["max"] = count });
         }
 
         private static View Create3D(ChangeContext c)
@@ -337,7 +370,7 @@ namespace RevitMcpNext.Addin
             var views = new List<View>();
             foreach (string name in names)
             {
-                View view = Resolve.View(doc, name, c.Args.Field("views"), c.Ctx.UiDoc);
+                View view = Resolve.View(doc, name, c.Args.Field("views"), c.Ctx.UiDoc, strict: true);
                 if (views.All(v => v.Id != view.Id)) views.Add(view);
             }
             ElementId activeId = null;
@@ -348,8 +381,10 @@ namespace RevitMcpNext.Addin
                 throw new OpException(ErrorCodes.UnsupportedOp, "'" + active.Name + "' is the active view in Revit and cannot be deleted; activate another view first.",
                     new Dictionary<string, object> { ["view"] = active.Name, ["alternative"] = "ui activate_view" });
             }
-            ICollection<ElementId> deleted = c.Delete(views.Select(v => v.Id).ToList());
-            c.Data(new Dictionary<string, object> { ["views"] = views.Select(v => (object)v.Id.Value).ToList(), ["deleted_total"] = deleted.Count });
+            // Ids before the delete: the View objects are invalid afterwards.
+            List<ElementId> viewIds = views.Select(v => v.Id).ToList();
+            ICollection<ElementId> deleted = c.Delete(viewIds);
+            c.Data(new Dictionary<string, object> { ["views"] = viewIds.Select(id => (object)id.Value).ToList(), ["deleted_total"] = deleted.Count });
             c.Summary("deleted " + views.Count.ToString(CultureInfo.InvariantCulture) + " view" + (views.Count == 1 ? string.Empty : "s") +
                 (deleted.Count > views.Count ? " (+" + (deleted.Count - views.Count).ToString(CultureInfo.InvariantCulture) + " dependent elements)" : string.Empty));
         }

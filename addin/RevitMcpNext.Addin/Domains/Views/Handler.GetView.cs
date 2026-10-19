@@ -105,7 +105,7 @@ namespace RevitMcpNext.Addin
                 Parameter far = view.get_Parameter(BuiltInParameter.VIEWER_BOUND_OFFSET_FAR);
                 Parameter clipping = view.get_Parameter(BuiltInParameter.VIEWER_BOUND_FAR_CLIPPING);
                 if (far != null && far.HasValue && (clipping == null || clipping.AsInteger() != 0)) data["far_clip"] = OutputJson.Mm(far.AsDouble());
-                data["looking"] = OutputJson.Point(view.ViewDirection.Negate());
+                data["looking"] = OutputJson.Direction(view.ViewDirection.Negate());
             }
             if (view is View3D view3D)
             {
