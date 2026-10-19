@@ -115,6 +115,21 @@ export async function closeScenarioDocs(t, makeCaller) {
   } catch {
     return;
   }
+  if (docs.length === 0) return;
+  // Revit keeps at least one document open: when every open doc of this year would close, open a parking project
+  // first (outside the scenario folders, unique per year), so no scenario title stays open next to the other year's.
+  try {
+    const status = await call("status", {}, { allowError: true, timeoutMs: 30_000 });
+    const open = (status.json?.docs?.rows ?? []).filter((row) => row[3] === t.year).length;
+    if (open <= docs.length) {
+      const template = projectTemplate(t.year);
+      const park = join(t.runRoot, "park", String(t.year), `E2E-Park-${t.year}.rvt`);
+      mkdirSync(join(t.runRoot, "park", String(t.year)), { recursive: true });
+      if (template) await call("manage_document", existsSync(park) ? { op: "open", path: park, activate: true, doc: `@${t.year}` } : { op: "new_project", path: park, template, activate: true, doc: `@${t.year}` }, { allowError: true, timeoutMs: 120_000 });
+    }
+  } catch {
+    // best effort
+  }
   for (const d of docs) {
     try {
       let r = await call("manage_document", { op: "close", doc: `#${d.n}`, save: false }, { allowError: true, timeoutMs: 60_000 });
