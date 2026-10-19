@@ -78,6 +78,10 @@ export default {
       t.assert(Array.isArray(pair) && String(pair[0]) === String(base.wall), "first half is the original wall");
       t.assertEq(await doorCount(t), doorsBefore, "insert count unchanged after the split");
       const second = String(pair[1]);
+      // The door on the new half is the copy's duplicate: split reports [old, new] so callers keep working ids.
+      const replaced = new Map((r.json.replaced ?? []).map(([o, n]) => [String(o), String(n)]));
+      t.assert(replaced.has(String(base.doors[1])), `split reports the replaced door id (${JSON.stringify(r.json.replaced ?? null)})`);
+      base.doors = base.doors.map((d) => replaced.get(String(d)) ?? d);
       const hosts = await t.call("find_elements", { category: ["Doors"], fields: ["host"], limit: 50 });
       const byHost = rowsOf(hosts).reduce((m, x) => ((m[String(x.host)] = (m[String(x.host)] ?? 0) + 1), m), {});
       t.assert((byHost[String(base.wall)] ?? 0) >= 1 && (byHost[second] ?? 0) >= 1, `each half hosts a door: ${JSON.stringify(byHost)}`);

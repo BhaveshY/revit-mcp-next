@@ -33,6 +33,7 @@ namespace RevitMcpNext.Addin
 
             var pairs = new List<object>();
             var skipped = new List<List<object>>();
+            var replaced = new List<List<object>>();
             foreach (Element element in elements)
             {
                 if (!(element.Location is LocationCurve location))
@@ -45,6 +46,7 @@ namespace RevitMcpNext.Addin
                 XYZ point = curve.Evaluate(raw, false);
 
                 ElementId created;
+                List<List<object>> replacedHere = null;
                 if (element is Pipe)
                 {
                     created = PlumbingUtils.BreakCurve(c.Doc, element.Id, point);
@@ -65,15 +67,15 @@ namespace RevitMcpNext.Addin
                         skipped.Add(ModifySupport.Skip(element.Id, "only basic walls split (curtain and stacked walls do not)"));
                         continue;
                     }
-                    created = SplitByCopy(c, element, curve, raw);
+                    created = SplitByCopy(c, element, curve, raw, out replacedHere);
                 }
                 else if (element is FamilyInstance instance && instance.StructuralType != StructuralType.NonStructural && instance.StructuralType != StructuralType.Footing)
                 {
-                    created = SplitByCopy(c, element, curve, raw);
+                    created = SplitByCopy(c, element, curve, raw, out replacedHere);
                 }
                 else if (element is CurveElement)
                 {
-                    created = SplitByCopy(c, element, curve, raw);
+                    created = SplitByCopy(c, element, curve, raw, out replacedHere);
                 }
                 else
                 {
@@ -85,6 +87,7 @@ namespace RevitMcpNext.Addin
                 c.Modified(element, "split", created.Value);
                 c.Created(created);
                 pairs.Add(new List<object> { element.Id.Value, created.Value });
+                if (replacedHere != null) replaced.AddRange(replacedHere);
             }
 
             if (pairs.Count == 0)
@@ -94,10 +97,13 @@ namespace RevitMcpNext.Addin
             }
             if (pairs.Count == 1) c.Output("second", ((List<object>)pairs[0])[1]);
             var data = new Dictionary<string, object> { ["split"] = pairs, ["at"] = ModifySupport.PointMm(at) };
+            // Inserts on the new half are the copy's duplicates: their ids change. [old, new] lets a caller keep its ids.
+            if (replaced.Count > 0) data["replaced"] = replaced;
             ModifySupport.ReportSkipped(c, data, skipped, "split");
             c.Data(data);
             c.Summary("split " + ModifySupport.Count(pairs.Count, "element") + " at " + VectorText(ModifySupport.PointMm(at)) + " mm; new halves " +
-                      string.Join(", ", pairs.Cast<List<object>>().Select(p => Convert.ToString(p[1], CultureInfo.InvariantCulture))));
+                      string.Join(", ", pairs.Cast<List<object>>().Select(p => Convert.ToString(p[1], CultureInfo.InvariantCulture))) +
+                      (replaced.Count > 0 ? "; " + ModifySupport.Count(replaced.Count, "insert") + " on the new half got new ids (replaced: [old,new])" : string.Empty));
         }
 
         /// <summary>The raw curve parameter of the split point (projected in plan), validated to lie inside the curve.</summary>
@@ -155,8 +161,9 @@ namespace RevitMcpNext.Addin
         /// inserts stay on the half that contains them (the copy's duplicates on the other half are deleted); an insert
         /// spanning the split point is refused. Returns the new half.
         /// </summary>
-        private static ElementId SplitByCopy(ChangeContext c, Element element, Curve locationCurve, double raw)
+        private static ElementId SplitByCopy(ChangeContext c, Element element, Curve locationCurve, double raw, out List<List<object>> replaced)
         {
+            replaced = new List<List<object>>();
             Document doc = c.Doc;
             // Work on an independent copy taken before anything changes: the LocationCurve's curve is owned by the element
             // and goes stale after CopyElement/Regenerate/Delete, and Clone() on it then fails inside Revit (SEHException,
@@ -192,7 +199,18 @@ namespace RevitMcpNext.Addin
                     new Dictionary<string, object> { ["hint"] = "split this wall in Revit (Modify > Split Element)" });
             }
 
-            // Each half keeps the inserts on its side of the split point.
+            // Each half keeps the inserts on its side of the split point. The original's inserts on the second half are
+            // replaced by the copy's duplicates at the same position (same type): report [old, new].
+            var used = new HashSet<ElementId>();
+            foreach (InsertSpan old in inserts.Where(i => i.Mid > raw))
+            {
+                ElementId oldType = doc.GetElement(old.Id)?.GetTypeId();
+                InsertSpan twin = copyInserts.Where(j => j.Mid > raw && !used.Contains(j.Id) && doc.GetElement(j.Id)?.GetTypeId() == oldType)
+                    .OrderBy(j => Math.Abs(j.Mid - old.Mid)).FirstOrDefault();
+                if (twin == null) continue;
+                used.Add(twin.Id);
+                replaced.Add(new List<object> { old.Id.Value, twin.Id.Value });
+            }
             var remove = inserts.Where(i => i.Mid > raw).Select(i => i.Id)
                 .Concat(copyInserts.Where(i => i.Mid < raw).Select(i => i.Id))
                 .Where(id => doc.GetElement(id) != null).ToList();
