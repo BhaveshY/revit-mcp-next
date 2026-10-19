@@ -3,7 +3,7 @@
 // run folder; nothing outside the e2e home is ever written).
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join, relative, resolve, isAbsolute } from "node:path";
+import { basename, join, relative, resolve, isAbsolute } from "node:path";
 import { defaultProjectTemplateCandidates } from "@revit-mcp-next/contracts/home";
 import { AssertionFailure } from "./assert.mjs";
 
@@ -109,7 +109,7 @@ export async function closeScenarioDocs(t, makeCaller) {
   const call = makeCaller({ session: t.session, year: t.year });
   for (const path of t.docs.values()) {
     if (!isUnder(path, t.runRoot)) continue;
-    const title = path.replace(/^.*[\/]/, "").replace(/\.(rvt|rfa)$/i, "");
+    const title = basename(path).replace(/\.(rvt|rfa)$/i, "");
     try {
       let r = await call("manage_document", { op: "close", doc: title, save: false }, { allowError: true, timeoutMs: 60_000 });
       if (r.status === "not_applied" && r.json?.confirm) r = await call("manage_document", { op: "close", confirm: r.json.confirm }, { allowError: true, timeoutMs: 60_000 });

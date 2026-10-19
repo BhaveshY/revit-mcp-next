@@ -49,7 +49,9 @@ export default {
     const L1 = lv[0].name;
     const L2 = lv[1].name;
     const allWallTypes = await typeNames(t, "Walls");
-    const basic = allWallTypes.filter((n) => /^Basic Wall:/i.test(n));
+    // Basic walls only (changing a door's host to a curtain or stacked type deletes the door): the 2024 metric template
+    // names the basic family "Basiswand", so exclude the other kinds instead of matching "Basic Wall".
+    const basic = allWallTypes.filter((n) => /^(Basic Wall|Basiswand):/i.test(n) || !/curtain|stacked|vorhang|gestapelt|fassade|storefront/i.test(n.split(":")[0]));
     const wallTypes = basic.length >= 2 ? basic : allWallTypes;
     const doorTypes = await typeNames(t, "Doors");
     t.assert(wallTypes.length >= 2 && doorTypes.length >= 1, `template has wall types (${wallTypes.length}) and door types (${doorTypes.length})`);
@@ -84,6 +86,7 @@ export default {
       base.doors = base.doors.map((d) => replaced.get(String(d)) ?? d);
       const hosts = await t.call("find_elements", { category: ["Doors"], fields: ["host"], limit: 50 });
       const byHost = rowsOf(hosts).reduce((m, x) => ((m[String(x.host)] = (m[String(x.host)] ?? 0) + 1), m), {});
+      t.log(`split ${JSON.stringify(r.json.split)} replaced ${JSON.stringify(r.json.replaced)} doors ${JSON.stringify(rowsOf(hosts).map((x) => [x.id, x.host]))}`);
       t.assert((byHost[String(base.wall)] ?? 0) >= 1 && (byHost[second] ?? 0) >= 1, `each half hosts a door: ${JSON.stringify(byHost)}`);
       return { first: String(base.wall), second };
     });

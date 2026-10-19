@@ -28,6 +28,7 @@ export default {
   profiles: ["quick", "full"],
   years: "each",
   async run(t) {
+    const L = { Mark: "Mark", Type: "Type", Width: "Width", Level: "Level", Height: "Height" };
     await t.step("disposable project S65", async () => {
       const { r, path } = await t.newProject("S65");
       t.assertEq(r.status, "ok", "new_project");
@@ -65,6 +66,8 @@ export default {
       const r = await t.call("edit_schedules", { op: "create", category: "Doors", name: "S65 Doors", fields: ["Mark", "Type", "Width", "Level"], sort: ["Mark"] });
       t.assertEq(r.json.created.length, 1, "schedule created");
       t.assertEq(r.json.schedule.fields.length, 4, "four fields");
+      // Field names come back in Revit's UI language (2024 on this PC: Kennzeichen, Typ, Breite, Ebene): map them.
+      [L.Mark, L.Type, L.Width, L.Level] = r.json.schedule.fields;
       const taken = await t.expectError("edit_schedules", { op: "create", category: "Doors", name: "S65 Doors" }, "NAME_TAKEN");
       t.assertMatch(taken.fix, /S65 Doors 2/, "fix suggests the next free name");
       const bad = await t.expectError("edit_schedules", { op: "create", category: "Doors", name: "S65 Bad", fields: ["Mark", "No Such Field"] }, "NOT_FOUND");
@@ -73,7 +76,8 @@ export default {
 
     await t.step("add_fields, set_field heading/hidden/totals, order_fields", async () => {
       const add = await t.call("edit_schedules", { op: "add_fields", schedule: "S65 Doors", fields: ["Height", "Mark"] });
-      t.assert(add.json.schedule.fields.includes("Height"), "Height added");
+      L.Height = add.json.schedule.fields.find((f) => ![L.Mark, L.Type, L.Width, L.Level].includes(f));
+      t.assert(L.Height, `Height added: ${JSON.stringify(add.json.schedule.fields)}`);
       t.assert(add.warnings.some((w) => /Mark/.test(w)), "Mark already present is warned");
       const heading = await t.call("edit_schedules", { op: "set_field", schedule: "S65 Doors", field: "Mark", heading: "Door No." });
       t.assertEq(heading.json.field.heading, "Door No.", "heading set");
@@ -82,7 +86,7 @@ export default {
       const total = await t.call("edit_schedules", { op: "set_field", schedule: "S65 Doors", field: "Mark", totals: true }, { allowError: true });
       t.assert(total.status === "error" ? total.code === "INVALID_ARGS" : true, "a text field cannot be totalled");
       const order = await t.call("edit_schedules", { op: "order_fields", schedule: "S65 Doors", fields: ["Level", "Mark"] });
-      t.assertEq(order.json.schedule.fields.slice(0, 2).join(","), "Level,Mark", "Level and Mark first");
+      t.assertEq(order.json.schedule.fields.slice(0, 2).join(","), `${L.Level},${L.Mark}`, "Level and Mark first");
     });
 
     const first = await t.step("read rows: id column through the unique Mark key", async () => {
@@ -90,11 +94,11 @@ export default {
       const rows = tableOf(r.json.rows);
       t.assertEq(rows.cols[0], "id", "id column present");
       t.assertEq(rows.total, 3, "three door rows");
-      t.assert(!rows.cols.includes("Height"), "hidden fields have no column");
+      t.assert(!rows.cols.includes(L.Height), "hidden fields have no column");
       const map = idToMark(r, "Door No.");
       t.assertEq(map.size, 3, "every row has an id");
       for (const id of m.doors) t.assert(map.has(id), `door ${id} is a row`);
-      t.assertEq(r.json.sort.join(","), "Mark", "sorted by Mark");
+      t.assertEq(r.json.sort.join(","), L.Mark, "sorted by Mark");
       return map;
     });
 
@@ -156,7 +160,7 @@ export default {
     await t.step("remove_fields drops a sorted field and its sorting", async () => {
       await t.call("edit_schedules", { op: "set_sort", schedule: "S65 Doors", sort: ["Level", "Mark"], headers: true });
       const r = await t.call("edit_schedules", { op: "remove_fields", schedule: "S65 Doors", fields: ["Level"] });
-      t.assert(!r.json.schedule.fields.includes("Level"), "Level removed");
+      t.assert(!r.json.schedule.fields.includes(L.Level), "Level removed");
       t.assertEq(r.json.sort.length, 1, "the Level sort went with it");
       t.assert(r.warnings.some((w) => /PARTIAL_RESULT/.test(w)), "removed rules are warned");
     });
