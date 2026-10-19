@@ -379,8 +379,9 @@ export const ERROR_SPECS: ErrorSpec[] = [
     code: "INVALID_ARGS",
     meaning: "The arguments did not validate; nothing ran.",
     nothingChanged: true,
-    details: "param, reason, example",
+    details: "param, reason, example, alternative? {tool, args}",
     fix: [
+      { kind: "call", when: has("details.alternative.tool"), tool: "${details.alternative.tool}", args: "${details.alternative.args}" },
       { kind: "call", when: has("details.example"), tool: "${tool}", args: "${details.example}" },
       { kind: "call", tool: "help", args: { tool: "${tool}", op: "${op}" } },
     ],

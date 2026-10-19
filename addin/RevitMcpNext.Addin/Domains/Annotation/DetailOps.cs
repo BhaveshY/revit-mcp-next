@@ -103,6 +103,32 @@ namespace RevitMcpNext.Addin
                       (area > 0 ? ", " + Units.M2(area).ToString("0.##", CultureInfo.InvariantCulture) + " m²" : string.Empty));
         }
 
+        /// <summary>
+        /// The detail component / annotation symbol named by type. A filled region type (listed under Detail Items too)
+        /// gets INVALID_ARGS pointing at op filled_region; NOT_FOUND lists only detail symbols, so its fix places one.
+        /// </summary>
+        private static FamilySymbol DetailSymbol(ChangeContext c, View view, string typeText)
+        {
+            Document doc = c.Doc;
+            try
+            {
+                return Resolve.Type<FamilySymbol>(doc, typeText, c.Args.Field("type"));
+            }
+            catch (OpException ex) when (ex.Code == ErrorCodes.NotFound)
+            {
+                FilledRegionType region = null;
+                try { region = Resolve.Type<FilledRegionType>(doc, typeText, c.Args.Field("type")); } catch (OpException) { region = null; }
+                if (region != null)
+                {
+                    throw OpException.InvalidArgs(c.Args.Field("type"), "'" + Resolve.FullTypeName(region) + "' is a filled region type, not a detail component; draw it with annotate op filled_region (type + the outline points)");
+                }
+                IEnumerable<string> detail = new FilteredElementCollector(doc).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                    .Where(t => { FamilyPlacementType p = t.Family?.FamilyPlacementType ?? FamilyPlacementType.Invalid; return p == FamilyPlacementType.ViewBased || p == FamilyPlacementType.CurveBasedDetail; })
+                    .Select(Resolve.FullTypeName);
+                throw OpException.NotFound(c.Args.Field("type"), "detail type", typeText, Resolve.Closest(typeText, detail));
+            }
+        }
+
         [Op("annotate.detail_item")]
         public static void DetailItem(ChangeContext c)
         {
@@ -111,7 +137,7 @@ namespace RevitMcpNext.Addin
             Plane plane = AnnotationSupport.ViewPlane(view);
             string typeText = c.Str("type");
             if (string.IsNullOrWhiteSpace(typeText)) throw OpException.InvalidArgs("type", "is required (a detail component or annotation symbol type \"Family: Type\")");
-            FamilySymbol symbol = Resolve.Type<FamilySymbol>(doc, typeText, c.Args.Field("type"));
+            FamilySymbol symbol = DetailSymbol(c, view, typeText);
             FamilyPlacementType placement = symbol.Family?.FamilyPlacementType ?? FamilyPlacementType.Invalid;
             if (placement != FamilyPlacementType.ViewBased && placement != FamilyPlacementType.CurveBasedDetail)
             {
@@ -181,7 +207,11 @@ namespace RevitMcpNext.Addin
                     {
                         ["param"] = "revision",
                         ["reason"] = "revision is issued",
-                        ["example"] = new Dictionary<string, object> { ["tool"] = "edit_sheets", ["op"] = "revision_create", ["description"] = revision.Description + " (rev)" }
+                        ["alternative"] = new Dictionary<string, object>
+                        {
+                            ["tool"] = "edit_sheets",
+                            ["args"] = new Dictionary<string, object> { ["op"] = "revision_create", ["description"] = revision.Description + " (rev)" }
+                        }
                     });
             }
             Plane plane = AnnotationSupport.ViewPlane(view);

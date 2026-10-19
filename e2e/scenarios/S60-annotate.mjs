@@ -188,7 +188,8 @@ export default {
     });
 
     await t.step("detail item (when the template has a detail component)", async () => {
-      const types = tableOf((await t.call("list", { kind: "types", category: "Detail Items" })).json);
+      // Detail Items also lists filled region types; a detail component is a FamilySymbol.
+      const types = tableOf((await t.call("list", { kind: "types", category: "Detail Items", class: "FamilySymbol" })).json);
       if (!types || types.rows.length === 0) {
         await t.expectError("annotate", { op: "detail_item", view: m.plan, type: "No Such Detail", at: [0, 0] }, "NOT_FOUND");
         t.log("no detail components in the template; NOT_FOUND path covered");
@@ -201,6 +202,12 @@ export default {
         r = await t.call("annotate", { op: "detail_item", view: m.plan, type, start: [20000, 1000], end: [22000, 1000] });
       }
       t.assertEq(r.json.created.length, 1, "detail item placed");
+      const regions = tableOf((await t.call("list", { kind: "types", category: "Detail Items", class: "FilledRegionType", limit: 1 })).json);
+      if (regions && regions.rows.length > 0) {
+        const region = `${regions.rows[0][col(regions, "family")]}: ${regions.rows[0][col(regions, "name")]}`;
+        const wrong = await t.expectError("annotate", { op: "detail_item", view: m.plan, type: region, at: [20000, 3000] }, "INVALID_ARGS");
+        t.assertMatch(wrong.summary, /filled_region/, "a filled region type points at op filled_region");
+      }
     });
 
     await t.step("revision cloud; an issued revision is refused", async () => {

@@ -65,12 +65,13 @@ namespace RevitMcpNext.Addin
                 View view = doc.GetElement(dimension.OwnerViewId) as View
                             ?? throw OpException.InvalidArgs("ids", "dimension " + element.Id.Value.ToString(CultureInfo.InvariantCulture) + " has no owner view");
                 var actions = new List<string>();
+                ElementId dimensionId = dimension.Id;
                 Dimension target = dimension;
                 if (rebuild)
                 {
                     Plane plane = AnnotationSupport.ViewPlane(view);
                     Line line = c.Has("start") ? DimensionLine(c, plane, c.Point("start"), c.Point("end")) : ExistingLine(dimension);
-                    ReferenceArray references = c.Has("refs") ? ParseRefs(c, "refs") : dimension.References;
+                    ReferenceArray references = c.Has("refs") ? ParseRefs(c, "refs") : Fresh(doc, dimension.References);
                     if (references.Size < 2) throw OpException.InvalidArgs("refs", "a dimension needs at least 2 references; got " + references.Size.ToString(CultureInfo.InvariantCulture));
                     DimensionType keep = type ?? doc.GetElement(dimension.GetTypeId()) as DimensionType;
                     List<TextOverride> texts = ReadOverrides(dimension);
@@ -94,17 +95,17 @@ namespace RevitMcpNext.Addin
                     if (!move.IsZeroLength())
                     {
                         ElementTransformUtils.MoveElement(doc, target.Id, move);
-                        if (target.Id == dimension.Id) c.Modified(dimension, "position", null);
+                        if (target.Id == dimensionId) c.Modified(dimension, "position", null);
                         actions.Add("moved");
                     }
                 }
                 if (c.Has("overrides"))
                 {
                     ApplyOverrides(c, target);
-                    if (target.Id == dimension.Id) c.Modified(dimension, "text", null);
+                    if (target.Id == dimensionId) c.Modified(dimension, "text", null);
                     actions.Add("text overrides");
                 }
-                table.Add(dimension.Id.Value, target.Id.Value, actions.Count == 0 ? "unchanged" : string.Join(", ", actions));
+                table.Add(dimensionId.Value, target.Id.Value, actions.Count == 0 ? "unchanged" : string.Join(", ", actions));
                 if (table.Rows.Count == 1) c.Output("dimension", target.Id);
             }
             c.Data(new Dictionary<string, object> { ["dimensions"] = table.ToWire() });
@@ -191,6 +192,55 @@ namespace RevitMcpNext.Addin
             return Line.CreateBound(origin - line.Direction * 5, origin + line.Direction * 5);
         }
 
+        /// <summary>
+        /// Independent copies of an existing dimension's references (stable representation round trip, a datum's own
+        /// reference for grids/levels/reference planes). The dimension's own array is rejected by NewDimension on Revit
+        /// 2027 ("Invalid number of references", e2e S60).
+        /// </summary>
+        private static ReferenceArray Fresh(Document doc, ReferenceArray source)
+        {
+            var array = new ReferenceArray();
+            foreach (Reference reference in source)
+            {
+                Reference copy = Datum(doc, reference);
+                if (copy == null)
+                {
+                    try
+                    {
+                        copy = Reference.ParseFromStableRepresentation(doc, reference.ConvertToStableRepresentation(doc));
+                    }
+                    catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is ArgumentException)
+                    {
+                        copy = null;
+                    }
+                }
+                array.Append(copy ?? reference);
+            }
+            return array;
+        }
+
+        /// <summary>
+        /// The datum's own reference for a grid/level/reference plane: a dimension reports grid references as
+        /// "uid:0:SURFACE", which NewDimension rejects ("Invalid number of references") when passed back.
+        /// </summary>
+        private static Reference Datum(Document doc, Reference reference)
+        {
+            try
+            {
+                switch (doc.GetElement(reference.ElementId))
+                {
+                    case Grid grid: return new Reference(grid);
+                    case Level level: return level.GetPlaneReference();
+                    case ReferencePlane plane: return plane.GetReference();
+                    default: return null;
+                }
+            }
+            catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is ArgumentException)
+            {
+                return null;
+            }
+        }
+
         private static ReferenceArray ParseRefs(ChangeContext c, string key)
         {
             var array = new ReferenceArray();
@@ -211,7 +261,7 @@ namespace RevitMcpNext.Addin
                     throw OpException.InvalidArgs(c.Args.Field(key) + "[" + index.ToString(CultureInfo.InvariantCulture) + "]",
                         "'" + values[index] + "' is not a stable reference of this document (take refs from describe_elements)");
                 }
-                array.Append(reference);
+                array.Append(Datum(c.Doc, reference) ?? reference);
             }
             return array;
         }
