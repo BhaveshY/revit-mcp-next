@@ -49,6 +49,7 @@ namespace RevitMcpNext.Addin
             public const string Probe = "probe";
             public const string RunCSharp = "run_csharp";
             public const string ExportIfc = "export.ifc";
+            public const string ExportGbxml = "export.gbxml";
             public const string ScheduleFields = "schedule_fields";
         }
 

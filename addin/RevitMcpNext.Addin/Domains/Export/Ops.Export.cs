@@ -502,7 +502,54 @@ namespace RevitMcpNext.Addin
                     if (!spatial) ctx.Notice("GBXML_BUILDING_ELEMENTS", "no placed rooms or spaces: the energy model is built from building elements (slower)");
 #endif
                     DeleteForReplace(target, replace);
-                    if (!doc.Export(folder, item.BaseName, options)) throw new OpException(ErrorCodes.RevitRefused, "Revit did not export gbXML.", new Dictionary<string, object> { ["apiMessage"] = "Export returned false" });
+                    // The energy analytical model is built inside the export, which needs an open transaction on Revit
+                    // 2026+ ("Modifying is forbidden because the document has no open transaction", e2e S85): run it in a
+                    // temporary transaction that is rolled back, like IFC.
+                    bool exported;
+                    using (var temp = new TempScope(doc, Naming.Purposes.ExportGbxml))
+                    {
+                        exported = temp.Run(() =>
+                        {
+#if REVIT2026_OR_GREATER
+                            // Revit 2026+ exports the document's energy analytical model: build one when there is none
+                            // ("There is no EnergyAnalysisDetailModel in the document", e2e S85); the scope rolls it back.
+                            if (Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.GetMainEnergyAnalysisDetailModel(doc) == null)
+                            {
+                                // Rooms/spaces first when placed, else (or when they bound nothing) the building elements.
+                                var types = new List<Autodesk.Revit.DB.Analysis.EnergyModelType>();
+                                if (HasPlacedSpatialElements(doc)) types.Add(Autodesk.Revit.DB.Analysis.EnergyModelType.SpatialElement);
+                                types.Add(Autodesk.Revit.DB.Analysis.EnergyModelType.BuildingElement);
+                                Exception last = null;
+                                foreach (Autodesk.Revit.DB.Analysis.EnergyModelType type in types)
+                                {
+                                    try
+                                    {
+                                        var energy = new Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelOptions
+                                        {
+                                            Tier = Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelTier.Final,
+                                            EnergyModelType = type
+                                        };
+                                        Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(doc, energy);
+                                        last = null;
+                                        break;
+                                    }
+                                    catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+                                    {
+                                        last = ex;
+                                    }
+                                }
+                                if (last != null)
+                                {
+                                    throw new OpException(ErrorCodes.InvalidArgs, "Revit cannot build an energy model of '" + doc.Title + "' for gbXML: " + last.Message +
+                                        " (it needs rooms or spaces bounded by walls, floors and roofs).",
+                                        new Dictionary<string, object> { ["param"] = "format", ["reason"] = last.Message });
+                                }
+                            }
+#endif
+                            return doc.Export(folder, item.BaseName, options);
+                        }, out TxResult _);
+                    }
+                    if (!exported) throw new OpException(ErrorCodes.RevitRefused, "Revit did not export gbXML.", new Dictionary<string, object> { ["apiMessage"] = "Export returned false" });
                     return Existing(target);
                 }
                 default:
