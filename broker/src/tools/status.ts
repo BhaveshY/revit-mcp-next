@@ -106,8 +106,12 @@ async function handle(ctx: ToolContext): Promise<ToolOutcome> {
   if (targetDoc?.activeView) data.view = targetDoc.activeView;
   if (targetDoc?.selection) data.selected = targetDoc.selection.count;
   if (targetDoc?.levels?.length) {
-    data.levels = { cols: ["name", "elevation"], rows: targetDoc.levels.slice(0, 30).map((l) => [l[1], l[2]]) };
-    if ((targetDoc.levelsMore ?? 0) > 0) (data.levels as Record<string, unknown>).more = targetDoc.levelsMore;
+    // Compact status stays within its 2 KB budget on models with many levels (e2e R13 adds 160): the lowest levels
+    // here, list {"kind":"levels"} for all of them.
+    const shown = full ? 30 : 8;
+    data.levels = { cols: ["name", "elevation"], rows: targetDoc.levels.slice(0, shown).map((l) => [l[1], l[2]]) };
+    const more = Math.max(0, targetDoc.levels.length - shown) + (targetDoc.levelsMore ?? 0);
+    if (more > 0) (data.levels as Record<string, unknown>).more = more;
   }
 
   // include sections (shared 10 s budget).
