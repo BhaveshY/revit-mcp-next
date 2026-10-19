@@ -42,8 +42,18 @@ export default {
       t.log(`image job: ${r.summary} after ${polls} poll(s)`);
     });
 
+    await t.step("cancel_job: an unknown job is JOB_UNKNOWN", async () => {
+      const r = await t.expectError("cancel_job", { id: "j999" }, "JOB_UNKNOWN");
+      t.assert(!!r.fix, "fix line");
+    });
+
     await t.step("cancel_job on a running export stops it between files", async () => {
-      const r = await t.call("export", { format: "image", views, folder, size: 15000, name: "cancel_{n}" }, { timeoutMs: 120_000, allowError: true });
+      // Every plan of the template at the largest size, so the export outlives the call budget even on a fast PC.
+      const plans = await t.call("list", { kind: "views", view_type: "FloorPlan", limit: 40 }, { allowError: true });
+      const nameCol = plans.json?.cols?.indexOf("name") ?? -1;
+      const many = nameCol >= 0 ? [...new Set(plans.json.rows.map((row) => row[nameCol]))].map(String) : [];
+      const all = many.length > views.length ? many : views;
+      const r = await t.call("export", { format: "image", views: all, folder, size: 15000, name: "cancel_{n}" }, { timeoutMs: 120_000, allowError: true });
       if (r.status !== "running") {
         t.log(`export finished before it could be cancelled (${r.status}); cancel path not exercised on this PC`);
         return;

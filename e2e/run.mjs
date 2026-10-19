@@ -37,7 +37,7 @@ import { isDefaultHome, userProfileDir } from "@revit-mcp-next/contracts/home";
 import { REGISTRY } from "@revit-mcp-next/contracts/catalog";
 import * as A from "./lib/assert.mjs";
 import { Coverage, makeCaller, setRunHooks } from "./lib/call.mjs";
-import { makeWriteGuard, newProject, newRunId, projectTemplate, runDir, runRoot } from "./lib/fixtures.mjs";
+import { closeScenarioDocs, makeWriteGuard, newProject, newRunId, projectTemplate, runDir, runRoot } from "./lib/fixtures.mjs";
 import { budgetProblems, coverageGate, loadBudgets, t1Gate, writeT1Baseline } from "./lib/gates.mjs";
 import { hintProblems } from "./lib/hints.mjs";
 import { connectBroker, DEFAULT_BROKER, REPO } from "./lib/mcp.mjs";
@@ -51,7 +51,9 @@ import {
   launchRevit,
   LicensingBlocked,
   ownedRevit,
+  processAlive,
   registrationFor,
+  revitCrashSince,
   revitVersion,
   setDefaultLaunchArgs,
   waitReady,
@@ -252,7 +254,14 @@ async function main() {
   }
 
   const ensureRevit = async (year) => {
-    if (revits.has(year)) return revits.get(year);
+    if (revits.has(year)) {
+      const known = revits.get(year);
+      if (processAlive(known.pid) || !flags.launch) return known;
+      // The harness Revit is gone (crash, or a reliability scenario that did not relaunch it): start a fresh one.
+      log(`Revit ${year} (pid ${known.pid}) is gone; launching a fresh one`);
+      if (known.slot) releaseSlot(known.slot);
+      revits.delete(year);
+    }
     if (blocked.has(year)) return null;
     let owned = ownedRevit(home, year);
     if (owned && flags.restart) {
@@ -311,12 +320,14 @@ async function main() {
 
   for (const scenario of selected) {
     const runYears = scenario.years === "none" ? [null] : scenario.years === "one" ? [years[0]] : years;
-    for (const year of runYears) {
+    for (const year of runYears) for (let attempt = 0; attempt < 2; attempt++) {
+      let retry = false;
       const label = `${scenario.id}${year ? ` (Revit ${year})` : ""}`;
       const started = Date.now();
       const record = { id: scenario.id, title: scenario.title, year, status: "pass", durationMs: 0, assertions: [], calls: [], logs: [] };
       current = { id: scenario.id, year, record };
       let session = null;
+      let scenarioCtx = null;
       try {
         let revit = null;
         if (year) {
@@ -327,11 +338,12 @@ async function main() {
             summary.skipped.push({ id: scenario.id, year, reason: record.reason });
             log(`${record.status.toUpperCase()} ${label}: ${record.reason}`);
             summary.scenarios.push(record);
-            continue;
+            break;
           }
         }
         const root = runRoot(home, runId);
-        const yearDir = year ? runDir(home, runId, year) : root;
+        // A crash retry works in its own folder: the first attempt left its documents on disk.
+        const yearDir = year ? (attempt > 0 ? runDir(home, runId, `${year}/retry-${scenario.id}`) : runDir(home, runId, year)) : root;
         const t = {
           id: scenario.id,
           year,
@@ -369,6 +381,7 @@ async function main() {
             }
           },
         };
+        scenarioCtx = t;
         if (year) {
           session = await connectBroker({ home, broker });
           t.session = session;
@@ -392,18 +405,34 @@ async function main() {
         record.durationMs = Date.now() - started;
         log(`PASS ${label} (${Math.round(record.durationMs / 100) / 10} s, ${record.assertions.length} checks)`);
       } catch (error) {
-        record.status = "fail";
-        record.durationMs = Date.now() - started;
-        record.error = error.message;
-        record.details = error.details;
-        summary.failures.push({ id: scenario.id, year, error: error.message, details: error.details });
-        log(`FAIL ${label}: ${error.message}`);
-        if (error.details) log(`     ${JSON.stringify(error.details).slice(0, 800)}`);
-        if (flags.verbose && error.stack) log(error.stack);
+        // A native Revit crash during the scenario (a new journal minidump and the harness Revit gone, e.g. Autodesk
+        // analytics AdpSDKCore.dll during a save) is an environment fault: run the scenario once more on a fresh Revit.
+        const entry = year ? revits.get(year) : null;
+        const crash = entry && attempt === 0 && !processAlive(entry.pid) ? revitCrashSince(year, started) : null;
+        if (crash) {
+          retry = true;
+          summary.environment.crashes = summary.environment.crashes ?? [];
+          summary.environment.crashes.push({ scenario: scenario.id, year, module: crash.module, address: crash.address, dump: crash.dump, error: error.message });
+          log(`ENV ${label}: Revit ${year} crashed in ${crash.module ?? "an unknown module"} at ${crash.address ?? "?"} (${crash.dump}); running the scenario again on a fresh Revit`);
+        } else {
+          record.status = "fail";
+          record.durationMs = Date.now() - started;
+          record.error = error.message;
+          record.details = error.details;
+          summary.failures.push({ id: scenario.id, year, error: error.message, details: error.details });
+          log(`FAIL ${label}: ${error.message}`);
+          if (error.details) log(`     ${JSON.stringify(error.details).slice(0, 800)}`);
+          if (flags.verbose && error.stack) log(error.stack);
+        }
       } finally {
-        if (session) await session.close();
+        if (session) {
+          if (scenarioCtx && !retry) await closeScenarioDocs(scenarioCtx, makeCaller).catch(() => {});
+          await session.close();
+        }
       }
+      if (retry) continue;
       summary.scenarios.push(record);
+      break;
     }
   }
   current = { id: null, year: null, record: null };

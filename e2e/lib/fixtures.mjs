@@ -98,3 +98,28 @@ export async function normalizeLevels(t) {
   const r = await t.call("set_parameters", { rows: updates.map((u) => ({ id: String(u.row.id), values: { Name: u.name } })) });
   if (r.status !== "ok") t.log(`could not rename levels to Level 1/Level 2: ${r.text?.split("\n")[0]}`);
 }
+
+/**
+ * After a scenario: close the disposable projects it created (t.docs) without saving, so one Revit session does not
+ * pile up dozens of open documents over a full run (Revit 2027 crashed twice in AdpSDKCore.dll while saving the 11th
+ * new project of a session). Best effort and outside coverage/hints: errors are ignored, the last open doc stays.
+ */
+export async function closeScenarioDocs(t, makeCaller) {
+  if (!t.session || !t.docs || t.docs.size === 0) return;
+  const call = makeCaller({ session: t.session, year: t.year });
+  for (const path of t.docs.values()) {
+    if (!isUnder(path, t.runRoot)) continue;
+    const title = path.replace(/^.*[\/]/, "").replace(/\.(rvt|rfa)$/i, "");
+    try {
+      let r = await call("manage_document", { op: "close", doc: title, save: false }, { allowError: true, timeoutMs: 60_000 });
+      if (r.status === "not_applied" && r.json?.confirm) r = await call("manage_document", { op: "close", confirm: r.json.confirm }, { allowError: true, timeoutMs: 60_000 });
+      for (let i = 0; i < 4 && r.status === "running"; i++) {
+        const ref = r.json?.job ?? r.json?.ref;
+        if (!ref) break;
+        r = await call("job_status", { id: ref, wait: 30 }, { allowError: true, timeoutMs: 60_000 });
+      }
+    } catch {
+      // Revit gone or the doc already closed: nothing to clean up.
+    }
+  }
+}

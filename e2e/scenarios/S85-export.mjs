@@ -97,6 +97,11 @@ export default {
     });
 
     await t.step("gbxml of the model", async () => {
+      // An energy model needs an enclosed space: a walled, floored and roofed room (an empty project has none).
+      await t.call("create_elements", { op: "wall", level: "Level 1", top: "Level 2", points: [[0, 0], [8000, 0], [8000, 6000], [0, 6000]], closed: true });
+      await t.call("create_elements", { op: "floor", level: "Level 1", points: [[0, 0], [8000, 0], [8000, 6000], [0, 6000]] });
+      await t.call("create_elements", { op: "roof", level: "Level 2", points: [[0, 0], [8000, 0], [8000, 6000], [0, 6000]] });
+      await t.call("create_elements", { op: "room", level: "Level 1", at: [4000, 3000], name: "S85 Room" });
       const r = await settle(t, await t.call("export", { format: "gbxml", folder }, { timeoutMs: 120_000, allowError: true }), "gbxml");
       if (r.status === "error") t.log(`gbxml: ${r.code} ${r.summary}`);
       else t.assert(files(r)[0]?.toLowerCase().endsWith(".xml"), "xml");
@@ -104,7 +109,10 @@ export default {
 
     await t.step("nwc exports or says the exporter is missing", async () => {
       const r = await settle(t, await t.call("export", { format: "nwc", folder }, { timeoutMs: 120_000, allowError: true }), "nwc");
-      if (r.status === "error") t.assertEq(r.code, "EXPORTER_MISSING", "nwc without exporter");
+      if (r.status === "error") {
+        t.assertEq(r.code, "EXPORTER_MISSING", "nwc without exporter");
+        await t.expectError("export", { format: "nwc", folder }, "EXPORTER_MISSING"); // the declared error covers export.nwc
+      }
     });
 
     await t.step("an unknown view gives NOT_FOUND with candidates", async () => {

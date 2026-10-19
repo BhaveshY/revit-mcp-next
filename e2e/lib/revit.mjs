@@ -284,3 +284,53 @@ export function buildAddin({ repo, year }) {
   if (out.status !== 0) throw new Error(`build-addin ${year} failed (exit ${out.status}): ${(out.stderr || out.stdout || "").trim().slice(-1500)}`);
 }
 
+
+/**
+ * A Revit crash since sinceMs: the newest journal minidump (*.dmp) written after it, with the module that holds the
+ * exception address (minidump ModuleListStream + ExceptionStream). null when Revit left no dump.
+ */
+export function revitCrashSince(year, sinceMs) {
+  const dir = revitJournalDir(year);
+  if (!dir || !existsSync(dir)) return null;
+  let best = null;
+  for (const name of readdirSync(dir)) {
+    if (!/\.dmp$/i.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      const info = statSync(path);
+      if (info.mtimeMs >= sinceMs && (!best || info.mtimeMs > best.mtimeMs)) best = { path, mtimeMs: info.mtimeMs };
+    } catch {
+      // ignore
+    }
+  }
+  if (!best) return null;
+  let module = null;
+  let address = null;
+  try {
+    const buf = readFileSync(best.path);
+    const streams = buf.readUInt32LE(8);
+    const dirRva = buf.readUInt32LE(12);
+    let modules = [];
+    for (let i = 0; i < streams; i++) {
+      const type = buf.readUInt32LE(dirRva + i * 12);
+      const rva = buf.readUInt32LE(dirRva + i * 12 + 8);
+      if (type === 4) {
+        const n = buf.readUInt32LE(rva);
+        for (let j = 0; j < n; j++) {
+          const off = rva + 4 + j * 108;
+          const base = buf.readBigUInt64LE(off);
+          const size = BigInt(buf.readUInt32LE(off + 8));
+          const nameRva = buf.readUInt32LE(off + 20);
+          const len = buf.readUInt32LE(nameRva);
+          modules.push({ base, size, name: buf.subarray(nameRva + 4, nameRva + 4 + len).toString("utf16le") });
+        }
+      } else if (type === 6) {
+        address = buf.readBigUInt64LE(rva + 8 + 16);
+      }
+    }
+    if (address !== null) module = modules.find((m) => address >= m.base && address < m.base + m.size)?.name ?? null;
+  } catch {
+    // unreadable dump: report the file only
+  }
+  return { dump: best.path, module, address: address !== null ? `0x${address.toString(16)}` : null };
+}
