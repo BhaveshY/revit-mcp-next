@@ -9,7 +9,7 @@
 // The "kill during a long write" variant is D2 E7 in R13.
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { killOwned, launchRevit, processAlive, waitReady } from "../lib/revit.mjs";
 import { bindSlot } from "../lib/slots.mjs";
 
@@ -44,7 +44,8 @@ async function relaunch(t, args) {
   t.revit.pid = launched.pid;
   t.revit.launched = true;
   if (t.revit.slot) bindSlot(t.revit.slot, launched.pid);
-  const ready = await waitReady({ year: t.year, pid: launched.pid, home: t.home, startedAt: launched.startedAt, call: t.call });
+  const doc = args.length > 0 ? basename(args[0]).replace(/[.]rvt$/i, "") : undefined;
+  const ready = await waitReady({ year: t.year, pid: launched.pid, home: t.home, startedAt: launched.startedAt, call: t.call, doc });
   t.log(`Revit ${t.year} relaunched as pid ${launched.pid} in ${Math.round(ready.readyMs / 1000)} s`);
   return launched;
 }

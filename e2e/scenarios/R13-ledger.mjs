@@ -191,7 +191,7 @@ export default {
       t.revit.pid = launched.pid;
       t.revit.launched = true;
       if (t.revit.slot) bindSlot(t.revit.slot, launched.pid);
-      await waitReady({ year: t.year, pid: launched.pid, home: t.home, startedAt: launched.startedAt, call: t.call });
+      await waitReady({ year: t.year, pid: launched.pid, home: t.home, startedAt: launched.startedAt, call: t.call, doc: "R13A" });
       const back = await t.call("list", { kind: "levels" });
       t.assertEq(title(back), "R13A", "the session rebinds to R13A after the relaunch");
     });

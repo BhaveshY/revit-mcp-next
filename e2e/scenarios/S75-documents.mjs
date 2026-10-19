@@ -28,13 +28,13 @@ export default {
   years: "each",
   async run(t) {
     const a = await t.step("new_project A re-pins", async () => {
-      const { r, path } = await t.newProject("A");
+      const { r, path } = await t.newProject("S75A");
       t.assertEq(r.status, "ok", "new_project A");
       t.setTargetPath(path);
       return path;
     });
     const b = await t.step("new_project B (activate true) moves the pin to B", async () => {
-      const { r, path } = await t.newProject("B");
+      const { r, path } = await t.newProject("S75B");
       t.assert(r.notices.some((n) => n.startsWith("TARGET_NOW")), "TARGET_NOW for B");
       t.setTargetPath(path);
       return path;
@@ -56,9 +56,9 @@ export default {
     });
 
     await t.step("activate A re-pins with TARGET_NOW", async () => {
-      const r = await t.call("manage_document", { op: "activate", doc: "A" });
+      const r = await t.call("manage_document", { op: "activate", doc: "S75A" });
       t.assertEq(r.status, "ok", "activate");
-      t.assert(r.notices.some((n) => /^TARGET_NOW #\d+ A /.test(n)), `TARGET_NOW A: ${r.notices.join(" | ")}`);
+      t.assert(r.notices.some((n) => /^TARGET_NOW #\d+ S75A /.test(n)), `TARGET_NOW A: ${r.notices.join(" | ")}`);
       t.setTargetPath(a);
     });
 
@@ -70,15 +70,15 @@ export default {
       t.assertEq(opened.status, "ok", "open in the background");
       const again = await t.call("manage_document", { op: "open", path: join(t.yearDir, "B-copy.rvt"), activate: false });
       t.assert(again.notices.some((n) => n.startsWith("ALREADY_OPEN")), "already open notice");
-      await t.call("set_target", { doc: "A" });
+      await t.call("set_target", { doc: "S75A" });
       t.setTargetPath(a);
     });
 
     await t.step("file_overwrite: new_project over a closed file needs confirm", async () => {
-      const { r, path } = await t.newProject("Z");
+      const { r, path } = await t.newProject("S75Z", { levels: false }); // unmodified, so close needs no confirm
       t.assertEq(r.status, "ok", "new_project Z");
       t.setTargetPath(path);
-      const closed = await settle(t, await t.call("manage_document", { op: "close", doc: "Z" }), "close Z");
+      const closed = await settle(t, await t.call("manage_document", { op: "close", doc: "S75Z" }), "close Z");
       t.assertEq(closed.status, "ok", "close Z (active: via job steps)");
       const again = await t.call("manage_document", { op: "new_project", path, template: t.projectTemplate(), activate: true }, { timeoutMs: 120_000 });
       const applied = await confirm(t, "manage_document", again, "new_project");
@@ -90,10 +90,10 @@ export default {
       const units = await t.call("manage_document", { op: "set_units", unit: "m", accuracy: 0.01 });
       t.assertEq(units.status, "ok", "set_units m");
       t.assertMatch(units.summary, /m/i, "units summary");
-      const r = await t.call("manage_document", { op: "close", doc: "Z" });
+      const r = await t.call("manage_document", { op: "close", doc: "S75Z" });
       const applied = await settle(t, await confirm(t, "manage_document", r, "close"), "close Z unsaved");
       t.assertEq(applied.status, "ok", "closed after confirm");
-      await t.call("set_target", { doc: "A" });
+      await t.call("set_target", { doc: "S75A" });
       t.setTargetPath(a);
     });
 
@@ -118,7 +118,7 @@ export default {
       t.assert(r.notices.some((n) => n.startsWith("TARGET_NOW")), "family pinned");
       const closed = await settle(t, await t.call("manage_document", { op: "close", doc: "S75 Generic" }), "close family");
       t.assertEq(closed.status, "ok", "family closed");
-      await t.call("set_target", { doc: "A" });
+      await t.call("set_target", { doc: "S75A" });
       t.setTargetPath(a);
     });
 

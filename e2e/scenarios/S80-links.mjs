@@ -43,6 +43,9 @@ export default {
       const { path: host } = await t.newProject("Host80");
       t.setTargetPath(host);
       for (const title of ["Linked80", "Linked80b"]) {
+        // The level normalization modified the new doc: save it so close needs no unsaved_close confirm.
+        const saved = await t.call("manage_document", { op: "save", doc: title });
+        t.assertEq(saved.status, "ok", `save ${title}`);
         const closed = await settle(t, await t.call("manage_document", { op: "close", doc: title }), `close ${title}`);
         t.assertEq(closed.status, "ok", `close ${title}`);
       }

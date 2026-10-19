@@ -211,7 +211,10 @@ export async function waitReady(o) {
     if (registrationFor(o.home, o.year, o.pid)) {
       const r = await o.call("status", { instance: String(o.pid), detail: "full" }, { allowError: true });
       const row = Array.isArray(r.json?.revit) ? r.json.revit.find((x) => Array.isArray(x) && x[1] === o.pid) : null;
-      if (row && (row[2] === "idle" || String(row[2]).startsWith("busy"))) return { readyMs: Date.now() - o.startedAt, state: row[2] };
+      // o.doc: a file passed on the command line opens after the add-in registers; wait until the doc is listed too.
+      const docRows = Array.isArray(r.json?.docs?.rows) ? r.json.docs.rows : [];
+      const docOpen = !o.doc || docRows.some((d) => String(d[1] ?? "").replace(/[.](rvt|rfa)$/i, "").toLowerCase() === String(o.doc).toLowerCase());
+      if (row && docOpen && (row[2] === "idle" || String(row[2]).startsWith("busy"))) return { readyMs: Date.now() - o.startedAt, state: row[2] };
       o.log?.(`Revit ${o.year} pid ${o.pid}: ${row ? row[2] : "registered, waiting for the add-in"}`);
     }
     if (Date.now() > deadline) throw new Error(`Revit ${o.year} (pid ${o.pid}) did not become ready within ${Math.round(timeoutMs / 1000)} s (no registration in ${instancesDir(o.home)})`);

@@ -19,6 +19,8 @@ export default {
   async run(t) {
     const { path } = await t.newProject("W4R");
     t.setTargetPath(path);
+    // Mark the model after the fixture's own setup (level renames) so only the previews are checked below.
+    const mark = (await t.call("get_changes", { limit: 1 })).json?.mark;
     const counts = { sent: 0, ok: 0, expectedErrors: {}, skipped: 0 };
     const failures = [];
 
@@ -44,7 +46,12 @@ export default {
             const r = await t.call(tool.name, args, { allowError: true, timeoutMs: 60_000 });
             counts.sent += 1;
             if (r.status === "error") {
-              if (VALIDATION.has(r.code)) failures.push(`${tool.name}${op ? "." + op : ""} ${JSON.stringify(example).slice(0, 160)}: ${r.code} ${r.summary.slice(0, 200)}`);
+              // A placeholder handle (from:"r3"/"last") holds whatever this session found last: an INVALID_ARGS about
+              // that content (param from/ids) is a model-content error, not a validation failure of the example.
+              const handle = typeof example.from === "string" && /^(r\d+|last|selection)$/.test(example.from);
+              const contentParam = /^(from|ids)(\[|$)/.test(String(r.json?.details?.param ?? ""));
+              if (VALIDATION.has(r.code) && handle && contentParam) counts.expectedErrors[`${r.code}(handle content)`] = (counts.expectedErrors[`${r.code}(handle content)`] ?? 0) + 1;
+              else if (VALIDATION.has(r.code)) failures.push(`${tool.name}${op ? "." + op : ""} ${JSON.stringify(example).slice(0, 160)}: ${r.code} ${r.summary.slice(0, 200)}`);
               else counts.expectedErrors[r.code] = (counts.expectedErrors[r.code] ?? 0) + 1;
             } else counts.ok += 1;
           }
@@ -55,9 +62,9 @@ export default {
     });
 
     await t.step("the previews changed nothing", async () => {
-      const changes = await t.call("get_changes", { limit: 50 });
+      const changes = await t.call("get_changes", mark ? { since: mark, limit: 50 } : { limit: 50 });
       const rows = Array.isArray(changes.json?.rows) ? changes.json.rows : [];
-      t.assertEq(rows.length, 0, "no element changed since the session started");
+      t.assertEq(rows.length, 0, `no element changed since the examples started: ${JSON.stringify(changes.json?.transactions?.rows ?? [])}`);
     });
     void byName;
   },

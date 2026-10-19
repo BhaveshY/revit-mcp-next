@@ -21,7 +21,7 @@ export default {
   years: "each",
   async run(t) {
     const a = await t.step("disposable project A", async () => {
-      const { r, path } = await t.newProject("A");
+      const { r, path } = await t.newProject("S70A");
       t.assertEq(r.status, "ok", "new_project A");
       t.setTargetPath(path);
       return { path };
@@ -44,7 +44,7 @@ export default {
         if (r.status !== "ok" || r.json?.editable === false) continue;
         const types = rowsOf(r.json?.project_types);
         if (types.length === 0) continue;
-        t.assert(r.json.params?.total > 0, `${name}: params listed`);
+        if (!(r.json.params?.total > 0)) continue; // e.g. a tag family without own parameters
         t.assertEq(r.json.source, "loaded", "source");
         return { name: r.json.family, typeId: types[0][0], typeName: types[0][1], typeCount: r.json.types?.total ?? types.length };
       }
@@ -182,13 +182,13 @@ export default {
       const one = await t.call("edit_family", { op: "load_into" });
       t.assertEq(one.status, "ok", "load_into (project pin)");
       t.assertEq(one.json.loaded?.length, 1, "one target");
-      t.assertMatch(String(one.json.loaded[0].doc), /^A(\.rvt)?$/i, "loaded into A");
+      t.assertMatch(String(one.json.loaded[0].doc), /^S70A(\.rvt)?$/i, "loaded into S70A");
 
-      const b = await t.newProject("B");
+      const b = await t.newProject("S70B");
       t.assertEq(b.r.status, "ok", "new_project B");
       t.setTargetPath(b.path);
       await t.call("set_target", { doc: opened.n });
-      const two = await t.call("edit_family", { op: "load_into", into: ["A", "B"] });
+      const two = await t.call("edit_family", { op: "load_into", into: ["S70A", "S70B"] });
       t.assertEq(two.status, "not_applied", "two docs need confirmation");
       t.assertEq(two.json.rule, "multi_doc", "rule multi_doc");
       t.assertMatch(two.next ?? "", /"confirm":"[A-Z0-9]{6}"/, "next carries the confirm token");

@@ -8,7 +8,7 @@
 // This file also exports the raw add-in helper used by R6, R7, R10, R12 and S99 (e2e/lib is frozen in wave 2).
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { basename, join } from "node:path";
 import { authFile, authFingerprint, e2eTestOpsEnableFile, instancesDir, isDefaultHome, ledgerFile, parseAuthEnv } from "@revit-mcp-next/contracts/home";
@@ -183,12 +183,19 @@ export async function busyVariants(t, addin) {
     const variants = [];
     if (keys.has("export.ifc")) variants.push({ name: "export ifc", start: () => t.call("export", { format: "ifc" }, { allowError: true }) });
     else t.log("variant export skipped: export.ifc is not bound in this build (P-EXPORT)");
-    const rfa = findLibraryFamily(t.year);
+    // The write guard keeps file params inside the run folder: load a copy of a library family from there.
+    const library = findLibraryFamily(t.year);
+    let rfa = null;
+    if (library) {
+      rfa = join(t.yearDir, `busy-${basename(library).replace(/[^A-Za-z0-9_.-]+/g, "_")}`);
+      if (!existsSync(rfa)) copyFileSync(library, rfa);
+    }
     if (keys.has("place_family.load") && rfa) variants.push({ name: "family load", start: () => t.call("place_family", { op: "load", path: rfa }, { allowError: true }) });
     else t.log(`variant family load skipped: ${keys.has("place_family.load") ? "no .rfa found under C:\\ProgramData\\Autodesk\\RVT " + t.year : "place_family.load is not bound (P-MODEL)"}`);
     for (const v of variants) {
       await t.step(`busy variant: ${v.name} executing → another session's read is REVIT_BUSY or ok, never a dialog`, async () => {
-        const running = v.start();
+        const running = Promise.resolve().then(v.start);
+        running.catch(() => {}); // a failing start surfaces at the await below, not as an unhandled rejection
         await sleep(400);
         const t0 = Date.now();
         const r = await call2("find_elements", { category: ["Walls"], count_only: true }, { allowError: true });
@@ -206,7 +213,8 @@ export async function busyVariants(t, addin) {
 }
 
 function findLibraryFamily(year) {
-  const roots = [`C:\\ProgramData\\Autodesk\\RVT ${year}\\Libraries`, `C:\\ProgramData\\Autodesk\\RVT ${year}\\Libraries\\English`];
+  const base = `C:\\ProgramData\\Autodesk\\RVT ${year}\\Libraries`;
+  const roots = [`${base}\\English`, `${base}\\English-Imperial`, base];
   for (const root of roots) {
     const found = walkFor(root, 0);
     if (found) return found;

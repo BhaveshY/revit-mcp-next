@@ -1,7 +1,7 @@
 // S85 export (SPEC §13.3, P-EXPORT): every format to a folder under the run, NAME_TAKEN for existing files,
 // overwrite:true behind file_overwrite, name patterns, several files as a job, wrong view kinds refused.
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 /** A plan view reference: the name when unique, else the id of the floor plan among same-named views. */
 async function viewRef(t, name, folder) {
@@ -40,13 +40,15 @@ export default {
     const folder = join(t.yearDir, "exports85");
     const level1 = await viewRef(t, "Level 1", folder);
     const level2 = await viewRef(t, "Level 2", folder);
+    // "Level 1" resolves to that level's plan, which templates name differently (2027: "L1 - Architectural").
+    const level1Name = (await t.call("get_view", { view: level1 })).json?.name ?? "Level 1";
 
     await t.step("pdf of one view; repeat gives NAME_TAKEN; overwrite needs confirm", async () => {
       const r = await settle(t, await t.call("export", { format: "pdf", views: [level1], folder }, { timeoutMs: 120_000 }), "pdf");
       t.assertEq(r.status, "ok", "pdf");
       const [pdf] = files(r);
       t.assert(pdf && existsSync(pdf) && statSync(pdf).size > 0, `pdf written: ${pdf}`);
-      t.assertMatch(pdf, /Level 1\.pdf$/, "default name pattern {name}");
+      t.assertEq(basename(pdf), `${level1Name}.pdf`, "default name pattern {name}");
       const taken = await t.expectError("export", { format: "pdf", views: [level1], folder }, "NAME_TAKEN");
       t.assert(!!taken.fix, "NAME_TAKEN has a fix");
       const plan = await t.call("export", { format: "pdf", views: [level1], folder, overwrite: true });
