@@ -155,9 +155,13 @@ namespace RevitMcpNext.Addin
         /// inserts stay on the half that contains them (the copy's duplicates on the other half are deleted); an insert
         /// spanning the split point is refused. Returns the new half.
         /// </summary>
-        private static ElementId SplitByCopy(ChangeContext c, Element element, Curve curve, double raw)
+        private static ElementId SplitByCopy(ChangeContext c, Element element, Curve locationCurve, double raw)
         {
             Document doc = c.Doc;
+            // Work on an independent copy taken before anything changes: the LocationCurve's curve is owned by the element
+            // and goes stale after CopyElement/Regenerate/Delete, and Clone() on it then fails inside Revit (SEHException,
+            // seen live on Revit 2027 in e2e S40).
+            Curve curve = locationCurve.Clone();
             double p0 = curve.GetEndParameter(0), p1 = curve.GetEndParameter(1);
             List<InsertSpan> inserts = Inserts(doc, element, curve);
             InsertSpan spanning = inserts.FirstOrDefault(i => i.Min < raw - 1e-6 && i.Max > raw + 1e-6);

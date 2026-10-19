@@ -65,7 +65,7 @@ export const tool: ToolSpec = {
   },
   required: ["op"],
   ops: {
-    move: op("ids/from/filter,by/to", "", M, [{"op":"move","from":"selection","by":[0,500]}, {"op":"move","ids":["304601"],"to":[12000,4000]}], {
+    move: op("ids/from/filter,by/to", "", M, [{"op":"move","from":"selection","by":[0,500]}, {"op":"move","ids":["304601"],"to":[12000,4000]}], { moreOpt: "allow_pinned",
       help: "by moves every element by the vector; to moves them so the first element's location point (curve start for walls/lines) lands there, z kept unless given. Pinned elements need allow_pinned:true.",
       api: "ElementTransformUtils.MoveElements",
       errors: ["ELEMENTS_PINNED", "INVALID_ARGS", "NOT_FOUND"],
@@ -74,12 +74,12 @@ export const tool: ToolSpec = {
       help: "by/to: count copies at by, 2*by, ...; levels: copies aligned to each level (the lowest source level maps to the target) with base/top constraints re-associated.",
       api: "ElementTransformUtils.CopyElements + level parameters",
     }),
-    rotate: op("ids/from/filter,angle", "center,axis", M, [{"op":"rotate","ids":["304601"],"angle":90}, {"op":"rotate","from":"r3","angle":-45,"center":[5000,5000]}], {
+    rotate: op("ids/from/filter,angle", "center,axis", M, [{"op":"rotate","ids":["304601"],"angle":90}, {"op":"rotate","from":"r3","angle":-45,"center":[5000,5000]}], { moreOpt: "allow_pinned",
       help: "Counterclockwise in plan for the default axis [0,0,1]; center defaults to the center of the elements' bounding box.",
       api: "ElementTransformUtils.RotateElements",
       errors: ["ELEMENTS_PINNED"],
     }),
-    mirror: op("ids/from/filter,start,end", "keep", M, [{"op":"mirror","from":"r7","start":[6000,0],"end":[6000,8000]}, {"op":"mirror","ids":["306100"],"start":[0,4000],"end":[10000,4000],"keep":false}], {
+    mirror: op("ids/from/filter,start,end", "keep", M, [{"op":"mirror","from":"r7","start":[6000,0],"end":[6000,8000]}, {"op":"mirror","ids":["306100"],"start":[0,4000],"end":[10000,4000],"keep":false}], { moreOpt: "allow_pinned",
       help: "Mirrors about the vertical plane through start→end. keep:true (default) mirrors a copy; keep:false mirrors the originals.",
       api: "ElementTransformUtils.MirrorElements",
       errors: ["UNSUPPORTED_OP", "ELEMENTS_PINNED"],
@@ -88,7 +88,7 @@ export const tool: ToolSpec = {
       help: "Unassociated copies; count includes the original. Linear: by is the spacing between members. Radial: angle between members about center (default: element center).",
       api: "ElementTransformUtils.CopyElements (+ RotateElements)",
     }),
-    align: op("ids,target", "lock", meta(M, { blast: [] }), [{"op":"align","ids":["304601"],"target":"A"}, {"op":"align","ids":["306100"],"target":"Level 2"}], {
+    align: op("ids,target", "lock", meta(M, { blast: [] }), [{"op":"align","ids":["304601"],"target":"A"}, {"op":"align","ids":["306100"],"target":"Level 2"}], { moreOpt: "allow_pinned",
       help: "Moves each element so its location line/point lies on the target (grid, reference plane, straight wall/line: parallel move in plan; level: vertical move). lock:true adds a locked alignment where Revit offers a matching reference (family instances).",
       api: "ElementTransformUtils.MoveElement + Document.Create.NewAlignment",
       errors: ["NOT_FOUND", "UNSUPPORTED_OP", "ELEMENTS_PINNED"],
@@ -126,12 +126,12 @@ export const tool: ToolSpec = {
       help: "Doors, windows and families flip hand or facing; walls flip their orientation with side wall.",
       api: "FamilyInstance.flipHand / flipFacing, Wall.Flip",
     }),
-    split: op("ids,at", "", meta(M, { blast: [] }), [{"op":"split","ids":["304601"],"at":[6000,0]}], {
+    split: op("ids,at", "", meta(M, { blast: [] }), [{"op":"split","ids":["304601"],"at":[6000,0]}], { moreOpt: "allow_pinned",
       help: "MEP pipes and ducts break at the point; walls, structural framing and lines are copied and trimmed, and each half keeps the doors/windows on its side. Inserts spanning the split point are refused.",
       api: "PlumbingUtils/MechanicalUtils.BreakCurve; CopyElement + LocationCurve",
       errors: ["UNSUPPORTED_OP", "INVALID_ARGS"],
     }),
-    reshape: op("ids,start+end/points", "through", meta(M, { blast: [] }), [{"op":"reshape","ids":["304601"],"start":[0,0],"end":[10000,0]}, {"op":"reshape","ids":["304601"],"start":[0,0],"end":[10000,0],"through":[5000,2000]}], {
+    reshape: op("ids,start+end/points", "through", meta(M, { blast: [] }), [{"op":"reshape","ids":["304601"],"start":[0,0],"end":[10000,0]}, {"op":"reshape","ids":["304601"],"start":[0,0],"end":[10000,0],"through":[5000,2000]}], { moreOpt: "allow_pinned",
       help: "One curve-based element (wall, beam, pipe, duct, line) at a time: start+end gives a line, through or 3 points an arc; z keeps the old ends unless given. Sketch-based floors/roofs cannot be reshaped.",
       api: "LocationCurve.Curve",
       errors: ["UNSUPPORTED_OP", "INVALID_ARGS"],

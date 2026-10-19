@@ -89,17 +89,21 @@ namespace RevitMcpNext.Addin
 
             Domain domain = kind == "piping" ? Domain.DomainPiping : Domain.DomainHvac;
             ConnectorSet connectors = FreeSystemConnectors(c, elements, domain, out List<Element> members);
+            // The system type must match the connectors' own classification (an exhaust-air terminal cannot join a
+            // supply-air system: "Some connectors can't match system with domain, system type or direction", seen live).
+            string classification = DominantClassification(connectors, domain);
+            if (classification != null) connectors = OnlyClassification(c, connectors, domain, classification, members);
             MEPSystem system;
             if (kind == "piping")
             {
-                PipingSystemType type = TypeArg<PipingSystemType>(c, "type", "piping", t => t.SystemClassification == MEPSystemClassification.DomesticColdWater);
+                PipingSystemType type = TypeArg<PipingSystemType>(c, "type", "piping", t => classification != null ? t.SystemClassification.ToString() == classification : t.SystemClassification == MEPSystemClassification.DomesticColdWater);
                 PipingSystem piping = PipingSystem.Create(doc, type.Id, string.IsNullOrWhiteSpace(name) ? null : name.Trim());
                 piping.Add(connectors);
                 system = piping;
             }
             else
             {
-                MechanicalSystemType type = TypeArg<MechanicalSystemType>(c, "type", "duct", t => t.SystemClassification == MEPSystemClassification.SupplyAir);
+                MechanicalSystemType type = TypeArg<MechanicalSystemType>(c, "type", "duct", t => classification != null ? t.SystemClassification.ToString() == classification : t.SystemClassification == MEPSystemClassification.SupplyAir);
                 MechanicalSystem mechanical = MechanicalSystem.Create(doc, type.Id, string.IsNullOrWhiteSpace(name) ? null : name.Trim());
                 mechanical.Add(connectors);
                 system = mechanical;
@@ -246,6 +250,60 @@ namespace RevitMcpNext.Addin
         }
 
         /// <summary>Unassigned connectors of the domain on family instances (pipes/ducts join systems through connections).</summary>
+        /// <summary>The classification name (e.g. "SupplyAir", "DomesticColdWater") most free connectors carry, or null.</summary>
+        private static string DominantClassification(ConnectorSet connectors, Domain domain)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (Connector connector in connectors)
+            {
+                string name = ClassificationOf(connector, domain);
+                if (name == null) continue;
+                counts[name] = counts.TryGetValue(name, out int n) ? n + 1 : 1;
+            }
+            return counts.Count == 0 ? null : counts.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).First().Key;
+        }
+
+        /// <summary>DuctSystemType / PipeSystemType names equal the MEPSystemClassification names they map to.</summary>
+        private static string ClassificationOf(Connector connector, Domain domain)
+        {
+            try
+            {
+                string name = domain == Domain.DomainPiping ? connector.PipeSystemType.ToString() : connector.DuctSystemType.ToString();
+                if (string.IsNullOrEmpty(name) || name.IndexOf("Undefined", StringComparison.OrdinalIgnoreCase) >= 0 || name == "Fitting" || name == "Global") return null;
+                return Enum.TryParse(name, out MEPSystemClassification _) ? name : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static ConnectorSet OnlyClassification(ChangeContext c, ConnectorSet connectors, Domain domain, string classification, List<Element> members)
+        {
+            var kept = new ConnectorSet();
+            var skipped = new HashSet<long>();
+            foreach (Connector connector in connectors)
+            {
+                string name = ClassificationOf(connector, domain);
+                if (name == null || name == classification) kept.Insert(connector);
+                else skipped.Add(connector.Owner.Id.Value);
+            }
+            if (skipped.Count > 0)
+            {
+                c.Warn(WarningCodes.ParamIgnored, skipped.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) + " element(s) have " + "connectors of another system classification than " + classification + " and were left out",
+                    skipped.Select(id => new ElementId(id)));
+                members.RemoveAll(m => skipped.Contains(m.Id.Value) && !ConnectorOwners(kept).Contains(m.Id.Value));
+            }
+            return kept;
+        }
+
+        private static HashSet<long> ConnectorOwners(ConnectorSet connectors)
+        {
+            var owners = new HashSet<long>();
+            foreach (Connector connector in connectors) owners.Add(connector.Owner.Id.Value);
+            return owners;
+        }
+
         private static ConnectorSet FreeSystemConnectors(ChangeContext c, IList<Element> elements, Domain domain, out List<Element> members)
         {
             var set = new ConnectorSet();

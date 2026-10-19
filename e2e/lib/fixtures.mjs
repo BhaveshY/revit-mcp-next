@@ -68,7 +68,8 @@ export function makeWriteGuard(root, targetPath) {
 }
 
 /** Create a disposable project through the product (manage_document new_project, activate true). */
-export async function newProject(t, name) {
+/** options.levels:false keeps the template's level names (no write of ours in the new doc, e.g. S36 undo checks). */
+export async function newProject(t, name, options = {}) {
   const template = projectTemplate(t.year);
   if (!template) throw new AssertionFailure(`no Revit ${t.year} project template found under ProgramData\\Autodesk\\RVT ${t.year}\\Templates`);
   const path = join(t.yearDir, `${name}.rvt`);
@@ -76,7 +77,7 @@ export async function newProject(t, name) {
   // broker would otherwise pick the most recently used Revit (possibly another year that cannot read this template).
   const r = await t.call("manage_document", { op: "new_project", path, template, activate: true, doc: `@${t.year}` }, { timeoutMs: 120_000 });
   t.docs.set(name, path);
-  if (r.status === "ok") await normalizeLevels(t);
+  if (r.status === "ok" && options.levels !== false) await normalizeLevels(t);
   return { r, path, template };
 }
 

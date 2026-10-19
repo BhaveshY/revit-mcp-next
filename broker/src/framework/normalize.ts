@@ -300,7 +300,11 @@ function coerceString(value: unknown, p: ParamSpec, path: string, synonyms?: Rec
   else throw new CoerceError(path, `must be a string, got ${JSON.stringify(value)?.slice(0, 40)}`);
   if (p.enum && p.enum.length > 0) {
     const hit = matchEnum(s, p.enum, synonyms);
-    if (hit === null) throw new CoerceError(path, `must be one of ${p.enum.join(", ")}`, { values: p.enum, value: s });
+    if (hit === null) {
+      // openEnum: the tool handler resolves "tool.op" forms and near misses itself (read_many items).
+      if ((p as { openEnum?: boolean }).openEnum) return s.trim();
+      throw new CoerceError(path, `must be one of ${p.enum.join(", ")}`, { values: p.enum, value: s });
+    }
     return hit;
   }
   return s;

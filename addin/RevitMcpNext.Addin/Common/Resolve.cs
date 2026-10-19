@@ -341,6 +341,29 @@ namespace RevitMcpNext.Addin
             {
                 throw OpException.Ambiguous(param, "view", value, nonTemplates.Select(v => v.Name + " (" + v.ViewType + ", id " + v.Id.Value.ToString(CultureInfo.InvariantCulture) + ")"));
             }
+
+            // A level name ("Level 1") means that level's floor plan: models often name the plan after its level, and
+            // templates call it "L1 - Architectural" or similar. Only when exactly one non-dependent floor plan matches.
+            if (nonTemplates.Count == 0)
+            {
+                Level level = new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>().FirstOrDefault(l => Eq(l.Name, text));
+                if (level != null)
+                {
+                    List<ViewPlan> plans = views.OfType<ViewPlan>()
+                        .Where(v => !v.IsTemplate && v.ViewType == ViewType.FloorPlan && v.GenLevel != null && v.GenLevel.Id == level.Id && v.GetPrimaryViewId() == ElementId.InvalidElementId)
+                        .ToList();
+                    if (plans.Count == 1) return plans[0];
+                    // Templates have one plan per discipline (L1 - Architectural, - Mechanical, - Power ...) plus Site:
+                    // the single architectural, non-site plan is what "Level 1" means.
+                    List<ViewPlan> architectural = plans.Where(v => SafeDiscipline(v) == ViewDiscipline.Architectural &&
+                        v.Name.IndexOf("site", StringComparison.OrdinalIgnoreCase) < 0 && v.Name.IndexOf("lageplan", StringComparison.OrdinalIgnoreCase) < 0).ToList();
+                    if (architectural.Count == 1) return architectural[0];
+                    if (plans.Count > 1)
+                    {
+                        throw OpException.Ambiguous(param, "view", value, plans.Select(v => v.Name + " (FloorPlan of " + level.Name + ", id " + v.Id.Value.ToString(CultureInfo.InvariantCulture) + ")"));
+                    }
+                }
+            }
             throw OpException.NotFound(param, "view", value, Closest(text, views.Where(v => !v.IsTemplate).Select(v => v.Name)));
         }
 
@@ -619,6 +642,11 @@ namespace RevitMcpNext.Addin
         private static FillPattern SafePattern(FillPatternElement element)
         {
             try { return element?.GetFillPattern(); } catch { return null; }
+        }
+
+        private static ViewDiscipline? SafeDiscipline(View view)
+        {
+            try { return view.Discipline; } catch { return null; }
         }
 
         private static View SafeActiveView(Document doc)

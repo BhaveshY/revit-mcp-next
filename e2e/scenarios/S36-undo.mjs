@@ -97,7 +97,7 @@ export default {
     });
 
     await t.step("undo needs the target doc UI-active (never switches it)", async () => {
-      const second = await t.newProject("S36B");
+      const second = await t.newProject("S36B", { levels: false });
       t.setTargetPath(second.path);
       const nothing = await t.call("undo", {}, { expectError: ["UNDO_BLOCKED"] });
       t.assertMatch(nothing.summary, /no change of yours/, "nothing of ours in the new doc");

@@ -588,7 +588,9 @@ export class TargetResolver {
 
   /** Doc candidates (status display) without pinning. */
   async preview(session: Session, deadline: Deadline): Promise<{ world: World; target: DocCandidate | null; mode: Pin["mode"] | "auto?" | null }> {
-    const world = await this.world(session, deadline, false);
+    // Fresh snapshots: right after new_project/Save As the cached registry can still miss the reopened doc, and status
+    // would then show the pinned doc without its target flag (seen live in e2e S01).
+    const world = await this.world(session, deadline, true);
     const pin = session.pin;
     if (pin) {
       const c = world.candidates.find((x) => x.key === pin.key || x.aliases.includes(pin.key)) ?? null;

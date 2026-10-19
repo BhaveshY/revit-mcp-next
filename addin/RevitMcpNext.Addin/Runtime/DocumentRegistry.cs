@@ -1217,7 +1217,11 @@ namespace RevitMcpNext.Addin
                     DocState state = EnsureStateUnsafe(document);
                     long generation = ++state.Generation;
                     state.Modified = true;
-                    Dictionary<long, long> target = state.DeferDepth > 0 ? state.Overlay : state.Stamps;
+                    // A rollback (our NOT APPLIED plans, previews, failed writes) restores the previous state: it must not
+                    // stamp elements as changed, or the confirm of that plan is reported CONFIRM_STALE (seen live in S32).
+                    // Revit may raise it after our deferral scope has closed, so it is filtered here by operation.
+                    bool rollback = args.Operation == UndoOperation.TransactionRolledBack || args.Operation == UndoOperation.TransactionGroupRolledBack;
+                    Dictionary<long, long> target = rollback ? new Dictionary<long, long>() : state.DeferDepth > 0 ? state.Overlay : state.Stamps;
                     foreach (ElementId id in added) { if (id != null) { target[id.Value] = generation; state.Ring.Add(generation, id.Value, ChangeKind.Added); } }
                     foreach (ElementId id in modified) { if (id != null) { target[id.Value] = generation; state.Ring.Add(generation, id.Value, ChangeKind.Modified); } }
                     foreach (ElementId id in deleted)

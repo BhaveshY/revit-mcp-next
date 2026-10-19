@@ -385,7 +385,7 @@ async function main() {
             writeGuard: makeWriteGuard(root, () => targetPath),
           });
           t.expectError = t.call.expectError;
-          t.newProject = (name) => newProject(t, name);
+          t.newProject = (name, options) => newProject(t, name, options);
         }
         await scenario.run(t);
         record.durationMs = Date.now() - started;

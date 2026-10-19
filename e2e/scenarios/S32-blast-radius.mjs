@@ -72,6 +72,15 @@ export default {
       t.assertEq(totalOf(still), 25, "nothing deleted by preview");
     });
 
+    // Before the plan: pinning/unpinning a planned element is a real change, so a confirm after it is CONFIRM_STALE.
+    await t.step("pinned target → ELEMENTS_PINNED; unpin restores", async () => {
+      const one = [walls.big[0]];
+      await t.call("modify_elements", { op: "pin", ids: one });
+      const r = await t.expectError("modify_elements", { op: "move", ids: one, by: [0, 100] }, "ELEMENTS_PINNED");
+      t.assertMatch(r.fix ?? "", /allow_pinned/, "fix mentions allow_pinned");
+      await t.call("modify_elements", { op: "pin", ids: one, pinned: false });
+    });
+
     const plan = await t.step("delete 25 → NOT APPLIED (rule delete) with exact counts", async () => {
       const r = await t.call("modify_elements", { op: "delete", from: walls.bigHandle });
       t.assertEq(r.status, "not_applied", "needs the user's OK");
@@ -83,14 +92,6 @@ export default {
       const still = await t.call("find_elements", { from: walls.bigHandle, count_only: true });
       t.assertEq(totalOf(still), 25, "nothing deleted before confirm");
       return { token: r.json.confirm };
-    });
-
-    await t.step("pinned target → ELEMENTS_PINNED; unpin restores", async () => {
-      const one = [walls.big[0]];
-      await t.call("modify_elements", { op: "pin", ids: one });
-      const r = await t.expectError("modify_elements", { op: "move", ids: one, by: [0, 100] }, "ELEMENTS_PINNED");
-      t.assertMatch(r.fix ?? "", /allow_pinned/, "fix mentions allow_pinned");
-      await t.call("modify_elements", { op: "pin", ids: one, pinned: false });
     });
 
     await t.step("confirm applies exactly the plan", async () => {

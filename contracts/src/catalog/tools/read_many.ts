@@ -14,7 +14,7 @@ export const tool: ToolSpec = {
   discriminator: null,
   profiles: ["core", "full"],
   properties: {
-    calls: {"type":"array","description":"Up to 8 {tool, args}; args as for that tool.","items":{"type":"object","properties":{"tool":{"type":"string","enum":["status","list","find_elements","describe_elements","get_view","read_schedule","read_family","check_model","get_quantities","get_changes","capture","help"],"description":"A read tool."},"args":{"type":"object","description":"That tool's args."}},"required":["tool"]}},
+    calls: {"type":"array","description":"Up to 8 {tool, args}; args as for that tool.","items":{"type":"object","properties":{"tool":{"type":"string","enum":["status","list","find_elements","describe_elements","get_view","read_schedule","read_family","check_model","get_quantities","get_changes","capture","help"],"description":"A read tool.","openEnum":true},"args":{"type":"object","description":"That tool's args."}},"required":["tool"]}},
   },
   required: ["calls"],
   ops: {

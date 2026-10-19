@@ -68,6 +68,9 @@ export interface ParamSpec {
   unit?: ParamUnit;
   /** NOT advertised: enum synonyms, e.g. {"3D":"3d","FloorPlan":"floor_plan"}. Keys are matched case- and separator-insensitively. */
   synonyms?: Record<string, string>;
+  /** NOT advertised: an enum the tool's own handler interprets leniently ("check_model.warnings", near-miss names), so
+   *  unknown values pass normalization unchanged instead of failing with INVALID_ARGS. */
+  openEnum?: boolean;
 }
 
 export interface OpSpec {
