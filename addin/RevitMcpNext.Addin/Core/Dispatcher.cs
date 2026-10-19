@@ -364,18 +364,34 @@ namespace RevitMcpNext.Addin
                 case Autodesk.Revit.Exceptions.OperationCanceledException _:
                     return OpResult.Fail(ErrorCodes.RequestCancelled, "Revit cancelled the operation.");
                 case Autodesk.Revit.Exceptions.ApplicationException revit:
+                    LogRefusal(ctx, revit);
                     return OpResult.Fail(ErrorCodes.RevitRefused, revit.Message,
                         new Dictionary<string, object> { ["apiMessage"] = revit.Message, ["exception"] = revit.GetType().Name });
                 case ArgumentException argument:
                     return OpResult.Fail(ErrorCodes.InvalidArgs, argument.Message,
                         new Dictionary<string, object> { ["param"] = argument.ParamName, ["reason"] = argument.Message });
                 case InvalidOperationException invalid:
+                    LogRefusal(ctx, invalid);
                     return OpResult.Fail(ErrorCodes.RevitRefused, invalid.Message,
                         new Dictionary<string, object> { ["apiMessage"] = invalid.Message, ["exception"] = invalid.GetType().Name });
                 default:
                     DiagnosticsLogger.Error("dispatch", "Unexpected failure in " + (ctx?.Key ?? "(unknown op)") + ". requestId=" + (ctx?.RequestId ?? "?"), ex);
                     return OpResult.Fail(ErrorCodes.InternalError, ex.GetType().Name + ": " + ex.Message,
                         new Dictionary<string, object> { ["requestId"] = ctx?.RequestId, ["logPath"] = DiagnosticsLogger.CurrentLogFile });
+            }
+        }
+
+        /// <summary>Revit refusals carry only the API message on the wire; the log keeps the stack for triage.</summary>
+        private static void LogRefusal(RequestContext ctx, Exception ex)
+        {
+            try
+            {
+                DiagnosticsLogger.Warn("dispatch", "Revit refused " + (ctx?.Key ?? "(unknown op)") + ": " + ex.GetType().Name + ": " + ex.Message,
+                    new Dictionary<string, object> { ["requestId"] = ctx?.RequestId, ["stack"] = ex.StackTrace });
+            }
+            catch
+            {
+                // Logging never changes the result.
             }
         }
 

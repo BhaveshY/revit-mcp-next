@@ -33,7 +33,10 @@ namespace RevitMcpNext.Addin
 
             var curves = new CurveArray();
             foreach (Curve curve in footprint) curves.Append(curve);
-            FootPrintRoof roof = doc.Create.NewFootPrintRoof(curves, level, type, out ModelCurveArray mapping);
+            // The mapping must be a live array: C# out is a ref at IL level and Revit 2027 rejects a null one
+            // (ArgumentNullException "Value cannot be null.", seen live in e2e S30).
+            ModelCurveArray mapping = new ModelCurveArray();
+            FootPrintRoof roof = doc.Create.NewFootPrintRoof(curves, level, type, out mapping);
             if (roof == null) throw new OpException(ErrorCodes.RevitRefused, "Revit did not create the footprint roof.");
             c.Created(roof);
 
