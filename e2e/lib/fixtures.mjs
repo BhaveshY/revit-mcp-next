@@ -72,7 +72,28 @@ export async function newProject(t, name) {
   const template = projectTemplate(t.year);
   if (!template) throw new AssertionFailure(`no Revit ${t.year} project template found under ProgramData\\Autodesk\\RVT ${t.year}\\Templates`);
   const path = join(t.yearDir, `${name}.rvt`);
-  const r = await t.call("manage_document", { op: "new_project", path, template, activate: true }, { timeoutMs: 120_000 });
+  // doc "@<year>" pins the call to this run's Revit year: with several Revit sessions open and no document yet, the
+  // broker would otherwise pick the most recently used Revit (possibly another year that cannot read this template).
+  const r = await t.call("manage_document", { op: "new_project", path, template, activate: true, doc: `@${t.year}` }, { timeoutMs: 120_000 });
   t.docs.set(name, path);
+  if (r.status === "ok") await normalizeLevels(t);
   return { r, path, template };
+}
+
+/**
+ * Scenarios address the two lowest levels as "Level 1" and "Level 2"; templates name them differently per language and
+ * year (L1/L2, Ebene 0/1, Level 1/2). Rename them through the product (set_parameters on the level's Name) so every
+ * scenario sees the same names; this also exercises set_parameters on datums.
+ */
+export async function normalizeLevels(t) {
+  const levels = await t.call("list", { kind: "levels" });
+  const cols = levels.json?.cols ?? [];
+  const rows = (levels.json?.rows ?? []).map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+  rows.sort((a, b) => Number(a.elevation) - Number(b.elevation));
+  const wanted = ["Level 1", "Level 2"];
+  const updates = rows.slice(0, 2).map((row, i) => ({ row, name: wanted[i] })).filter((u) => u.row.name !== u.name);
+  if (!updates.length) return;
+  // Free the names first if another level already uses them (rename in two passes through temporary names).
+  const r = await t.call("set_parameters", { rows: updates.map((u) => ({ id: String(u.row.id), values: { Name: u.name } })) });
+  if (r.status !== "ok") t.log(`could not rename levels to Level 1/Level 2: ${r.text?.split("\n")[0]}`);
 }

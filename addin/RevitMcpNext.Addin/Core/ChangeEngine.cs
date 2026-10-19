@@ -215,7 +215,7 @@ namespace RevitMcpNext.Addin
             }
 
             var outcomes = new List<OpOutcome>(ops.Count);
-            using (registry?.DeferStamps(doc))
+            using (IDisposable deferStamps = registry?.DeferStamps(doc))
             {
                 if (ctx.IsPreview)
                 {
@@ -257,6 +257,7 @@ namespace RevitMcpNext.Addin
                         throw new OpException(ErrorCodes.RevitTransactionRolledBack, "Revit did not commit '" + groupName + "' (" + status + ").",
                             new Dictionary<string, object> { ["status"] = status.ToString() });
                     }
+                    DocumentRegistry.MarkCommitted(deferStamps);
                     RaiseCommitted(ctx, outcomes);
                     return Applied(ctx, outcomes, totals, isChangeSet, setName);
                 }

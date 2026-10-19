@@ -169,8 +169,8 @@ namespace RevitMcpNext.Addin
         private static List<XYZ> Absolute(ChangeContext c, string key, Level level, bool required)
         {
             double baseZ = ModelKit.Z(level);
-            return c.Args.Points(key, double.NaN, required)
-                .Select(p => new XYZ(p.X, p.Y, double.IsNaN(p.Z) ? baseZ : (level != null ? baseZ + p.Z : p.Z)))
+            return c.Args.Points(key, PayloadReader.NoZ, required)
+                .Select(p => new XYZ(p.X, p.Y, PayloadReader.IsNoZ(p.Z) ? baseZ : (level != null ? baseZ + p.Z : p.Z)))
                 .ToList();
         }
     }

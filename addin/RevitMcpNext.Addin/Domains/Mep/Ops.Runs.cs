@@ -217,8 +217,8 @@ namespace RevitMcpNext.Addin
         {
             double offset = c.Mm("offset", DefaultOffsetMm);
             double slope = c.Args.Pct("slope", 0);
-            List<XYZ> raw = c.Args.Points("points", double.NaN);
-            bool anyZ = raw.Any(p => !double.IsNaN(p.Z));
+            List<XYZ> raw = c.Args.Points("points", PayloadReader.NoZ);
+            bool anyZ = raw.Any(p => !PayloadReader.IsNoZ(p.Z));
             if (Math.Abs(slope) > 1e-9 && anyZ)
             {
                 c.Warn(WarningCodes.ParamIgnored, "slope is ignored because points carry z values");
@@ -231,7 +231,7 @@ namespace RevitMcpNext.Addin
             for (int i = 0; i < raw.Count; i++)
             {
                 XYZ p = raw[i];
-                if (!double.IsNaN(p.Z))
+                if (!PayloadReader.IsNoZ(p.Z))
                 {
                     result.Add(new XYZ(p.X, p.Y, baseZ + p.Z));
                     continue;

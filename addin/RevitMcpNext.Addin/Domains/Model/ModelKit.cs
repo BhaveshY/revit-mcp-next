@@ -31,22 +31,22 @@ namespace RevitMcpNext.Addin
         public static List<XYZ> Points3(ChangeContext c, string key, Level level, double offsetFt = 0, bool required = true)
         {
             double baseZ = Z(level);
-            return c.Args.Points(key, double.NaN, required)
-                .Select(p => new XYZ(p.X, p.Y, double.IsNaN(p.Z) ? baseZ + offsetFt : (level != null ? baseZ + p.Z : p.Z)))
+            return c.Args.Points(key, PayloadReader.NoZ, required)
+                .Select(p => new XYZ(p.X, p.Y, PayloadReader.IsNoZ(p.Z) ? baseZ + offsetFt : (level != null ? baseZ + p.Z : p.Z)))
                 .ToList();
         }
 
         /// <summary>One point with the z rule (null when absent and not required).</summary>
         public static XYZ Point3(ChangeContext c, string key, Level level, double offsetFt = 0, bool required = true)
         {
-            XYZ p = c.Args.PointOpt(key, double.NaN);
+            XYZ p = c.Args.PointOpt(key, PayloadReader.NoZ);
             if (p == null)
             {
                 if (required) throw OpException.InvalidArgs(c.Args.Field(key), "is required (a point [x,y] or [x,y,z] in mm)");
                 return null;
             }
             double baseZ = Z(level);
-            return new XYZ(p.X, p.Y, double.IsNaN(p.Z) ? baseZ + offsetFt : (level != null ? baseZ + p.Z : p.Z));
+            return new XYZ(p.X, p.Y, PayloadReader.IsNoZ(p.Z) ? baseZ + offsetFt : (level != null ? baseZ + p.Z : p.Z));
         }
 
         /// <summary>Points of a level-based sketch (wall, floor, room...): z is ignored and set to <paramref name="z"/>.</summary>

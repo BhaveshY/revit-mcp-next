@@ -239,7 +239,7 @@ foreach ($year in $years) {
     $manifestPath = Join-Path $addinsRootResolved "$year\RevitMcpNext.addin"
     if ($DryRun) {
         $payloadId = Get-RmnPayloadId (Get-RmnRelativeFiles $payloadSrc)
-        $loaderId = (Get-RmnSha256 (Join-Path $loaderSrc "RevitMcpNext.Loader.dll")).Substring(0, 12)
+        $loaderId = Get-RmnLoaderId
         $loaderDll = Join-Path $HomeDir "addin\$year\loader\$loaderId\RevitMcpNext.Loader.dll"
         $existing = Get-RmnManifestAssembly $manifestPath
         Step "addin $year" "would" "payload $payloadId, loader $loaderId; manifest $manifestPath -> $loaderDll$(if ($existing) { " (now: $($existing.Assembly))" })"

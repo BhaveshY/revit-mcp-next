@@ -1284,16 +1284,29 @@ namespace RevitMcpNext.Addin
         // Internals
         // ---------------------------------------------------------------------------------------------------------
 
-        private void EndDefer(long rid)
+        private void EndDefer(long rid, bool merge)
         {
             lock (_gate)
             {
                 if (!_docs.TryGetValue(rid, out DocState state)) return;
+                if (!merge) state.OverlayDiscard = true;
                 state.DeferDepth = Math.Max(0, state.DeferDepth - 1);
                 if (state.DeferDepth > 0) return;
-                foreach (KeyValuePair<long, long> pair in state.Overlay) state.Stamps[pair.Key] = pair.Value;
+                // Changes of a write scope that did not commit (NOT APPLIED plans, previews, rollbacks) are our own
+                // transactions undone again: dropping them keeps element stamps honest, so a confirm is not CONFIRM_STALE.
+                if (!state.OverlayDiscard)
+                {
+                    foreach (KeyValuePair<long, long> pair in state.Overlay) state.Stamps[pair.Key] = pair.Value;
+                }
                 state.Overlay.Clear();
+                state.OverlayDiscard = false;
             }
+        }
+
+        /// <summary>Marks the open <see cref="DeferStamps"/> scope of <paramref name="scope"/> as committed (its stamps are kept).</summary>
+        public static void MarkCommitted(IDisposable scope)
+        {
+            if (scope is DeferScope defer) defer.Committed = true;
         }
 
         private DocState EnsureStateUnsafe(Document document)
@@ -1668,6 +1681,7 @@ namespace RevitMcpNext.Addin
             public readonly Dictionary<long, long> Overlay = new Dictionary<long, long>();
             public int DeferDepth;
             public long StampFloor;
+            public bool OverlayDiscard;
             public readonly ChangeRing Ring = new ChangeRing(ChangeRingCapacity);
             public readonly List<JournalEntry> Journal = new List<JournalEntry>();
             public HashSet<long> LevelIds = new HashSet<long>();
@@ -1698,11 +1712,14 @@ namespace RevitMcpNext.Addin
                 _rid = rid;
             }
 
+            /// <summary>Set when the write committed; otherwise the deferred stamps are discarded on dispose.</summary>
+            public bool Committed { get; set; }
+
             public void Dispose()
             {
                 if (_disposed) return;
                 _disposed = true;
-                _owner.EndDefer(_rid);
+                _owner.EndDefer(_rid, Committed);
             }
         }
 

@@ -32,6 +32,17 @@ namespace RevitMcpNext.Addin
             if (string.IsNullOrWhiteSpace(outputDirectory)) throw OpException.InvalidArgs("path", "must include a folder");
 
             string templatePath = ResolveTemplate(ctx, args.Str("template"));
+            // A template saved by a newer Revit makes NewProjectDocument show a modal "saved in a newer version" box that
+            // blocks Revit until someone clicks (seen live: a 2027 template sent to Revit 2024). Refuse it up front.
+            int templateYear = SavedInYear(templatePath);
+            if (templateYear > ctx.Year)
+            {
+                string fallback = null;
+                try { fallback = ResolveTemplate(ctx, null); } catch { fallback = null; }
+                throw OpException.InvalidArgs("template",
+                    "was saved in Revit " + templateYear.ToString(CultureInfo.InvariantCulture) + " and cannot be opened in Revit " + ctx.Year.ToString(CultureInfo.InvariantCulture) + ": " + templatePath,
+                    new Dictionary<string, object> { ["op"] = "new_project", ["path"] = outputPath, ["template"] = fallback ?? "Default-Multi-Discipline_Metric" });
+            }
             bool activate = args.Bool("activate", true);
             bool exists = File.Exists(outputPath);
             Document openAtPath = DocFiles.FindOpen(ctx.RevitApp, outputPath);
@@ -106,6 +117,22 @@ namespace RevitMcpNext.Addin
             string summary = "created project '" + (doc?.Title ?? Path.GetFileNameWithoutExtension(outputPath)) + "' from " +
                              Path.GetFileName(templatePath) + (activated ? " (active in Revit)" : " (not activated)");
             return OpResult.Success(data, summary).WithDoc(doc).WithOutput("doc", doc?.Rid);
+        }
+
+        /// <summary>The Revit year a file was saved in (BasicFileInfo.Format), or 0 when it cannot be read.</summary>
+        internal static int SavedInYear(string path)
+        {
+            try
+            {
+                BasicFileInfo info = BasicFileInfo.Extract(path);
+                string format = info?.Format ?? string.Empty;
+                var match = System.Text.RegularExpressions.Regex.Match(format, "(20\\d\\d)");
+                return match.Success ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         /// <summary>Settings template, the English multi-discipline template of this year, then Revit's default template.</summary>

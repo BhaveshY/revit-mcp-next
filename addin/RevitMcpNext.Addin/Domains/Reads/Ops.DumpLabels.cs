@@ -59,7 +59,10 @@ namespace RevitMcpNext.Addin
             // Categories: label → best category.
             var categories = new Dictionary<string, BuiltInCategory>(StringComparer.Ordinal);
             int categoryLabels = 0;
-            foreach (BuiltInCategory category in Enum.GetValues(typeof(BuiltInCategory)).Cast<BuiltInCategory>().Distinct())
+            // Only categories the document really has: LabelUtils on a stale BuiltInCategory enum value can fail in native
+            // code (an access violation that .NET 10 cannot catch, which took Revit 2027 down in e2e S21).
+            if (doc == null) throw new OpException(ErrorCodes.NoOpenDocument, "dev.dump_labels needs an open project document.");
+            foreach (BuiltInCategory category in present.OrderBy(c => (long)c))
             {
                 if (category == BuiltInCategory.INVALID) continue;
                 string label = CategoryLabel(category, doc);
@@ -75,11 +78,14 @@ namespace RevitMcpNext.Addin
             // Parameters: label → every built-in with that label (the one present on the element wins at runtime).
             var parameters = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             int parameterLabels = 0;
-            foreach (BuiltInParameter parameter in Enum.GetValues(typeof(BuiltInParameter)).Cast<BuiltInParameter>().Distinct())
+            // Revit's own list of valid built-in parameters (2022+), never the raw enum (same native-crash risk as above).
+            foreach (ForgeTypeId parameterId in ParameterUtils.GetAllBuiltInParameters())
             {
+                BuiltInParameter parameter;
+                try { parameter = ParameterUtils.GetBuiltInParameter(parameterId); } catch { continue; }
                 if (parameter == BuiltInParameter.INVALID) continue;
                 string label;
-                try { label = LabelUtils.GetLabelFor(parameter); } catch { label = null; }
+                try { label = LabelUtils.GetLabelForBuiltInParameter(parameterId); } catch { label = null; }
                 if (string.IsNullOrWhiteSpace(label) || label == parameter.ToString()) continue;
                 label = label.Trim();
                 parameterLabels++;

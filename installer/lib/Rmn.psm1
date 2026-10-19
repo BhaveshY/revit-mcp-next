@@ -275,15 +275,23 @@ function Remove-RmnOldPayloads([string] $HomeDir, [int] $Year, [string] $Current
     return $removed
 }
 
-# Copies the loader to <home>\addin\<year>\loader\<loaderId>\ (loaderId = first 12 hex of the DLL's sha256).
+# The loader lives in <home>\addin\<year>\loader\v<LoaderVersion>\. Revit remembers "Always Load" per loader DLL, so an
+# installed loader is never replaced while its version is unchanged: updates swap only the payload and the prompt stays away.
+$script:LoaderVersion = 1
+function Get-RmnLoaderId { return "v$($script:LoaderVersion)" }
+
 function Install-RmnLoader([string] $HomeDir, [int] $Year, [string] $Source) {
     $dll = Join-Path $Source "RevitMcpNext.Loader.dll"
     if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "The Revit $Year loader is missing: $dll" }
-    $loaderId = (Get-RmnSha256 $dll).Substring(0, 12)
+    $loaderId = Get-RmnLoaderId
     $dir = Join-Path $HomeDir "addin\$Year\loader\$loaderId"
-    $files = @(Get-RmnRelativeFiles $Source | Where-Object { $_.Relative -like "RevitMcpNext.Loader.*" })
-    $copied = Copy-RmnTree $files $dir
-    return [pscustomobject] @{ LoaderId = $loaderId; Dll = (Join-Path $dir "RevitMcpNext.Loader.dll"); Copied = $copied }
+    $target = Join-Path $dir "RevitMcpNext.Loader.dll"
+    $copied = 0
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+        $files = @(Get-RmnRelativeFiles $Source | Where-Object { $_.Relative -like "RevitMcpNext.Loader.*" })
+        $copied = Copy-RmnTree $files $dir
+    }
+    return [pscustomobject] @{ LoaderId = $loaderId; Dll = $target; Copied = $copied }
 }
 
 function Get-RmnManifestText([string] $LoaderDll) {

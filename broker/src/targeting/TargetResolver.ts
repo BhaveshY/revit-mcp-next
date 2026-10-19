@@ -176,7 +176,16 @@ export class TargetResolver {
         }
         return this.finishDoc(req, world, active, notices, {});
       }
-      const rebound = this.rebind(session, pin, world, notices);
+      let rebound = this.rebind(session, pin, world, notices);
+      // Before calling the pin lost, look again with fresh snapshots: Save As, new_project (SaveAs + reopen) and
+      // reopening give the doc a new rid, and the cached snapshot can lag the add-in by a moment (seen live: a read
+      // 6 ms after new_project got TARGET_CLOSED). Up to ~3 s, inside the call budget.
+      for (let attempt = 0; rebound.kind !== "found" && rebound.kind !== "ambiguous" && attempt < 4 && req.deadline.remaining() > 3_000; attempt++) {
+        if (attempt > 0 && !(await req.deadline.sleep(750))) break;
+        this.registry.invalidate();
+        world = await this.world(session, req.deadline, true, req.instance);
+        rebound = this.rebind(session, pin, world, notices);
+      }
       if (rebound.kind === "found") return this.finishDoc(req, world, rebound.candidate, notices, { checkActiveSwitch: true });
       if (rebound.kind === "ambiguous") return { ok: false, error: rebound.error, notices };
       if (pin.mode === "explicit") return { ok: false, error: rebound.error, notices };

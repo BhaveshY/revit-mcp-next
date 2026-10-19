@@ -171,6 +171,8 @@ namespace RevitMcpNext.Addin
                     Hung = hung,
                     Popup = popup
                 });
+
+                MaybeCloseInfoBox(popup, now);
             }
             catch (Exception ex)
             {
@@ -181,6 +183,64 @@ namespace RevitMcpNext.Addin
             {
                 Interlocked.Exchange(ref _sampling, 0);
             }
+        }
+
+        /// <summary>How long an information box must stay up during an MCP request before it is closed automatically.</summary>
+        private static readonly TimeSpan InfoBoxGrace = TimeSpan.FromMilliseconds(1500);
+        private static readonly Regex InfoBoxButton = new Regex("^(ok|close|schließen|schliessen)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private readonly HashSet<long> _infoBoxTried = new HashSet<long>();
+        private int _infoBoxBusy;
+
+        /// <summary>
+        /// Closes a single-button information box (only OK or Close) that Revit raised while one of our requests runs and
+        /// that DialogBoxShowing never reported (plain Win32 message boxes, e.g. "saved in a newer version of Revit").
+        /// One button means nothing can be discarded; it is pressed once, logged and reported on the executing request as
+        /// REVIT_DIALOG_ANSWERED. Anything with more buttons, our own dialogs and progress windows are left alone.
+        /// </summary>
+        private void MaybeCloseInfoBox(PopupInfo popup, DateTime now)
+        {
+            if (popup == null || popup.Hwnd == 0 || popup.IsProgress) return;
+            if (!string.Equals(popup.Class, "#32770", StringComparison.Ordinal)) return;
+            RevitRequestQueue queue = McpRuntime.Queue;
+            if (queue == null || !queue.IsExecuting) return;
+            if (!string.IsNullOrEmpty(popup.Title) && popup.Title.IndexOf("Revit MCP Next", StringComparison.OrdinalIgnoreCase) >= 0) return;
+            lock (_gate)
+            {
+                if (_infoBoxTried.Contains(popup.Hwnd)) return;
+                if (!_firstSeen.TryGetValue(new IntPtr(popup.Hwnd), out DateTime first) || now - first < InfoBoxGrace) return;
+                _infoBoxTried.Add(popup.Hwnd);
+                if (_infoBoxTried.Count > 256) _infoBoxTried.Clear();
+            }
+            if (Interlocked.Exchange(ref _infoBoxBusy, 1) == 1) return;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    DialogWindow window = DialogUia.Describe(new IntPtr(popup.Hwnd));
+                    if (window == null || window.Buttons == null || window.Buttons.Count != 1) return;
+                    DialogButtonRef button = window.Buttons[0];
+                    bool okOrClose = InfoBoxButton.IsMatch(button.Name ?? string.Empty) || button.CommandId == 1 || button.CommandId == 8;
+                    if (!okOrClose) return;
+                    string via = DialogUia.Press(window, button, out bool closed, out string detail);
+                    string text = "Revit dialog '" + window.Title + "'" + (string.IsNullOrEmpty(window.Text) ? string.Empty : " (" + DialogPolicy.Shorten(window.Text, 160) + ")") +
+                                  " was closed with " + button.Name + " automatically";
+                    DiagnosticsLogger.Info("dialog", text + " via " + via + (closed ? string.Empty : " (still open: " + detail + ")"));
+                    if (!closed) return;
+                    RevitRequestQueue q = McpRuntime.Queue;
+                    QueuedRevitWorkItem current = q?.Current ?? q?.Deferred;
+                    RequestContext ctx = current?.Context;
+                    if (ctx != null) ctx.Warn(WarningCodes.RevitDialogAnswered, text);
+                    else current?.AddEarlyWarning(WarningCodes.RevitDialogAnswered, text);
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLogger.Debug("dialog", "Information box auto-close failed: " + ex.Message);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _infoBoxBusy, 0);
+                }
+            });
         }
 
         /// <summary>

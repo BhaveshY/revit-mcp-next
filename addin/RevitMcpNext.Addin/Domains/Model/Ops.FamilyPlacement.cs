@@ -80,8 +80,8 @@ namespace RevitMcpNext.Addin
                         new Dictionary<string, object> { ["op"] = "place", ["type"] = c.Str("type"), ["start"] = new List<object> { 0, 0 }, ["end"] = new List<object> { 3000, 0 } });
                 }
                 List<XYZ> raw = c.Args.Has("points")
-                    ? c.Args.Points("points", double.NaN)
-                    : new List<XYZ> { c.Args.PointOpt("at", double.NaN) ?? throw OpException.InvalidArgs("at", "give at [x,y], points [[x,y],...] or start + end") };
+                    ? c.Args.Points("points", PayloadReader.NoZ)
+                    : new List<XYZ> { c.Args.PointOpt("at", PayloadReader.NoZ) ?? throw OpException.InvalidArgs("at", "give at [x,y], points [[x,y],...] or start + end") };
                 if (raw.Count == 0) throw OpException.InvalidArgs(c.Args.Field("points"), "needs at least one point");
                 if (raw.Count > MaxInstances) throw OpException.InvalidArgs(c.Args.Field("points"), "places at most " + MaxInstances + " instances per call (got " + raw.Count + ")");
 
@@ -132,7 +132,7 @@ namespace RevitMcpNext.Addin
         {
             Document doc = c.Doc;
             string field = c.Args.Has("points") ? c.Args.Field("points") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]" : c.Args.Field("at");
-            bool hasZ = !double.IsNaN(raw.Z);
+            bool hasZ = !PayloadReader.IsNoZ(raw.Z);
 
             // Hosted by a wall/floor/ceiling/roof.
             if (placement == FamilyPlacementType.OneLevelBasedHosted)

@@ -14,6 +14,9 @@
     <AssemblyName>RevitMcpNext.Loader</AssemblyName>
     <RootNamespace>RevitMcpNext.Loader</RootNamespace>
     <Version>0.4.0</Version>
+    <!-- Bump LoaderVersion only when the loader code changes; it names the install folder (loader\v<LoaderVersion>). -->
+    <LoaderVersion>1</LoaderVersion>
+    <Deterministic>true</Deterministic>
     <Product>Revit MCP Next</Product>
     <AssemblyTitle>Revit MCP Next Loader</AssemblyTitle>
     <Company>BhaveshY</Company>

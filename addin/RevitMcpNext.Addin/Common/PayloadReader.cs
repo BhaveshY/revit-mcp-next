@@ -295,6 +295,15 @@ namespace RevitMcpNext.Addin
         // ----------------------------------------------------------------------------------------------------------
 
         /// <summary>
+        /// "No z given" marker for point defaults. It must be finite: Revit 2027's XYZ constructor rejects NaN
+        /// ("z must be a finite number"), which broke every 2D point on 2027 when NaN was the marker.
+        /// </summary>
+        public const double NoZ = -1.0e30;
+
+        /// <summary>True when a z came from <see cref="NoZ"/> (the caller gave [x,y] only).</summary>
+        public static bool IsNoZ(double z) => z <= -1.0e29 || double.IsNaN(z);
+
+        /// <summary>
         /// A point [x,y] or [x,y,z] (also {x,y,z} and legacy {x:{value,unit}}) in mm, converted to internal feet.
         /// A missing z becomes <paramref name="defaultZft"/> (feet) or 0.
         /// </summary>

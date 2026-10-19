@@ -326,6 +326,17 @@ namespace RevitMcpNext.Addin
             List<ViewSheet> sheets = views.OfType<ViewSheet>().Where(s => Eq(s.SheetNumber, text) || Eq(s.SheetNumber + " - " + s.Name, text)).ToList();
             if (sheets.Count == 1) return sheets[0];
 
+            // "3d", "3d view", "default 3d": the default 3D view ({3D}), else the only non-template isometric 3D view.
+            if (Eq(text, "3d") || Eq(text, "3d view") || Eq(text, "default 3d"))
+            {
+                List<View3D> threeD = views.OfType<View3D>().Where(v => !v.IsTemplate).ToList();
+                View3D preferred = threeD.FirstOrDefault(v => Eq(v.Name, "{3D}"))
+                    ?? threeD.FirstOrDefault(v => v.Name.StartsWith("{3D", StringComparison.OrdinalIgnoreCase));
+                if (preferred != null) return preferred;
+                List<View3D> iso = threeD.Where(v => !v.IsPerspective).ToList();
+                if (iso.Count == 1) return iso[0];
+            }
+
             if (nonTemplates.Count > 1)
             {
                 throw OpException.Ambiguous(param, "view", value, nonTemplates.Select(v => v.Name + " (" + v.ViewType + ", id " + v.Id.Value.ToString(CultureInfo.InvariantCulture) + ")"));

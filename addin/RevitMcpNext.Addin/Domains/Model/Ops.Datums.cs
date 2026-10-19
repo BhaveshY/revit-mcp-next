@@ -190,10 +190,10 @@ namespace RevitMcpNext.Addin
                 throw OpException.InvalidArgs(c.Args.Field("view"), "must be a plan, section or elevation view ('" + view.Name + "' is " + view.ViewType + ")");
             }
 
-            XYZ start = c.Args.PointOpt("start", double.NaN) ?? throw OpException.InvalidArgs(c.Args.Field("start"), "is required (a point [x,y] in mm)");
-            XYZ end = c.Args.PointOpt("end", double.NaN) ?? throw OpException.InvalidArgs(c.Args.Field("end"), "is required (a point [x,y] in mm)");
-            start = new XYZ(start.X, start.Y, double.IsNaN(start.Z) ? z : start.Z);
-            end = new XYZ(end.X, end.Y, double.IsNaN(end.Z) ? z : end.Z);
+            XYZ start = c.Args.PointOpt("start", PayloadReader.NoZ) ?? throw OpException.InvalidArgs(c.Args.Field("start"), "is required (a point [x,y] in mm)");
+            XYZ end = c.Args.PointOpt("end", PayloadReader.NoZ) ?? throw OpException.InvalidArgs(c.Args.Field("end"), "is required (a point [x,y] in mm)");
+            start = new XYZ(start.X, start.Y, PayloadReader.IsNoZ(start.Z) ? z : start.Z);
+            end = new XYZ(end.X, end.Y, PayloadReader.IsNoZ(end.Z) ? z : end.Z);
             if (start.DistanceTo(end) <= Math.Max(doc.Application.ShortCurveTolerance, 1e-6)) throw OpException.InvalidArgs(c.Args.Field("end"), "must differ from start");
             if (cut.CrossProduct((end - start).Normalize()).GetLength() < 1e-6) throw OpException.InvalidArgs(c.Args.Field("end"), "start -> end must not be parallel to the view direction");
 

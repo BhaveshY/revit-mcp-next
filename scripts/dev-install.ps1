@@ -85,6 +85,8 @@ function Get-PayloadId($Files) {
     return (Get-Sha256Hex ($utf8.GetBytes($joined))).Substring(0, 12)
 }
 
+$script:LoaderVersion = 1
+
 function Write-TextIfDifferent($Path, $Text) {
     $directory = Split-Path -Parent $Path
     if (-not (Test-Path -LiteralPath $directory)) { New-Item -ItemType Directory -Force -Path $directory | Out-Null }
@@ -95,7 +97,8 @@ function Write-TextIfDifferent($Path, $Text) {
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     [System.IO.File]::WriteAllText($temporary, $Text, $utf8)
     if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        [System.IO.File]::Replace($temporary, $Path, $null, $true)
+        # [NullString]::Value: PowerShell passes $null to a .NET string parameter as "", which File.Replace rejects.
+        [System.IO.File]::Replace($temporary, $Path, [NullString]::Value, $true)
     } else {
         [System.IO.File]::Move($temporary, $Path)
     }
@@ -215,11 +218,14 @@ foreach ($year in $years) {
     $manifestWritten = $false
     $manifestPath = Join-Path $AddinsRoot "$year\RevitMcpNext.addin"
     if (Test-Path -LiteralPath $loaderDll -PathType Leaf) {
-        $loaderId = (Get-FileSha256 $loaderDll).Substring(0, 12)
-        $loaderDir = Join-Path $DefaultHome "addin\$year\loader\$loaderId"
-        $loaderFiles = @(Get-RelativeFiles (Split-Path -Parent $loaderDll) | Where-Object { $_.Relative -like "RevitMcpNext.Loader.*" })
-        New-Item -ItemType Directory -Force -Path $loaderDir | Out-Null
-        Copy-TreeIfDifferent $loaderFiles $loaderDir | Out-Null
+        # Fixed folder per loader version: Revit remembers "Always Load" per loader DLL, so an installed loader is
+        # never replaced while its version is unchanged (rebuilds and updates then never bring the prompt back).
+        $loaderDir = Join-Path $DefaultHome "addin\$year\loader\v$($script:LoaderVersion)"
+        if (-not (Test-Path -LiteralPath (Join-Path $loaderDir "RevitMcpNext.Loader.dll") -PathType Leaf)) {
+            $loaderFiles = @(Get-RelativeFiles (Split-Path -Parent $loaderDll) | Where-Object { $_.Relative -like "RevitMcpNext.Loader.*" })
+            New-Item -ItemType Directory -Force -Path $loaderDir | Out-Null
+            Copy-TreeIfDifferent $loaderFiles $loaderDir | Out-Null
+        }
         Ensure-Marker $DefaultHome "dev-install" | Out-Null
         $loaderPath = Join-Path $loaderDir "RevitMcpNext.Loader.dll"
         if (-not $NoManifest) {

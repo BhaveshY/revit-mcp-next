@@ -170,7 +170,10 @@ Invoke-DotnetBuild $DotnetPath (@("build", $project) + $common + @("-o", $yearOu
 # 4. Loader (the manifest target; it has no dependency on the payload).
 if (Test-Path -LiteralPath $loaderProject -PathType Leaf) {
     Write-Host "[revit-mcp-next addin] Building the Revit $RevitYear loader -> $loaderOutput"
-    Invoke-DotnetBuild $DotnetPath (@("build", $loaderProject) + $common + @("-o", $loaderOutput)) "Revit $RevitYear loader build"
+    # The loader is built reproducibly (no git stamp, no pdb path) so its bytes only change when its own code does:
+    # Revit remembers "Always Load" per loader DLL, and a changing loader would bring the unsigned-add-in prompt back.
+    $loaderArgs = @($common | Where-Object { $_ -notlike "-p:SourceRevisionId=*" }) + @("-p:SourceRevisionId=", "-p:Deterministic=true", "-p:DebugType=none", "-p:IncludeSourceRevisionInInformationalVersion=false")
+    Invoke-DotnetBuild $DotnetPath (@("build", $loaderProject) + $loaderArgs + @("-o", $loaderOutput)) "Revit $RevitYear loader build"
 } else {
     Write-Warning "addin\RevitMcpNext.Loader was not found; the loader was not built."
 }
