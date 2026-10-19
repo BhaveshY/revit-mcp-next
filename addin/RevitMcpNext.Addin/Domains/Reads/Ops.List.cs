@@ -915,7 +915,7 @@ namespace RevitMcpNext.Addin
 
         private static IEnumerable<Item> ViewportTypes(ListRun run)
         {
-            foreach (ElementType type in new FilteredElementCollector(run.Doc).OfCategory(BuiltInCategory.OST_Viewports).WhereElementIsElementType().OfType<ElementType>().OrderBy(t => t.Name, NaturalComparer.Instance))
+            foreach (ElementType type in SheetSupport.AllViewportTypes(run.Doc).OrderBy(t => t.Name, NaturalComparer.Instance))
             {
                 yield return Row(type, type.Name, type.Id.Value, type.Name);
             }

@@ -111,8 +111,10 @@ namespace RevitMcpNext.Addin
             ViewSheet sheet = SheetSupport.Sheet(c);
             Element placement = SheetSupport.Placement(c, sheet);
             string name = ViewName(doc, placement);
-            ICollection<ElementId> deleted = c.Delete(new List<ElementId> { placement.Id });
-            c.Data(new Dictionary<string, object> { ["removed"] = placement.Id.Value, ["view"] = name, ["sheet"] = SheetSupport.SheetData(sheet) });
+            // Read everything before the delete: the placement object is invalid afterwards (InvalidObjectException, e2e S55).
+            ElementId placementId = placement.Id;
+            ICollection<ElementId> deleted = c.Delete(new List<ElementId> { placementId });
+            c.Data(new Dictionary<string, object> { ["removed"] = placementId.Value, ["view"] = name, ["sheet"] = SheetSupport.SheetData(sheet) });
             c.Summary("removed '" + name + "' from sheet " + SheetSupport.Label(sheet) + " (the view itself is kept" +
                       (deleted.Count > 1 ? "; " + (deleted.Count - 1).ToString(CultureInfo.InvariantCulture) + " dependent element(s) removed" : string.Empty) + ")");
         }

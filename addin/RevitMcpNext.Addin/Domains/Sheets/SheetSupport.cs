@@ -273,6 +273,40 @@ namespace RevitMcpNext.Addin
         }
 
         /// <summary>A viewport type valid for this viewport by name or id.</summary>
+        /// <summary>
+        /// Every viewport type of the document. Viewport types are not always collected by OST_Viewports (Revit 2027
+        /// templates: none, e2e S55), so the default viewport type's similar types and a placed viewport's valid types
+        /// are merged in.
+        /// </summary>
+        public static List<ElementType> AllViewportTypes(Document doc)
+        {
+            var found = new Dictionary<ElementId, ElementType>();
+            void Add(ElementId id)
+            {
+                if (id == null || id == ElementId.InvalidElementId || found.ContainsKey(id)) return;
+                if (doc.GetElement(id) is ElementType type) found[id] = type;
+            }
+            try
+            {
+                foreach (ElementId id in new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Viewports).WhereElementIsElementType().ToElementIds()) Add(id);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException) { }
+            try
+            {
+                ElementId defaultId = doc.GetDefaultElementTypeId(ElementTypeGroup.ViewportType);
+                Add(defaultId);
+                if (doc.GetElement(defaultId) is ElementType defaultType) foreach (ElementId id in defaultType.GetSimilarTypes()) Add(id);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException) { }
+            try
+            {
+                Viewport any = new FilteredElementCollector(doc).OfClass(typeof(Viewport)).Cast<Viewport>().FirstOrDefault();
+                if (any != null) foreach (ElementId id in any.GetValidTypes()) Add(id);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException) { }
+            return found.Values.ToList();
+        }
+
         public static ElementType ViewportType(Document doc, Viewport viewport, string value, string param = "type")
         {
             List<ElementType> valid = viewport.GetValidTypes().Select(id => doc.GetElement(id)).OfType<ElementType>().ToList();

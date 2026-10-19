@@ -229,6 +229,7 @@ namespace RevitMcpNext.Addin
             public int Walls => Instances(BuiltInCategory.OST_Walls);
             public int Rooms => Instances(BuiltInCategory.OST_Rooms);
             public int Sheets => Cached("sheets", () => new FilteredElementCollector(_doc).OfClass(typeof(ViewSheet)).GetElementCount());
+            public int ViewportTypes => Cached("viewport_types", () => SheetSupport.AllViewportTypes(_doc).Count);
 
             public int Instances(BuiltInCategory category)
             {
@@ -404,7 +405,7 @@ namespace RevitMcpNext.Addin
                 case "sheets":
                     have["title_block_types"] = r.TypesOf(BuiltInCategory.OST_TitleBlocks);
                     have["sheets"] = r.Sheets;
-                    have["viewport_types"] = r.TypesOf(BuiltInCategory.OST_Viewports);
+                    have["viewport_types"] = r.ViewportTypes;
                     Need(r.TypesOf(BuiltInCategory.OST_TitleBlocks) > 0, "a title block family (load one with place_family op=load)");
                     next = "list {\"kind\":\"title_blocks\"}";
                     break;
