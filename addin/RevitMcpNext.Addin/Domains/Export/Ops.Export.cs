@@ -216,6 +216,10 @@ namespace RevitMcpNext.Addin
                     if (views.Count > 1) ctx.Warn(WarningCodes.ParamIgnored, "ifc exports one file; only the first view is used as the visibility filter");
                     plan.Items.Add(new ExportItem { View = views.FirstOrDefault(), BaseName = Name(pattern ?? (views.Count > 0 ? "{doc} - {name}" : "{doc}"), doc, views.FirstOrDefault(), 0), Extension = extension });
                     break;
+                case "nwc" when views.Count == 0:
+                    // No 3D view given and none active: the whole model (NavisworksExportScope.Model).
+                    plan.Items.Add(new ExportItem { View = null, BaseName = Name(pattern ?? "{doc}", doc, null, 0), Extension = extension });
+                    break;
                 case "pdf" when plan.Combine:
                     plan.Items.Add(new ExportItem { View = null, Views = views, BaseName = Name(pattern ?? (views.Count == 1 ? DefaultPattern(views[0]) : "{doc}"), doc, views.Count == 1 ? views[0] : null, 0), Extension = extension });
                     break;

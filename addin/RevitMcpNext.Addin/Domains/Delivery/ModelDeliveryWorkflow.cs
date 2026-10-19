@@ -1569,7 +1569,11 @@ namespace RevitMcpNext.Addin.Revit
         private static int DeleteElements(Document document, string transactionName, List<ElementId> ids)
         {
             if (ids.Count == 0) return 0;
-            RunTransaction(document, transactionName, () => document.Delete(ids));
+            // An earlier step can already have removed some planned ids (deleting a sheet takes its sheet-owned views
+            // along on Revit 2027 templates, e2e S97): Document.Delete throws for a missing id, so delete the rest.
+            // Every planned id is gone afterwards, so the count still matches the approved preview.
+            List<ElementId> existing = ids.Where(id => document.GetElement(id) != null).ToList();
+            if (existing.Count > 0) RunTransaction(document, transactionName, () => document.Delete(existing));
             return ids.Count;
         }
 
