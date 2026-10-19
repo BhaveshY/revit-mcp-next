@@ -408,7 +408,11 @@ async function main() {
         // A native Revit crash during the scenario (a new journal minidump and the harness Revit gone, e.g. Autodesk
         // analytics AdpSDKCore.dll during a save) is an environment fault: run the scenario once more on a fresh Revit.
         const entry = year ? revits.get(year) : null;
-        const crash = entry && attempt === 0 && !processAlive(entry.pid) ? revitCrashSince(year, started) : null;
+        // R4/R13 kill their Revit on purpose (and relaunch it); any other scenario that loses its Revit saw a crash, with a
+        // minidump or without one (Revit 2027 also died in the same save step without writing a dump).
+        const crash = entry && attempt === 0 && !processAlive(entry.pid) && !["R4", "R13"].includes(scenario.id)
+          ? revitCrashSince(year, started) ?? { module: null, address: null, dump: "no minidump" }
+          : null;
         if (crash) {
           retry = true;
           summary.environment.crashes = summary.environment.crashes ?? [];

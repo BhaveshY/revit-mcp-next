@@ -27,6 +27,8 @@ export default {
   profiles: ["quick", "full"],
   years: "each",
   async run(t) {
+    // Per-year name: with --years 2024,2027 a copy left open in the other Revit would make the title ambiguous.
+    const BC = `S75Bcopy${t.year}`;
     const a = await t.step("new_project A re-pins", async () => {
       const { r, path } = await t.newProject("S75A");
       t.assertEq(r.status, "ok", "new_project A");
@@ -43,14 +45,15 @@ export default {
     await t.step("save B and save_as a copy", async () => {
       const saved = await t.call("manage_document", { op: "save" });
       t.assertEq(saved.status, "ok", "save");
-      const copy = join(t.yearDir, "B-copy.rvt");
+      const copy = join(t.yearDir, `${BC}.rvt`);
       const preview = await t.call("manage_document", { op: "save_as", path: copy, preview: true });
       t.assertMatch(preview.summary, /^preview: /, "save_as preview");
       t.assert(!existsSync(copy), "preview wrote nothing");
       const r = await t.call("manage_document", { op: "save_as", path: copy }, { timeoutMs: 120_000 });
       t.assertEq(r.status, "ok", "save_as");
       t.assert(existsSync(copy), "copy exists");
-      t.assertEq(r.doc?.title.replace(/\.rvt$/i, ""), "B-copy", "the doc is now B-copy");
+      t.assertEq(r.doc?.title.replace(/\.rvt$/i, ""), BC, "the doc is now the copy");
+      t.docs.set(BC, copy);
       t.setTargetPath(copy);
       await t.expectError("manage_document", { op: "save_as", path: a }, "INVALID_ARGS");
     });
@@ -63,12 +66,12 @@ export default {
     });
 
     await t.step("close a background doc directly; opening it again; ALREADY_OPEN", async () => {
-      const closed = await t.call("manage_document", { op: "close", doc: "B-copy" });
+      const closed = await t.call("manage_document", { op: "close", doc: BC });
       const done = await settle(t, closed, "close B-copy");
       t.assertEq(done.status, "ok", "close B-copy");
-      const opened = await t.call("manage_document", { op: "open", path: join(t.yearDir, "B-copy.rvt"), activate: false }, { timeoutMs: 120_000 });
+      const opened = await t.call("manage_document", { op: "open", path: join(t.yearDir, `${BC}.rvt`), activate: false }, { timeoutMs: 120_000 });
       t.assertEq(opened.status, "ok", "open in the background");
-      const again = await t.call("manage_document", { op: "open", path: join(t.yearDir, "B-copy.rvt"), activate: false });
+      const again = await t.call("manage_document", { op: "open", path: join(t.yearDir, `${BC}.rvt`), activate: false });
       t.assert(again.notices.some((n) => n.startsWith("ALREADY_OPEN")), "already open notice");
       await t.call("set_target", { doc: "S75A" });
       t.setTargetPath(a);

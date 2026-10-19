@@ -100,18 +100,24 @@ export async function normalizeLevels(t) {
 }
 
 /**
- * After a scenario: close the disposable projects it created (t.docs) without saving, so one Revit session does not
- * pile up dozens of open documents over a full run (Revit 2027 crashed twice in AdpSDKCore.dll while saving the 11th
- * new project of a session). Best effort and outside coverage/hints: errors are ignored, the last open doc stays.
+ * After a scenario: close every document of this Revit year that lives in the scenario's folder (t.yearDir), without
+ * saving, so one Revit session does not pile up dozens of open documents over a full run and, with --years 2024,2027,
+ * no title stays open in the other Revit (same titles would be TARGET_AMBIGUOUS). Docs are addressed by the session's
+ * #n. Best effort and outside coverage/hints: errors are ignored, the only open doc stays.
  */
 export async function closeScenarioDocs(t, makeCaller) {
-  if (!t.session || !t.docs || t.docs.size === 0) return;
+  if (!t.session || !t.year) return;
   const call = makeCaller({ session: t.session, year: t.year });
-  for (const path of t.docs.values()) {
-    if (!isUnder(path, t.runRoot)) continue;
-    const title = basename(path).replace(/\.(rvt|rfa)$/i, "");
+  let docs = [];
+  try {
+    const status = await call("status", { detail: "full" }, { allowError: true, timeoutMs: 30_000 });
+    docs = (status.json?.docsFull ?? []).filter((d) => d.path && isUnder(d.path, t.yearDir) && (status.json?.docs?.rows ?? []).some((row) => row[0] === d.n && row[3] === t.year));
+  } catch {
+    return;
+  }
+  for (const d of docs) {
     try {
-      let r = await call("manage_document", { op: "close", doc: title, save: false }, { allowError: true, timeoutMs: 60_000 });
+      let r = await call("manage_document", { op: "close", doc: `#${d.n}`, save: false }, { allowError: true, timeoutMs: 60_000 });
       if (r.status === "not_applied" && r.json?.confirm) r = await call("manage_document", { op: "close", confirm: r.json.confirm }, { allowError: true, timeoutMs: 60_000 });
       for (let i = 0; i < 4 && r.status === "running"; i++) {
         const ref = r.json?.job ?? r.json?.ref;

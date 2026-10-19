@@ -32,11 +32,13 @@ export default {
     });
     void compact;
 
+    // One name per year: with --years 2024,2027 both Revits stay open and a shared title would be TARGET_AMBIGUOUS (R3).
+    const A = `A${t.year}`;
     const project = await t.step("new_project A (activate true) re-pins with TARGET_NOW", async () => {
-      const { r, path } = await t.newProject("A");
+      const { r, path } = await t.newProject(A);
       t.assertEq(r.status, "ok", "new_project status");
-      t.assert(r.notices.some((n) => /^TARGET_NOW #\d+ A \(Revit \d{4}\)/.test(n)), `TARGET_NOW notice: ${r.notices.join(" | ")}`);
-      t.assertEq(r.doc?.title.replace(/\.rvt$/i, ""), "A", "result names doc A");
+      t.assert(r.notices.some((n) => n.startsWith("TARGET_NOW #") && n.includes(` ${A} (Revit ${t.year})`)), `TARGET_NOW notice: ${r.notices.join(" | ")}`);
+      t.assertEq(r.doc?.title.replace(/\.rvt$/i, ""), A, "result names doc A");
       t.setTargetPath(path);
       return { path };
     });
@@ -44,7 +46,7 @@ export default {
     const listing = await t.step("status shows A as the pinned target", async () => {
       const r = await t.call("status", {});
       const rows = r.json.docs.rows;
-      const a = rows.find((row) => row[1] === "A" && row[3] === t.year);
+      const a = rows.find((row) => row[1] === A && row[3] === t.year);
       t.assert(a, "doc A is listed");
       t.assertMatch(a[4], /target/, "A carries the target flag");
       t.assertEq(r.json.target?.doc, `#${a[0]}`, "target is A");
@@ -54,8 +56,8 @@ export default {
     await t.step("set_target grammar: #n, exact title, 'active'", async () => {
       const byNumber = await t.call("set_target", { doc: `#${listing.n}` });
       t.assert(byNumber.notices.some((n) => n.startsWith("TARGET_NOW")), "#n gives TARGET_NOW");
-      const byTitle = await t.call("set_target", { doc: "A" });
-      t.assertEq(byTitle.doc?.title.replace(/\.rvt$/i, ""), "A", "exact title");
+      const byTitle = await t.call("set_target", { doc: A });
+      t.assertEq(byTitle.doc?.title.replace(/\.rvt$/i, ""), A, "exact title");
       const active = await t.call("set_target", { doc: "active" });
       t.assertEq(active.status, "ok", "active");
       const bad = await t.call("set_target", { doc: "#999" }, { expectError: ["DOC_NOT_OPEN", "TARGET_AMBIGUOUS"] });
