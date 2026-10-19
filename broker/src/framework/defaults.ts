@@ -204,6 +204,9 @@ export async function defaultControl(ctx: ToolContextImpl): Promise<ToolOutcome>
     const probes = await Promise.all(targets.map((i) => ctx.control(i, "dialogs", {}, 2_500)));
     const withDialogs = targets.filter((_, i) => probes[i]!.ok && Array.isArray(probes[i]!.data) && (probes[i]!.data as unknown[]).length > 0);
     if (withDialogs.length === 1) target = withDialogs[0]!;
+    else if (withDialogs.length === 0 && probes.every((p) => p.ok))
+      // No Revit shows a dialog: say so (as a single Revit would) instead of asking which instance to press in.
+      return ctx.fail("DIALOG_NOT_FOUND", `none of the ${targets.length} running Revit instances shows a dialog right now`, { options: [] });
     else
       return ctx.fail("INVALID_ARGS", `${withDialogs.length || targets.length} Revit instances are running; say which with instance`, {
         param: "instance",
